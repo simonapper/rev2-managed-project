@@ -1,0 +1,105 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/config_user_edit.html #}
+
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+
+    <h3 class="mb-3">Global User Settings</h3>
+    <p class="text-secondary mb-4">
+        Language and avatar defaults used across all projects.
+    </p>
+
+    <form method="post" novalidate>
+        {% csrf_token %}
+
+        <!-- Language -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Language</h5>
+
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-4">
+                        <label class="form-label">Default language</label>
+                        {{ form.default_language }}
+                    </div>
+
+                    <div class="col-md-4">
+                        <label class="form-label">Language variant</label>
+                        {{ form.default_language_variant }}
+                    </div>
+
+                    <div class="col-md-4">
+                        <div class="form-check mb-2">
+                            {{ form.language_switching_permitted }}
+                            <label class="form-check-label ms-1">Language switching permitted</label>
+                        </div>
+                        <div class="form-check">
+                            {{ form.persist_language_switch_for_session }}
+                            <label class="form-check-label ms-1">Persist language for session</label>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Avatars -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Avatars</h5>
+
+                <div class="rw-avatar-grid">
+                    <div class="rw-av-row">
+                        <label class="rw-av-label">Cognitive Avatar</label>
+                        <div class="rw-av-control">{{ form.cognitive_avatar }}</div>
+                    </div>
+
+                    <div class="rw-av-row">
+                        <label class="rw-av-label">Interaction Avatar</label>
+                        <div class="rw-av-control">{{ form.interaction_avatar }}</div>
+                    </div>
+
+                    <div class="rw-av-row">
+                        <label class="rw-av-label">Presentation Avatar</label>
+                        <div class="rw-av-control">{{ form.presentation_avatar }}</div>
+                    </div>
+
+                    <div class="rw-av-row">
+                        <label class="rw-av-label">Epistemic Avatar</label>
+                        <div class="rw-av-control">{{ form.epistemic_avatar }}</div>
+                    </div>
+
+                    <div class="rw-av-row">
+                        <label class="rw-av-label">Performance Avatar</label>
+                        <div class="rw-av-control">{{ form.performance_avatar }}</div>
+                    </div>
+
+                    <div class="rw-av-row">
+                        <label class="rw-av-label">Checkpointing Avatar</label>
+                        <div class="rw-av-control">{{ form.checkpointing_avatar }}</div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="rw-actionbar mt-3">
+            <a href="{% url 'accounts:user_config_info' %}"
+               class="btn btn-sm btn-outline-secondary rw-btn-sm">Info</a>
+
+            <a href="{% url 'accounts:user_config_definitions' %}"
+               class="btn btn-sm btn-outline-secondary rw-btn-sm">Definitions</a>
+
+            <button type="submit"
+                    class="btn btn-sm btn-primary rw-btn-sm">
+                Save
+            </button>
+        </div>
+
+    </form>
+
+</div>
+{% endblock %}

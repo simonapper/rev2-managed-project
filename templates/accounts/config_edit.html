@@ -1,0 +1,102 @@
+﻿{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+
+{% block content %}
+<div class="rw-breadcrumbs mb-3">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <div class="rw-title">Edit defaults</div>
+            <div class="text-secondary small">Update language + avatar defaults</div>
+        </div>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:user_config' %}">Cancel</a>
+    </div>
+</div>
+
+<div class="p-3">
+    <div class="card shadow-sm">
+        <div class="card-body">
+
+            <form method="post" novalidate>
+                {% csrf_token %}
+
+                <!-- LANGUAGE -->
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6">
+                        <div class="rw-field">
+                            <label class="rw-field-label">Default language</label>
+                            <div class="rw-field-control">{{ form.default_language }}</div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="rw-field">
+                            <label class="rw-field-label">Default language variant</label>
+                            <div class="rw-field-control">{{ form.default_language_variant }}</div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="form-check mt-2">
+                            {{ form.language_switching_permitted }}
+                            <label class="form-check-label ms-2">Language switching permitted</label>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="form-check mt-2">
+                            {{ form.persist_language_switch_for_session }}
+                            <label class="form-check-label ms-2">Persist language for session</label>
+                        </div>
+                    </div>
+                </div>
+
+                <hr class="my-4">
+
+                <!-- AVATARS -->
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="rw-field">
+                            <label class="rw-field-label">Cognitive Avatar</label>
+                            <div class="rw-field-control">{{ form.cognitive_avatar }}</div>
+                        </div>
+
+                        <div class="rw-field mt-3">
+                            <label class="rw-field-label">Presentation Avatar</label>
+                            <div class="rw-field-control">{{ form.presentation_avatar }}</div>
+                        </div>
+
+                        <div class="rw-field mt-3">
+                            <label class="rw-field-label">Performance Avatar</label>
+                            <div class="rw-field-control">{{ form.performance_avatar }}</div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="rw-field">
+                            <label class="rw-field-label">Interaction Avatar</label>
+                            <div class="rw-field-control">{{ form.interaction_avatar }}</div>
+                        </div>
+
+                        <div class="rw-field mt-3">
+                            <label class="rw-field-label">Epistemic Avatar</label>
+                            <div class="rw-field-control">{{ form.epistemic_avatar }}</div>
+                        </div>
+
+                        <div class="rw-field mt-3">
+                            <label class="rw-field-label">Checkpointing Avatar</label>
+                            <div class="rw-field-control">{{ form.checkpointing_avatar }}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-end gap-2 mt-4">
+                    <a class="btn btn-outline-secondary" href="{% url 'accounts:user_config' %}">Cancel</a>
+                    <button class="btn btn-primary" type="submit">Save</button>
+                </div>
+
+            </form>
+
+        </div>
+    </div>
+</div>
+{% endblock %}

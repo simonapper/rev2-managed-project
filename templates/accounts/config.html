@@ -1,0 +1,30 @@
+﻿{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+{% block content %}
+
+<div class="rw-breadcrumbs">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <div class="rw-title">Configuration</div>
+            <div class="text-secondary small">User defaults (avatars + language)</div>
+        </div>
+        <div class="d-flex gap-2">
+            <a class="btn btn-sm btn-primary" href="{% url 'accounts:user_config_edit' %}">Edit defaults</a>
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:dashboard' %}">Back</a>
+        </div>
+    </div>
+</div>
+
+<div class="p-3">
+    <div class="card shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <div class="fw-semibold">Effective Level 1 (short)</div>
+            <div class="text-secondary small">{{ request.user.username }}</div>
+        </div>
+        <div class="card-body">
+            <pre class="mb-0" style="white-space: pre-wrap;">{{ l1_short }}</pre>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

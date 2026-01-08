@@ -1,0 +1,151 @@
+﻿{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-4 py-3">
+
+  <!-- Header -->
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h5 class="mb-1">Global User Settings — Definitions</h5>
+      <div class="text-secondary small">
+        Long-form reference (Level 1)
+      </div>
+    </div>
+
+    <a href="{% url 'accounts:config_menu' %}"
+       class="btn btn-sm btn-outline-secondary">
+      Back
+    </a>
+  </div>
+
+  <!-- Scrollable definitions body -->
+  <div class="card">
+    <div class="card-body rw-definitions rw-content-scroll">
+
+      <h4>What Level 1 Is</h4>
+      <p>
+        Level&nbsp;1 defines your personal defaults for how the Reasoning
+        Workbench behaves when no more specific project or session settings
+        override them. Think of it as your <em>starting posture</em>.
+      </p>
+
+      <ul>
+        <li><strong>Scope:</strong> global for this user.</li>
+        <li><strong>Effect:</strong> behaviour and presentation defaults, not authority.</li>
+        <li>
+          <strong>Override model:</strong>
+          Level&nbsp;4 (session) may override for a specific workspace;
+          Level&nbsp;3 governance always binds.
+        </li>
+      </ul>
+
+      <hr>
+
+      <h4>Language Settings</h4>
+      <ul>
+        <li>
+          <strong>Default language:</strong>
+          your baseline language for responses (e.g. English).
+        </li>
+        <li>
+          <strong>Default language variant:</strong>
+          spelling and dialect conventions (e.g. British English).
+        </li>
+        <li>
+          <strong>Language switching permitted:</strong>
+          if ON, you may request a different language at any time.
+        </li>
+        <li>
+          <strong>Persist language for session:</strong>
+          if ON, a language change persists until the session ends or is changed again.
+        </li>
+      </ul>
+
+      <p class="text-secondary">
+        Note: language affects output text only. It does not alter governance,
+        reasoning rules, or authority checks.
+      </p>
+
+      <hr>
+
+      <h4>Cognitive Profile (Cognitive Avatar)</h4>
+      <p>
+        The Cognitive Avatar defines the thinking style applied during reasoning:
+        how work is structured, how rigor is applied, and how ambiguity is tolerated.
+      </p>
+
+      <ul>
+        <li>
+          <strong>Analyst:</strong>
+          structured, stage-disciplined, logic-first, fidelity-first.
+          Required for Canonical Knowledge Objects (CKOs).
+        </li>
+        <li>
+          <strong>Artist:</strong>
+          fluid, generative, coherence-first.
+          Suitable for creative exploration only.
+        </li>
+        <li>
+          <strong>Advocate:</strong>
+          structured but persuasion-oriented.
+          Suitable for teaching and communication contexts.
+        </li>
+        <li>
+          <strong>Explorer:</strong>
+          open-ended, hypothesis-preserving, tension-tolerant.
+          Suitable for early research and sense-making.
+        </li>
+      </ul>
+
+      <hr>
+
+      <h4>Interaction Avatar</h4>
+      <p>
+        Interaction Avatars affect how responses are presented and how the
+        conversation behaves (verbosity, pushback, tone). They do not alter
+        reasoning quality or governance.
+      </p>
+
+      <ul>
+        <li><strong>Minimal:</strong> answers only unless reasoning is requested.</li>
+        <li><strong>Concise:</strong> brief, structured responses with light signalling.</li>
+        <li><strong>Socratic:</strong> guided questioning to surface insight.</li>
+        <li><strong>Didactic:</strong> full explanations shown by default.</li>
+        <li><strong>Conversational:</strong> informal, rapport-oriented style.</li>
+      </ul>
+
+      <hr>
+
+      <h4>Presentation Avatar</h4>
+      <p>
+        Presentation Avatars control layout density, scrolling behaviour,
+        and explanation depth based on screen size and attention context.
+      </p>
+
+      <ul>
+        <li><strong>Phone:</strong> ultra-compact, one idea at a time.</li>
+        <li><strong>Laptop:</strong> single-screen analytical default.</li>
+        <li><strong>Tablet:</strong> chunked sections for reading.</li>
+        <li><strong>Multi-Screen:</strong> expanded layouts and explanations.</li>
+      </ul>
+
+      <hr>
+
+      <h4>Epistemic, Performance, and Checkpointing Avatars</h4>
+      <p>
+        These avatars govern how truth claims are handled, how tightly work
+        is bounded, and how checkpointing is proposed. Together they determine
+        stability, auditability, and handoff behaviour.
+      </p>
+
+      <p class="text-secondary mb-0">
+        Canonical work requires explicit epistemic discipline and manual
+        checkpoint confirmation.
+      </p>
+
+    </div>
+  </div>
+
+</div>
+{% endblock %}

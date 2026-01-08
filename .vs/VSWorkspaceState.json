@@ -1,7 +1,14 @@
 {
   "ExpandedNodes": [
-    ""
+    "",
+    "\\accounts",
+    "\\static",
+    "\\templates",
+    "\\templates\\accounts",
+    "\\templates\\partials",
+    "\\templates\\registration",
+    "\\workbench"
   ],
-  "SelectedNode": "\\H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code",
+  "SelectedNode": "\\accounts\\urls.py",
   "PreviewInSolutionExplorer": false
 }

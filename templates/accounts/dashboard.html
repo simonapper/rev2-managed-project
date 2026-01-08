@@ -1,0 +1,120 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/dashboard.html #}
+{% extends "base.html" %}
+{% include "partials/topbar.html" %}
+
+
+{% block title %}Dashboard — Reasoning Workbench{% endblock %}
+
+{% block content %}
+<div class="rw-main-inner">
+
+    <div class="rw-breadcrumbs d-flex align-items-center justify-content-between">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-house"></i>
+            <span class="text-secondary">ProjectX</span>
+            <i class="bi bi-chevron-right"></i>
+            <span class="text-secondary">Chats</span>
+            <i class="bi bi-chevron-right"></i>
+            <span class="fw-semibold">Sprint-01</span>
+        </div>
+
+        <div class="dropdown">
+            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="dropdown">
+                <i class="bi bi-three-dots-vertical"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="#">New chat</a></li>
+                <li><a class="dropdown-item" href="#">New folder</a></li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="rw-workarea">
+        <div class="row g-0 h-100">
+            <!-- Middle pane: tree -->
+            <div class="col-12 col-lg-5 col-xl-4 border-end rw-pane">
+                <div class="rw-pane-header">
+                    <div class="fw-semibold"><i class="bi bi-folder2-open me-2"></i>Chats</div>
+                </div>
+
+                <div class="rw-pane-body p-3">
+                    <div class="rw-tree">
+                        <div class="rw-tree-item">
+                            <button class="rw-tree-toggle" data-bs-toggle="collapse" data-bs-target="#mp-sprint01" aria-expanded="true">
+                                <i class="bi bi-caret-down-fill"></i>
+                            </button>
+                            <i class="bi bi-folder2-open me-2"></i><span class="fw-semibold">Sprint-01</span>
+                        </div>
+
+                        <div id="mp-sprint01" class="collapse show ms-4">
+                            <div class="rw-tree-leaf">
+                                <i class="bi bi-chat-left-text me-2"></i>Strategy Kickoff
+                            </div>
+                            <div class="rw-tree-leaf">
+                                <i class="bi bi-chat-left-text me-2"></i>Research Notes
+                            </div>
+                        </div>
+
+                        <div class="rw-tree-item mt-3">
+                            <button class="rw-tree-toggle" data-bs-toggle="collapse" data-bs-target="#mp-objects" aria-expanded="true">
+                                <i class="bi bi-caret-down-fill"></i>
+                            </button>
+                            <i class="bi bi-folder2-open me-2"></i><span class="fw-semibold">Objects</span>
+                        </div>
+
+                        <div id="mp-objects" class="collapse show ms-4">
+                            <div class="rw-tree-leaf"><i class="bi bi-file-earmark-text me-2"></i>TKO-014</div>
+                            <div class="rw-tree-leaf"><i class="bi bi-file-earmark-text me-2"></i>WKO-STRAT-001</div>
+                            <div class="rw-tree-leaf mt-2"><i class="bi bi-file-earmark-lock me-2"></i>CKO-GOV-001</div>
+                            <div class="rw-tree-leaf"><i class="bi bi-file-earmark-text me-2"></i>DKO-MARKET-004</div>
+                        </div>
+
+                        <div class="rw-tree-item mt-3">
+                            <button class="rw-tree-toggle" data-bs-toggle="collapse" data-bs-target="#mp-config" aria-expanded="true">
+                                <i class="bi bi-caret-down-fill"></i>
+                            </button>
+                            <i class="bi bi-folder2-open me-2"></i><span class="fw-semibold">Config</span>
+                        </div>
+
+                        <div id="mp-config" class="collapse show ms-4">
+                            <div class="rw-tree-leaf"><i class="bi bi-person-gear me-2"></i>Level 1 — User</div>
+                            <div class="rw-tree-leaf"><i class="bi bi-cpu me-2"></i>Level 2 — LLM</div>
+                            <div class="rw-tree-leaf"><i class="bi bi-shield-lock me-2"></i>Level 3 — Governance <i class="bi bi-lock-fill ms-1 text-secondary"></i></div>
+                            <div class="rw-tree-leaf"><i class="bi bi-sliders me-2"></i>Level 4 — Application <i class="bi bi-lock-fill ms-1 text-secondary"></i></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right pane: detail -->
+            <div class="col-12 col-lg-7 col-xl-8 rw-pane">
+                <div class="rw-pane-header d-flex align-items-center justify-content-between">
+                    <div class="fw-semibold"><i class="bi bi-chat-left-text me-2"></i>Strategy Kickoff</div>
+                    <span class="text-secondary small">Working</span>
+                </div>
+
+                <div class="rw-pane-body p-3">
+                    <div class="alert alert-secondary">
+                        Placeholder: this becomes the chat workspace (messages, input, tools, etc.).
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header fw-semibold">Next wiring</div>
+                        <div class="card-body">
+                            <ul class="mb-0">
+                                <li>Filter projects by UserRole</li>
+                                <li>Project selection route</li>
+                                <li>Resolve config stack (L1+L2+L3+L4)</li>
+                                <li>Create ChatWorkspace + TKO checkpoint</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+</div>
+{% endblock %}

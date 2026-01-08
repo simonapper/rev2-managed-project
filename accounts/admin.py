@@ -10,8 +10,8 @@ from django.core.mail import send_mail
 from django.urls import reverse
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
-
 from accounts.models import Role, UserRole
+from . import admin_avatars  # noqa: F401
 
 User = get_user_model()
 

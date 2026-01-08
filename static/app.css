@@ -1,0 +1,474 @@
+﻿/* -*- coding: utf-8 -*- */
+/* static/app.css */
+
+/* ============================================================
+   Global reset & shell
+============================================================ */
+
+html, body {
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    overflow: hidden;
+    background: #f8fafc;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.rw-shell {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ============================================================
+   Session header (top)
+============================================================ */
+
+.rw-session-header {
+    flex-shrink: 0;
+    background: #ffffff;
+    border-bottom: 1px solid #e6e9ef;
+}
+
+.rw-title {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.rw-session-meta {
+    font-size: 14px;
+}
+
+    .rw-session-meta .rw-line {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+    }
+
+.rw-label {
+    color: #6c757d;
+    min-width: 60px;
+}
+
+/* ============================================================
+   Dials row
+============================================================ */
+
+.rw-dials {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.rw-dial {
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* centre label + control */
+    gap: 6px;
+}
+
+.rw-dial-label {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #6c757d;
+    text-align: center;
+}
+
+.rw-dial-value {
+    font-size: 14px;
+    text-align: center;
+}
+
+.rw-dial-wide {
+    min-width: 220px;
+}
+
+.rw-dial-actions {
+    margin-left: auto;
+    align-items: flex-end;
+}
+
+/* ============================================================
+   Main horizontal layout
+============================================================ */
+
+.rw-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+}
+
+/* ============================================================
+   Sidebar
+============================================================ */
+
+.rw-sidebar {
+    width: 280px;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: #f8f9fa;
+    border-right: 1px solid #e6e9ef;
+}
+
+.rw-sidebar-inner {
+    min-height: 100%;
+    padding-bottom: 24px;
+}
+
+/* ============================================================
+   Main content area
+============================================================ */
+
+.rw-main {
+    flex: 1;
+    height: 100%;
+    overflow: hidden;
+    background: #f8fafc;
+}
+
+.rw-main-inner {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ============================================================
+   Breadcrumb / section header
+============================================================ */
+
+.rw-breadcrumbs {
+    flex-shrink: 0;
+    padding: 12px 16px;
+    background: #ffffff;
+    border-bottom: 1px solid #e6e9ef;
+}
+
+/* ============================================================
+   Work area (panes row)
+============================================================ */
+
+.rw-workarea {
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ============================================================
+   Panes
+============================================================ */
+
+.rw-pane {
+    height: 100%;
+    background: #ffffff;
+    border-right: 1px solid #e6e9ef;
+    display: flex;
+    flex-direction: column;
+}
+
+    .rw-pane:last-child {
+        border-right: none;
+    }
+
+.rw-pane-header {
+    flex-shrink: 0;
+    padding: 10px 12px;
+    background: #ffffff;
+    border-bottom: 1px solid #e6e9ef;
+}
+
+.rw-pane-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+}
+
+/* ============================================================
+   Sections & navigation
+============================================================ */
+
+.rw-section-title {
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #6c757d;
+    margin-bottom: 8px;
+}
+
+.list-group-item {
+    background: transparent;
+    border: none;
+    padding-left: 0;
+    padding-right: 0;
+}
+
+    .list-group-item.active {
+        background: #e7f1ff;
+        color: #0d6efd;
+        border-radius: 6px;
+    }
+
+/* ============================================================
+   Tree navigation
+============================================================ */
+
+.rw-tree {
+    font-size: 14px;
+}
+
+.rw-tree-item,
+.rw-tree-leaf {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+    .rw-tree-item:hover,
+    .rw-tree-leaf:hover {
+        background: #f3f5f8;
+    }
+
+.rw-tree-toggle {
+    border: none;
+    background: transparent;
+    padding: 0 2px;
+    color: #6c757d;
+}
+
+/* ============================================================
+   Buttons & utilities
+============================================================ */
+
+button {
+    cursor: pointer;
+}
+
+.btn {
+    white-space: nowrap;
+}
+
+/* ============================================================
+  Form Alignment for Avatar Selection
+============================================================ */
+
+
+.form-label {
+    min-height: 1.5rem;
+}
+.rw-form-field .form-label {
+    display: block;
+    margin-bottom: 0.25rem;
+}
+
+.rw-form-field select,
+.rw-form-field input[type="text"] {
+    width: 100%;
+}
+
+/* Align label + control so all selects start at the same x-position */
+.rw-field {
+    display: grid;
+    grid-template-columns: 170px 1fr; /* adjust width as desired */
+    column-gap: 12px;
+    align-items: center;
+}
+
+.rw-field-label {
+    margin: 0;
+    white-space: nowrap;
+}
+
+.rw-field-control select,
+.rw-field-control input {
+    width: 100%;
+}
+/* ============================================================
+  Menus
+============================================================ */
+
+/* Config menu tiles: same size, text wraps inside */
+.rw-config-menu {
+    display: grid;
+    gap: 12px;
+    max-width: 640px;
+}
+
+.rw-config-tile {
+    display: block;
+    text-decoration: none;
+    border: 1px solid rgba(0,0,0,.12);
+    border-radius: 10px;
+    padding: 14px 16px;
+    background: #fff;
+    min-height: 76px; /* same height */
+}
+
+    .rw-config-tile:hover {
+        border-color: rgba(0,0,0,.22);
+    }
+
+.rw-config-tile-title {
+    font-weight: 600;
+    color: #111;
+}
+
+.rw-config-tile-sub {
+    margin-top: 4px;
+    color: rgba(0,0,0,.6);
+    font-size: 0.9rem;
+    line-height: 1.2rem;
+}
+/* Config menu same size, text wraps inside */
+.rw-config-btn {
+    padding: 0.35rem 0.6rem;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+    line-height: 1.25;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center; /* horizontal centring */
+    text-align: center;
+    white-space: normal; /* allow wrapping */
+    overflow: hidden;
+    text-overflow: clip;
+}
+
+    .rw-config-btn .fw-semibold {
+        font-size: 0.875rem;
+        line-height: 1.2;
+    }
+
+    .rw-config-btn .small {
+        font-size: 0.75rem;
+        line-height: 1.2;
+    }
+
+
+/* --- Topbar overrides: 2 rows of 3, compact --- */
+.rw-ov-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px 10px;
+    align-items: end;
+    justify-items: center;
+}
+
+.rw-ov {
+    display: grid;
+    gap: 2px;
+    justify-items: center;
+}
+
+.rw-ov-label {
+    font-size: 0.70rem;
+    color: rgba(0,0,0,.6);
+    line-height: 1;
+    text-align: center;
+}
+
+.rw-ov-select {
+    width: 118px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    font-size: 0.85rem;
+}
+
+/* User box: same “control” feel as dropdowns */
+.rw-userbox {
+    min-width: 118px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 10px;
+    border: 1px solid rgba(0,0,0,.15);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    background: #fff;
+}
+
+/* Small consistent buttons (Info/Definitions/Save/Logout) */
+.rw-btn-sm {
+    min-width: 90px;
+    height: 30px;
+    padding: 0 10px;
+    font-size: 0.85rem;
+    line-height: 30px;
+    white-space: nowrap;
+}
+
+.rw-actionbar {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+/* --- Global user settings: avatar rows aligned --- */
+.rw-avatar-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 40px;
+    align-items: start;
+}
+
+.rw-av-row {
+    display: grid;
+    grid-template-columns: 170px 1fr; /* label column fixed -> dropdowns align */
+    gap: 10px;
+    align-items: center;
+}
+
+.rw-av-label {
+    margin: 0;
+    font-size: 0.95rem;
+    white-space: nowrap;
+}
+
+.rw-av-control select {
+    width: 260px; /* consistent dropdown width */
+    max-width: 100%;
+}
+
+/* Make top-level config buttons compact */
+.rw-config-card {
+    padding: 0.75rem 1rem;
+}
+
+    .rw-config-card h5 {
+        font-size: 0.95rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .rw-config-card p {
+        font-size: 0.85rem;
+        margin-bottom: 0;
+    }
+
+/* Allow scrolling for long definition pages */
+.rw-content-scroll {
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
+}
+/* Definitions typography */
+.rw-definitions {
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+    .rw-definitions h2,
+    .rw-definitions h3 {
+        font-size: 1rem;
+    }
+
+    .rw-definitions h4 {
+        font-size: 0.9rem;
+    }
+

@@ -1,0 +1,92 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/partials/topbar.html #}
+{% load rw_extras %}
+
+<nav class="navbar border-bottom bg-white">
+  <div class="container-fluid px-3">
+
+    <div class="navbar-brand fw-semibold">
+      AiScape Reasoning Workbench
+    </div>
+
+    <div class="ms-auto d-flex align-items-center gap-2">
+      {% if user.is_authenticated %}
+
+        {% if rw_overrides %}
+          <form id="rw-overrides-form"
+                method="post"
+                action="{% url 'accounts:session_overrides_update' %}"
+                class="rw-ov-grid">
+            {% csrf_token %}
+            <input type="hidden" name="category" id="rw-ov-category" value="">
+            <input type="hidden" name="avatar_id" id="rw-ov-avatar" value="">
+
+            {% for cat_key, cat_label in rw_overrides.categories %}
+              <div class="rw-ov">
+                <div class="rw-ov-label">{{ cat_label }}</div>
+                <select class="form-select form-select-sm rw-ov-select"
+                        data-category="{{ cat_key }}"
+                        data-label="{{ cat_label }}">
+                  <option value="">
+                    {{ rw_overrides.defaults|get_item:cat_key }}
+                  </option>
+
+                  {% for a in rw_overrides.choices|get_item:cat_key %}
+                    {% with cur=rw_overrides.current|get_item:cat_key %}
+                      <option value="{{ a.id }}"
+                        {% if cur and cur|stringformat:"s" == a.id|stringformat:"s" %}selected{% endif %}>
+                        {{ a.name }}
+                      </option>
+                    {% endwith %}
+                  {% endfor %}
+                </select>
+              </div>
+            {% endfor %}
+          </form>
+        {% endif %}
+
+        <div class="rw-userbox">{{ user.username }}</div>
+
+        <a class="btn btn-sm btn-outline-secondary rw-btn-sm"
+           href="{% url 'accounts:logout' %}">Logout</a>
+      {% endif %}
+    </div>
+
+  </div>
+</nav>
+
+<script>
+(function(){
+  const form = document.getElementById("rw-overrides-form");
+  if(!form) return;
+
+  const catInput = document.getElementById("rw-ov-category");
+  const avInput  = document.getElementById("rw-ov-avatar");
+
+  form.querySelectorAll(".rw-ov-select").forEach(sel => {
+    sel.addEventListener("change", () => {
+      const label = sel.getAttribute("data-label");
+      const category = sel.getAttribute("data-category");
+
+      const prevText = sel.getAttribute("data-prev-text") || "";
+      const newText = sel.options[sel.selectedIndex]?.text || "";
+
+      const ok = window.confirm(`Apply ${label} for this session?\n\nFrom: ${prevText}\nTo:   ${newText}`);
+      if(!ok){
+        sel.value = sel.getAttribute("data-prev-val") || "";
+        return;
+      }
+
+      catInput.value = category;
+      avInput.value = sel.value; // blank clears override -> default
+      sel.setAttribute("data-prev-val", sel.value || "");
+      sel.setAttribute("data-prev-text", newText);
+
+      form.submit();
+    });
+
+    sel.setAttribute("data-prev-val", sel.value || "");
+    sel.setAttribute("data-prev-text", sel.options[sel.selectedIndex]?.text || "");
+  });
+})();
+</script>

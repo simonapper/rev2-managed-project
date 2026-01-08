@@ -3,6 +3,85 @@
   "WorkspaceRootPath": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\",
   "Documents": [
     {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\static\\app.css||{A5401142-F49D-43DB-90B1-F57BA349E55C}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:static\\app.css||{A5401142-F49D-43DB-90B1-F57BA349E55C}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\config_menu.html||{40D31677-CBC0-4297-A9EF-89D907823A98}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:templates\\accounts\\config_menu.html||{40D31677-CBC0-4297-A9EF-89D907823A98}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\config_user_definitions.html||{40D31677-CBC0-4297-A9EF-89D907823A98}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:templates\\accounts\\config_user_definitions.html||{40D31677-CBC0-4297-A9EF-89D907823A98}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\urls.py||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:accounts\\urls.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\partials\\topbar.html||{40D31677-CBC0-4297-A9EF-89D907823A98}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:templates\\partials\\topbar.html||{40D31677-CBC0-4297-A9EF-89D907823A98}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\config_user_edit.html||{40D31677-CBC0-4297-A9EF-89D907823A98}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:templates\\accounts\\config_user_edit.html||{40D31677-CBC0-4297-A9EF-89D907823A98}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\workbench\\settings.py||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:workbench\\settings.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\views.py||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:accounts\\views.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\templatetags\\rw_extras.py||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:accounts\\templatetags\\rw_extras.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\partials\\sidebar.html||{40D31677-CBC0-4297-A9EF-89D907823A98}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:templates\\partials\\sidebar.html||{40D31677-CBC0-4297-A9EF-89D907823A98}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\config_edit.html||{40D31677-CBC0-4297-A9EF-89D907823A98}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:templates\\accounts\\config_edit.html||{40D31677-CBC0-4297-A9EF-89D907823A98}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\admin.py||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:accounts\\admin.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\models.py||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:accounts\\models.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\__init__.py||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:accounts\\__init__.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\admin_avatars.py||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:accounts\\admin_avatars.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accountssignals.py||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:accountssignals.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\base.html||{40D31677-CBC0-4297-A9EF-89D907823A98}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:templates\\base.html||{40D31677-CBC0-4297-A9EF-89D907823A98}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\registration\\login.html||{40D31677-CBC0-4297-A9EF-89D907823A98}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:templates\\registration\\login.html||{40D31677-CBC0-4297-A9EF-89D907823A98}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\simon\\Google Drive\\AI Driver\\Old Workbench Project\\Old Workbench code\\accounts\\urls.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\workbench\\urls.py||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:workbench\\urls.py||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\config\\models.py||{8B382828-6202-11D1-8870-0000F87579D2}",
       "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:config\\models.py||{8B382828-6202-11D1-8870-0000F87579D2}"
     },
@@ -13,10 +92,6 @@
     {
       "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\projects\\models.py||{8B382828-6202-11D1-8870-0000F87579D2}",
       "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:projects\\models.py||{8B382828-6202-11D1-8870-0000F87579D2}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\workbench\\settings.py||{8B382828-6202-11D1-8870-0000F87579D2}",
-      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:workbench\\settings.py||{8B382828-6202-11D1-8870-0000F87579D2}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\simon\\Google Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\set_password.html||{40D31677-CBC0-4297-A9EF-89D907823A98}"
@@ -32,7 +107,7 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 4,
+          "SelectedChildIndex": 9,
           "Children": [
             {
               "$type": "Bookmark",
@@ -48,33 +123,278 @@
             },
             {
               "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "config_user_edit.html",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\config_user_edit.html",
+              "RelativeDocumentMoniker": "templates\\accounts\\config_user_edit.html",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\config_user_edit.html",
+              "RelativeToolTip": "templates\\accounts\\config_user_edit.html",
+              "ViewState": "AgIAACkAAAAAAAAAAAAgwGkAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001512|",
+              "WhenOpened": "2026-01-08T18:39:36.188Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
               "DocumentIndex": 1,
-              "Title": "admin.py",
-              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\config\\admin.py",
-              "RelativeDocumentMoniker": "config\\admin.py",
-              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\config\\admin.py",
-              "RelativeToolTip": "config\\admin.py",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAWwE8AAAAoAAAAAAAAAA==",
+              "Title": "config_menu.html",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\config_menu.html",
+              "RelativeDocumentMoniker": "templates\\accounts\\config_menu.html",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\config_menu.html",
+              "RelativeToolTip": "templates\\accounts\\config_menu.html",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAB4AAAAsAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001512|",
+              "WhenOpened": "2026-01-08T18:02:03.629Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "config_user_definitions.html",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\config_user_definitions.html",
+              "RelativeDocumentMoniker": "templates\\accounts\\config_user_definitions.html",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\config_user_definitions.html",
+              "RelativeToolTip": "templates\\accounts\\config_user_definitions.html",
+              "ViewState": "AgIAAFcAAAAAAAAAAAAgwHcAAAAiAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001512|",
+              "WhenOpened": "2026-01-08T17:11:05.179Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "urls.py",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\urls.py",
+              "RelativeDocumentMoniker": "accounts\\urls.py",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\urls.py",
+              "RelativeToolTip": "accounts\\urls.py",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABwAAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
-              "WhenOpened": "2026-01-06T19:19:41.74Z",
+              "WhenOpened": "2026-01-08T14:21:41.367Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 11,
+              "Title": "admin.py",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\admin.py",
+              "RelativeDocumentMoniker": "accounts\\admin.py",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\admin.py",
+              "RelativeToolTip": "accounts\\admin.py",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAACQAAAAKAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
+              "WhenOpened": "2026-01-08T13:06:29.281Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 8,
+              "Title": "rw_extras.py",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\templatetags\\rw_extras.py",
+              "RelativeDocumentMoniker": "accounts\\templatetags\\rw_extras.py",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\templatetags\\rw_extras.py",
+              "RelativeToolTip": "accounts\\templatetags\\rw_extras.py",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAEAAAAkAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
+              "WhenOpened": "2026-01-08T12:58:52.591Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
               "DocumentIndex": 0,
+              "Title": "app.css",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\static\\app.css",
+              "RelativeDocumentMoniker": "static\\app.css",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\static\\app.css",
+              "RelativeToolTip": "static\\app.css",
+              "ViewState": "AgIAACsBAAAAAAAAAAAQwEUBAAABAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003000|",
+              "WhenOpened": "2026-01-07T18:39:52.625Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
+              "Title": "settings.py",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\workbench\\settings.py",
+              "RelativeDocumentMoniker": "workbench\\settings.py",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\workbench\\settings.py",
+              "RelativeToolTip": "workbench\\settings.py",
+              "ViewState": "AgIAAEAAAAAAAAAAAADgv18AAAAjAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
+              "WhenOpened": "2026-01-06T15:31:54.78Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 7,
+              "Title": "views.py",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\views.py",
+              "RelativeDocumentMoniker": "accounts\\views.py",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\views.py",
+              "RelativeToolTip": "accounts\\views.py",
+              "ViewState": "AgIAAAMAAAAAAAAAAAAAABIAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
+              "WhenOpened": "2026-01-07T16:25:24.2Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "topbar.html",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\partials\\topbar.html",
+              "RelativeDocumentMoniker": "templates\\partials\\topbar.html",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\partials\\topbar.html",
+              "RelativeToolTip": "templates\\partials\\topbar.html",
+              "ViewState": "AgIAAAQAAAAAAAAAAAAmwFwAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001512|",
+              "WhenOpened": "2026-01-07T18:23:19.89Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 12,
+              "Title": "models.py",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\models.py",
+              "RelativeDocumentMoniker": "accounts\\models.py",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\models.py",
+              "RelativeToolTip": "accounts\\models.py",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA8AAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
+              "WhenOpened": "2026-01-08T13:05:55.661Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 13,
+              "Title": "__init__.py",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\__init__.py",
+              "RelativeDocumentMoniker": "accounts\\__init__.py",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\__init__.py",
+              "RelativeToolTip": "accounts\\__init__.py",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAEAAAAWAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
+              "WhenOpened": "2026-01-08T13:00:32.312Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 14,
+              "Title": "admin_avatars.py",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\admin_avatars.py",
+              "RelativeDocumentMoniker": "accounts\\admin_avatars.py",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\admin_avatars.py",
+              "RelativeToolTip": "accounts\\admin_avatars.py",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAACYAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
+              "WhenOpened": "2026-01-08T13:11:00.822Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 9,
+              "Title": "sidebar.html",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\partials\\sidebar.html",
+              "RelativeDocumentMoniker": "templates\\partials\\sidebar.html",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\partials\\sidebar.html",
+              "RelativeToolTip": "templates\\partials\\sidebar.html",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAiwA4AAAAyAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001512|",
+              "WhenOpened": "2026-01-07T17:22:46.749Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 10,
+              "Title": "config_edit.html",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\config_edit.html",
+              "RelativeDocumentMoniker": "templates\\accounts\\config_edit.html",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\config_edit.html",
+              "RelativeToolTip": "templates\\accounts\\config_edit.html",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAGYAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001512|",
+              "WhenOpened": "2026-01-07T17:18:17.12Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 16,
+              "Title": "base.html",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\base.html",
+              "RelativeDocumentMoniker": "templates\\base.html",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\base.html",
+              "RelativeToolTip": "templates\\base.html",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABsAAAA2AAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001512|",
+              "WhenOpened": "2026-01-07T18:25:47.111Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 17,
+              "Title": "login.html",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\registration\\login.html",
+              "RelativeDocumentMoniker": "templates\\registration\\login.html",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\registration\\login.html",
+              "RelativeToolTip": "templates\\registration\\login.html",
+              "ViewState": "AgIAAAQAAAAAAAAAAAAIwCQAAABKAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001512|",
+              "WhenOpened": "2026-01-07T16:34:18.221Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 18,
+              "Title": "urls.py",
+              "DocumentMoniker": "C:\\Users\\simon\\Google Drive\\AI Driver\\Old Workbench Project\\Old Workbench code\\accounts\\urls.py",
+              "ToolTip": "C:\\Users\\simon\\Google Drive\\AI Driver\\Old Workbench Project\\Old Workbench code\\accounts\\urls.py",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
+              "WhenOpened": "2026-01-07T16:33:12.891Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 19,
+              "Title": "urls.py",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\workbench\\urls.py",
+              "RelativeDocumentMoniker": "workbench\\urls.py",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\workbench\\urls.py",
+              "RelativeToolTip": "workbench\\urls.py",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
+              "WhenOpened": "2026-01-07T16:19:40.516Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 15,
+              "Title": "accountssignals.py",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accountssignals.py",
+              "RelativeDocumentMoniker": "accountssignals.py",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\accountssignals.py",
+              "RelativeToolTip": "accountssignals.py",
+              "ViewState": "AgIAAD8AAAAAAAAAAAAAAAEAAAAVAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
+              "WhenOpened": "2026-01-07T16:19:24.419Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 20,
               "Title": "models.py",
               "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\config\\models.py",
               "RelativeDocumentMoniker": "config\\models.py",
               "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\config\\models.py",
               "RelativeToolTip": "config\\models.py",
-              "ViewState": "AgIAAGcAAAAAAAAAAAAWwIAAAABPAAAAAAAAAA==",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAIAAAABPAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
               "WhenOpened": "2026-01-06T18:40:31.698Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 22,
               "Title": "models.py",
               "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\projects\\models.py",
               "RelativeDocumentMoniker": "projects\\models.py",
@@ -87,38 +407,34 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 5,
+              "DocumentIndex": 24,
               "Title": "urls.py",
               "DocumentMoniker": "C:\\Users\\simon\\Google Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\urls.py",
               "ToolTip": "C:\\Users\\simon\\Google Drive\\AI Driver\\Workbench Project\\Workbench code\\accounts\\urls.py",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
-              "WhenOpened": "2026-01-06T17:45:21.706Z",
+              "WhenOpened": "2026-01-06T17:45:21.706Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 21,
+              "Title": "admin.py",
+              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\config\\admin.py",
+              "RelativeDocumentMoniker": "config\\admin.py",
+              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\config\\admin.py",
+              "RelativeToolTip": "config\\admin.py",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAWwE8AAAAoAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
+              "WhenOpened": "2026-01-06T19:19:41.74Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 4,
+              "DocumentIndex": 23,
               "Title": "set_password.html",
               "DocumentMoniker": "C:\\Users\\simon\\Google Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\set_password.html",
               "ToolTip": "C:\\Users\\simon\\Google Drive\\AI Driver\\Workbench Project\\Workbench code\\templates\\accounts\\set_password.html",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAFAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001512|",
-              "WhenOpened": "2026-01-06T17:44:04.081Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 3,
-              "Title": "settings.py",
-              "DocumentMoniker": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\workbench\\settings.py",
-              "RelativeDocumentMoniker": "workbench\\settings.py",
-              "ToolTip": "H:\\My Drive\\AI Driver\\Workbench Project\\Workbench code\\workbench\\settings.py",
-              "RelativeToolTip": "workbench\\settings.py",
-              "ViewState": "AgIAAIEAAAAAAAAAAAAAAJgAAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002457|",
-              "WhenOpened": "2026-01-06T15:31:54.78Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-01-06T17:44:04.081Z"
             }
           ]
         }

@@ -1,0 +1,34 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/config_user_info.html #}
+{% extends "base.html" %}
+{% block content %}
+
+<div class="rw-breadcrumbs mb-3">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <div class="rw-title">Global User Settings — Info</div>
+            <div class="text-secondary small">Short, user-facing definitions</div>
+        </div>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:user_config_user' %}">Back</a>
+    </div>
+</div>
+
+<div class="p-3">
+    <div class="card shadow-sm">
+        <div class="card-body">
+
+            <h5 class="mb-3">Avatars</h5>
+            <ul class="mb-0">
+                <li><b>Cognitive</b>: how you think and structure work.</li>
+                <li><b>Interaction</b>: how responses are presented (brevity/tone).</li>
+                <li><b>Presentation</b>: layout density and screen-fit behaviour.</li>
+                <li><b>Epistemic</b>: how claims handle assumptions/alternatives/uncertainty.</li>
+                <li><b>Performance</b>: scope discipline and chat length posture.</li>
+                <li><b>Checkpointing</b>: when the system suggests capturing state.</li>
+            </ul>
+
+        </div>
+    </div>
+</div>
+
+{% endblock %}

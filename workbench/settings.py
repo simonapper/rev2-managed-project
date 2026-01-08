@@ -49,7 +49,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
 
     # Project apps
-    "accounts",
+    "accounts.apps.AccountsConfig",
     "projects",
     "chats",
     "objects",
@@ -98,6 +98,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "accounts.context_processors.session_overrides_bar",
             ],
         },
     },
@@ -161,23 +162,30 @@ TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
+# --------------------------------------------------
+# Logins
+# --------------------------------------------------
+
+
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "/accounts/dashboard/"
+LOGOUT_REDIRECT_URL = "/accounts/login/"
+
 
 # --------------------------------------------------
 # Static files
 # --------------------------------------------------
 
 STATIC_URL = "/static/"
+STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # ============================================================
 # MEDIA (User-generated files)
 # ============================================================
 
-# URL prefix for media files
+MEDIA_ROOT = BASE_DIR.parent / "media"
 MEDIA_URL = "/media/"
-
-# Physical storage root (top-level bucket)
-MEDIA_ROOT = BASE_DIR / "media"
 # --------------------------------------------------
 # Default primary key field type
 # --------------------------------------------------

@@ -2,6 +2,7 @@
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from .models_avatars import Avatar, UserProfile  # noqa: F401
 
 
 class User(AbstractUser):
