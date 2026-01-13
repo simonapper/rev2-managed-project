@@ -1,0 +1,15 @@
+﻿{# templates/partials/_message.html #}
+
+<div class="card mb-2">
+  <div class="card-header d-flex align-items-center justify-content-between py-2">
+    <div class="d-flex align-items-center gap-2">
+      <span class="fw-semibold">{{ m.role|title }}</span>
+      <span class="text-secondary small">• {{ m.created_at|date:"Y-m-d H:i" }}</span>
+    </div>
+    <span class="badge text-bg-light border">{{ m.channel }}</span>
+  </div>
+
+  <div class="card-body py-2">
+    <div style="white-space: pre-wrap;">{{ m.content }}</div>
+  </div>
+</div>

@@ -1,58 +1,37 @@
-﻿{# -*- coding: utf-8 -*- #}
+﻿{# templates/partials/sidebar.html #}
 
-<div class="rw-sidebar d-flex flex-column">
+<nav class="rw-sidebar-nav">
+  <ul class="nav flex-column px-3 py-3 gap-1">
 
-  <div class="rw-sidebar-header px-3 py-3">
-    <div class="fw-semibold">AiScape</div>
-    <div class="text-secondary small">Reasoning Workbench</div>
-  </div>
+    <li class="nav-item">
+      <a class="nav-link" href="{% url 'accounts:dashboard' %}">
+        <i class="bi bi-speedometer2 me-2"></i>
+        Dashboard
+      </a>
+    </li>
 
-  <div class="rw-sidebar-nav flex-grow-1 overflow-auto">
-    <ul class="nav flex-column px-2">
+  <li class="nav-item">
+      <a class="nav-link" href="{% url 'accounts:chat_browse' %}">
+        <i class="bi bi-chat-left-text me-2"></i>
+        Chats
+      </a>
+    </li>
 
-      <li class="nav-item">
-        <a class="nav-link {% if request.path|slice:':17' == '/accounts/config/' %}active{% endif %}"
-           href="{% url 'accounts:config_menu' %}">
-          Configuration
-        </a>
-      </li>
 
-      <li class="nav-item">
-        <a class="nav-link {% if request.path|slice:':7' == '/chats/' %}active{% endif %}"
-           href="#">
-          Chats
-        </a>
-      </li>
+    <li class="nav-item">
+      <a class="nav-link" href="{% url 'accounts:config_menu' %}">
+        <i class="bi bi-sliders me-2"></i>
+        Settings
+      </a>
+    </li>
 
-      <li class="nav-item">
-        <a class="nav-link {% if request.path|slice:':10' == '/projects/' %}active{% endif %}"
-           href="#">
-          Projects
-        </a>
-      </li>
+    <li class="nav-item">
+      <a class="nav-link" href="{% url 'accounts:project_config_list' %}">
+        <i class="bi bi-folder me-2"></i>
+        Projects
+      </a>
+    </li>
 
-      <li class="nav-item">
-        <a class="nav-link {% if request.path|slice:':9' == '/objects/' %}active{% endif %}"
-           href="#">
-          Objects
-        </a>
-      </li>
+  </ul>
+</nav>
 
-      <li class="nav-item">
-        <a class="nav-link {% if request.path|slice:':7' == '/files/' %}active{% endif %}"
-           href="#">
-          Files
-        </a>
-      </li>
-
-    </ul>
-  </div>
-
-  <div class="rw-sidebar-footer px-3 py-2 border-top">
-    <a class="nav-link p-0 text-danger"
-       href="{% url 'accounts:logout' %}">
-      Logout
-    </a>
-  </div>
-
-</div>

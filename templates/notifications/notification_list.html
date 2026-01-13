@@ -1,0 +1,82 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/notifications/notification_list.html #}
+
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+
+  <div class="d-flex align-items-start justify-content-between mb-3">
+    <div>
+      <h3 class="mb-1">Notifications</h3>
+      <div class="text-muted small">
+        {% if unread_count %}{{ unread_count }} unread{% else %}All read{% endif %}
+      </div>
+    </div>
+
+    <div class="d-flex gap-2">
+      {% if show == "all" %}
+        <a class="btn btn-sm btn-outline-secondary" href="?show=unread">Show unread</a>
+      {% else %}
+        <a class="btn btn-sm btn-outline-secondary" href="?show=all">Show all</a>
+      {% endif %}
+
+      <a class="btn btn-sm btn-outline-secondary"
+         href="{% url 'notifications:mark_all_read' %}?next={{ request.get_full_path|urlencode }}">
+        Mark all read
+      </a>
+
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:dashboard' %}">Back</a>
+    </div>
+  </div>
+
+  {% if notifications %}
+    <div class="list-group">
+      {% for n in notifications %}
+        <div class="list-group-item d-flex justify-content-between align-items-start">
+          <div class="me-3">
+            <div class="d-flex align-items-center gap-2">
+              <strong>{{ n.title }}</strong>
+              {% if not n.is_read %}
+                <span class="badge text-bg-primary">Unread</span>
+              {% endif %}
+              <span class="badge text-bg-light">{{ n.get_type_display }}</span>
+            </div>
+
+            {% if n.body %}
+              <div class="text-muted small mt-1">{{ n.body }}</div>
+            {% endif %}
+
+            <div class="text-muted small mt-2">
+              {{ n.created_at }}
+              {% if n.link_url %}
+                · <a href="{{ n.link_url }}">Open</a>
+              {% endif %}
+              {% if n.link_object_id %}
+                · Object #{{ n.link_object_id }}
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="d-flex flex-column gap-2">
+            {% if n.is_read %}
+              <a class="btn btn-sm btn-outline-secondary"
+                 href="{% url 'notifications:set_read' n.id 'unread' %}?next={{ request.get_full_path|urlencode }}">
+                Mark unread
+              </a>
+            {% else %}
+              <a class="btn btn-sm btn-outline-secondary"
+                 href="{% url 'notifications:set_read' n.id 'read' %}?next={{ request.get_full_path|urlencode }}">
+                Mark read
+              </a>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="alert alert-light border">No notifications to show.</div>
+  {% endif %}
+
+</div>
+{% endblock %}

@@ -1,0 +1,106 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/config_project_list.html #}
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <div>
+            <h5 class="mb-1">Browse Projects</h5>
+            <div class="text-secondary small">
+                Projects you own or participate in
+            </div>
+        </div>
+
+        <div class="d-flex gap-2">
+            <a href="{% url 'accounts:project_create' %}"
+               class="btn btn-sm btn-primary">
+                <i class="bi bi-plus-lg me-1"></i>New project
+            </a>
+
+
+            <a href="{% url 'accounts:config_menu' %}"
+               class="btn btn-sm btn-outline-secondary">
+                Back
+            </a>
+        </div>
+    </div>
+
+
+    <div class="card">
+        <div class="card-body">
+
+            {% if projects %}
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>
+                                <a href="?sort=name&dir={% if sort == 'name' and dir == 'asc' %}desc{% else %}asc{% endif %}">
+                                    Project
+                                    {% if sort == 'name' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
+                                </a>
+                            </th>
+
+                            <th>
+                                <a href="?sort=owner&dir={% if sort == 'owner' and dir == 'asc' %}desc{% else %}asc{% endif %}">
+                                    Owner
+                                    {% if sort == 'owner' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
+                                </a>
+                            </th>
+                            <th>
+                                <a href="?sort=updated&dir={% if sort == 'updated' and dir == 'asc' %}desc{% else %}asc{% endif %}">
+                                    Updated
+                                    {% if sort == 'updated' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
+                                </a>
+                            </th>
+
+                            <th>
+                                <a href="?sort=profile&dir={% if sort == 'profile' and dir == 'asc' %}desc{% else %}asc{% endif %}">
+                                    Operating Profile
+                                    {% if sort == 'profile' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
+                                </a>
+                            </th>
+
+                            <th></th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        {% for p in projects %}
+                        <tr>
+                            <td class="fw-semibold">{{ p.name }}</td>
+                            <td class="text-secondary">{{ p.owner.username }}</td>
+                            <td class="text-secondary small">{{ p.updated_at }}</td>
+                            <td class="text-secondary">
+                                {% if p.active_l4_config %}
+                                {{ p.active_l4_config.file_name }}
+                                {% else %}
+                                (none)
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                <a class="btn btn-sm btn-outline-primary"
+                                   href="{% url 'accounts:project_config_edit' p.id %}">
+                                    Edit
+                                </a>
+                                <a class="btn btn-sm btn-outline-secondary"
+                                   href="{% url 'accounts:project_chat_list' p.id %}">
+                                    Chats
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-secondary">No projects available.</div>
+            {% endif %}
+
+        </div>
+    </div>
+
+</div>
+{% endblock %}

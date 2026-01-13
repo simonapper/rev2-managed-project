@@ -1,474 +1,436 @@
-﻿/* -*- coding: utf-8 -*- */
-/* static/app.css */
+﻿/* ============================================================
+   AiScape Reasoning Workbench — Application CSS
+   Purpose:
+   - Shell layout (topbar / sidebar / main)
+   - Reporting UI (topbar status grid)
+   - Keep behavioural JS out of CSS
+   ============================================================ */
+
 
 /* ============================================================
-   Global reset & shell
-============================================================ */
-
-html, body {
-    height: 100%;
-    margin: 0;
-}
-
-body {
-    overflow: hidden;
-    background: #f8fafc;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
+   1) Shell layout (overall page structure)
+   ============================================================ */
 
 .rw-shell {
-    height: 100vh;
+    min-height: 100vh;
     display: flex;
     flex-direction: column;
 }
-
-/* ============================================================
-   Session header (top)
-============================================================ */
-
-.rw-session-header {
-    flex-shrink: 0;
-    background: #ffffff;
-    border-bottom: 1px solid #e6e9ef;
-}
-
-.rw-title {
-    font-size: 16px;
-    font-weight: 600;
-}
-
-.rw-session-meta {
-    font-size: 14px;
-}
-
-    .rw-session-meta .rw-line {
-        display: flex;
-        gap: 8px;
-        align-items: baseline;
-    }
-
-.rw-label {
-    color: #6c757d;
-    min-width: 60px;
-}
-
-/* ============================================================
-   Dials row
-============================================================ */
-
-.rw-dials {
-    display: flex;
-    gap: 24px;
-    align-items: center;
-    flex-wrap: wrap;
-}
-
-.rw-dial {
-    display: flex;
-    flex-direction: column;
-    align-items: center; /* centre label + control */
-    gap: 6px;
-}
-
-.rw-dial-label {
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #6c757d;
-    text-align: center;
-}
-
-.rw-dial-value {
-    font-size: 14px;
-    text-align: center;
-}
-
-.rw-dial-wide {
-    min-width: 220px;
-}
-
-.rw-dial-actions {
-    margin-left: auto;
-    align-items: flex-end;
-}
-
-/* ============================================================
-   Main horizontal layout
-============================================================ */
 
 .rw-body {
-    flex: 1;
+    flex: 1 1 auto;
+    min-height: 0;
     display: flex;
-    overflow: hidden;
 }
-
-/* ============================================================
-   Sidebar
-============================================================ */
-
-.rw-sidebar {
-    width: 280px;
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-    background: #f8f9fa;
-    border-right: 1px solid #e6e9ef;
-}
-
-.rw-sidebar-inner {
-    min-height: 100%;
-    padding-bottom: 24px;
-}
-
-/* ============================================================
-   Main content area
-============================================================ */
 
 .rw-main {
-    flex: 1;
-    height: 100%;
-    overflow: hidden;
-    background: #f8fafc;
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 1.25rem;
+    overflow: auto;
+    background: #f8f9fa;
 }
 
-.rw-main-inner {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-}
 
 /* ============================================================
-   Breadcrumb / section header
-============================================================ */
+   2) Topbar layout
+   Purpose:
+   - Identity on left
+   - Reporting in centre (read-only)
+   - Actions on right
+   ============================================================ */
 
-.rw-breadcrumbs {
-    flex-shrink: 0;
-    padding: 12px 16px;
-    background: #ffffff;
-    border-bottom: 1px solid #e6e9ef;
-}
-
-/* ============================================================
-   Work area (panes row)
-============================================================ */
-
-.rw-workarea {
-    flex: 1;
-    overflow: hidden;
-}
-
-/* ============================================================
-   Panes
-============================================================ */
-
-.rw-pane {
-    height: 100%;
-    background: #ffffff;
-    border-right: 1px solid #e6e9ef;
-    display: flex;
-    flex-direction: column;
-}
-
-    .rw-pane:last-child {
-        border-right: none;
-    }
-
-.rw-pane-header {
-    flex-shrink: 0;
-    padding: 10px 12px;
-    background: #ffffff;
-    border-bottom: 1px solid #e6e9ef;
-}
-
-.rw-pane-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px;
-}
-
-/* ============================================================
-   Sections & navigation
-============================================================ */
-
-.rw-section-title {
-    font-size: 12px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #6c757d;
-    margin-bottom: 8px;
-}
-
-.list-group-item {
-    background: transparent;
-    border: none;
-    padding-left: 0;
-    padding-right: 0;
-}
-
-    .list-group-item.active {
-        background: #e7f1ff;
-        color: #0d6efd;
-        border-radius: 6px;
-    }
-
-/* ============================================================
-   Tree navigation
-============================================================ */
-
-.rw-tree {
-    font-size: 14px;
-}
-
-.rw-tree-item,
-.rw-tree-leaf {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 8px;
-    border-radius: 6px;
-    cursor: pointer;
-}
-
-    .rw-tree-item:hover,
-    .rw-tree-leaf:hover {
-        background: #f3f5f8;
-    }
-
-.rw-tree-toggle {
-    border: none;
-    background: transparent;
-    padding: 0 2px;
-    color: #6c757d;
-}
-
-/* ============================================================
-   Buttons & utilities
-============================================================ */
-
-button {
-    cursor: pointer;
-}
-
-.btn {
-    white-space: nowrap;
-}
-
-/* ============================================================
-  Form Alignment for Avatar Selection
-============================================================ */
-
-
-.form-label {
-    min-height: 1.5rem;
-}
-.rw-form-field .form-label {
-    display: block;
-    margin-bottom: 0.25rem;
-}
-
-.rw-form-field select,
-.rw-form-field input[type="text"] {
-    width: 100%;
-}
-
-/* Align label + control so all selects start at the same x-position */
-.rw-field {
+.rw-topbar {
     display: grid;
-    grid-template-columns: 170px 1fr; /* adjust width as desired */
-    column-gap: 12px;
+    grid-template-columns: auto 1fr auto;
     align-items: center;
-}
-
-.rw-field-label {
-    margin: 0;
-    white-space: nowrap;
-}
-
-.rw-field-control select,
-.rw-field-control input {
-    width: 100%;
-}
-/* ============================================================
-  Menus
-============================================================ */
-
-/* Config menu tiles: same size, text wraps inside */
-.rw-config-menu {
-    display: grid;
-    gap: 12px;
-    max-width: 640px;
-}
-
-.rw-config-tile {
-    display: block;
-    text-decoration: none;
-    border: 1px solid rgba(0,0,0,.12);
-    border-radius: 10px;
-    padding: 14px 16px;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #dee2e6;
     background: #fff;
-    min-height: 76px; /* same height */
 }
 
-    .rw-config-tile:hover {
-        border-color: rgba(0,0,0,.22);
+.rw-topbar-left {
+    min-width: 0;
+}
+
+.rw-topbar-centre {
+    min-width: 0;
+    display: flex;
+    justify-content: center;
+}
+
+.rw-topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding-right: 1rem;
+}
+
+
+/* ============================================================
+   3) Brand block (top-left)
+   ============================================================ */
+
+.rw-brand-name {
+    font-weight: 600;
+    font-size: 1.25rem;
+    line-height: 1.1;
+}
+
+.rw-brand-user {
+    font-size: 0.8rem;
+    color: #6c757d;
+    margin-top: 0.1rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+
+/* ============================================================
+   4) Topbar status grid (REPORTING ONLY)
+   Purpose:
+   - Fixed-size tiles
+   - Equal visual weight
+   - Text centred
+   - No flex resizing based on content
+   ============================================================ */
+
+.rw-status-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    justify-content: center;
+}
+
+/* Authoritative tile definition — ALL boxes identical size */
+.rw-status {
+    flex: 0 0 120px; /* do NOT grow or shrink */
+    width: 120px;
+    min-width: 120px;
+    max-width: 120px;
+    height: 36px;
+    min-height: 36px;
+    max-height: 36px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    border-radius: 4px;
+    background: #f1f3f5;
+    text-align: center;
+    padding: 0.05rem;
+}
+
+.rw-status-label {
+    font-size: 0.65rem;
+    line-height: 1;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.15rem;
+}
+
+.rw-status-value {
+    font-size: 0.75rem;
+    line-height: 1.2;
+    font-weight: 500;
+    color: #212529;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+
+
+/* ============================================================
+   5) Buttons & forms (topbar actions)
+   ============================================================ */
+
+.rw-topbar-btn {
+    white-space: nowrap;
+    padding: 0.35rem 1.25rem;
+    line-height: 1.2;
+}
+
+.rw-inline-form {
+    margin: 0;
+}
+
+/* Notifications button badge */
+.rw-bell-btn {
+    position: relative;
+}
+
+.rw-bell-badge {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    line-height: 1.2;
+    font-weight: 600;
+    background: #0d6efd;
+    color: #fff;
+}
+
+
+/* =========================================================
+   Sidebar compact mode (≈ 50% visual size)
+   ========================================================= */
+
+.rw-sidebar {
+    width: 130px;
+    flex: 0 0 130px;
+    border-right: 1px solid #dee2e6;
+    background: #fff;
+    overflow: auto;
+}
+/* Reduce text + spacing inside sidebar */
+.rw-sidebar-nav .nav-link {
+    font-size: 0.80rem; /* was ~1rem */
+    padding: 0.30rem 0.45rem; /* reduce click area */
+    line-height: 1.1;
+}
+
+/* Tighten the nav list padding */
+.rw-sidebar-nav .nav {
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+    gap: 0.25rem !important; /* smaller than your current gap-1 */
+}
+
+/* Make icons smaller */
+.rw-sidebar-nav .nav-link i {
+    font-size: 0.85rem;
+    margin-right: 0.35rem !important; /* override me-2 feel */
+}
+
+/* =========================
+   Turn cards
+   ========================= */
+
+.rw-turn {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 0.25rem 0.75rem;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+
+    .rw-turn > summary {
+        cursor: pointer;
+        list-style: none;
+        font-weight: 600;
+        padding: 0.6rem 0.4rem;
     }
 
-.rw-config-tile-title {
-    font-weight: 600;
+        .rw-turn > summary::-webkit-details-marker {
+            display: none;
+        }
+
+/* two-column master/detail for turns */
+.rw-turn-split {
+    display: flex;
+    gap: 16px;
+    align-items: stretch;
+    height: calc(100vh - 260px);
+}
+
+.rw-turn-list {
+    flex: 0 0 360px;
+    overflow: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #fff;
+}
+
+.rw-turn-detail {
+    flex: 1 1 auto;
+    overflow: auto;
+    min-width: 0;
+}
+
+/* table look */
+.rw-turn-table {
+    width: 100%;
+    font-size: 0.9rem;
+    border-collapse: collapse;
+}
+
+    .rw-turn-table th,
+    .rw-turn-table td {
+        padding: 8px 10px;
+        border-bottom: 1px solid #f1f5f9;
+        vertical-align: top;
+    }
+
+    .rw-turn-table thead th {
+        position: sticky;
+        top: 0;
+        background: #fff;
+        z-index: 2;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        color: #64748b;
+    }
+    /* Centre table headings only */
+    .rw-turn-table th {
+        text-align: center;
+    }
+
+    /* Keep body cells as-is, except Turn number */
+    .rw-turn-table td:first-child {
+        text-align: center;
+    }
+
+    .rw-turn-table td:first-child {
+        text-align: center;
+    }
+
+.rw-turn-rowlink {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+}
+
+    .rw-turn-rowlink:hover {
+        background: #f8fafc;
+    }
+
+.rw-turn-row-active {
+    background: #eef2ff;
+}
+
+
+/* =========================
+   Channel panes
+   ========================= */
+
+.rw-channel {
+    border: 1px solid #f0f0f0;
+    border-radius: 8px;
+    padding: 0.25rem 0.5rem;
+    background: #fafafa;
+}
+
+    .rw-channel > summary {
+        cursor: pointer;
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: #555;
+        text-transform: uppercase;
+    }
+
+        .rw-channel > summary::-webkit-details-marker {
+            display: none;
+        }
+
+    .rw-channel > .pt-2 {
+        padding-top: 0.5rem !important;
+    }
+
+/* =========================
+   Content tweaks
+   ========================= */
+
+/* Hide noisy meta unless needed */
+.rw-message-meta {
+    display: none;
+}
+
+/* INPUT */
+.rw-channel summary:has(+ div .rw-message-user) {
+    color: #2563eb;
+}
+
+/* ANSWER */
+.rw-channel summary:contains("ANSWER") {
     color: #111;
 }
 
-.rw-config-tile-sub {
-    margin-top: 4px;
-    color: rgba(0,0,0,.6);
-    font-size: 0.9rem;
-    line-height: 1.2rem;
-}
-/* Config menu same size, text wraps inside */
-.rw-config-btn {
-    padding: 0.35rem 0.6rem;
-    border-radius: 0.25rem;
-    font-size: 0.875rem;
-    line-height: 1.25;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center; /* horizontal centring */
-    text-align: center;
-    white-space: normal; /* allow wrapping */
-    overflow: hidden;
-    text-overflow: clip;
+/* KEY INFO */
+.rw-channel summary:contains("KEY INFO") {
+    color: #047857;
 }
 
-    .rw-config-btn .fw-semibold {
-        font-size: 0.875rem;
-        line-height: 1.2;
+/* VISUALS */
+.rw-channel summary:contains("VISUALS") {
+    color: #7c3aed;
+}
+
+    .rw-channel summary:contains("VISUALS") + div {
+        font-size: 1.2rem;
+        text-align: center;
     }
 
-    .rw-config-btn .small {
-        font-size: 0.75rem;
-        line-height: 1.2;
-    }
-
-
-/* --- Topbar overrides: 2 rows of 3, compact --- */
-.rw-ov-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 6px 10px;
-    align-items: end;
-    justify-items: center;
-}
-
-.rw-ov {
-    display: grid;
-    gap: 2px;
-    justify-items: center;
-}
-
-.rw-ov-label {
-    font-size: 0.70rem;
-    color: rgba(0,0,0,.6);
-    line-height: 1;
-    text-align: center;
-}
-
-.rw-ov-select {
-    width: 118px;
-    padding-top: 2px;
-    padding-bottom: 2px;
-    font-size: 0.85rem;
-}
-
-/* User box: same “control” feel as dropdowns */
-.rw-userbox {
-    min-width: 118px;
-    height: 30px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 10px;
-    border: 1px solid rgba(0,0,0,.15);
+/* OUTPUT */
+.rw-channel summary:contains("OUTPUT") + div {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #f9fafb;
     border-radius: 6px;
-    font-size: 0.85rem;
-    background: #fff;
+    padding: 0.5rem;
 }
 
-/* Small consistent buttons (Info/Definitions/Save/Logout) */
-.rw-btn-sm {
-    min-width: 90px;
-    height: 30px;
-    padding: 0 10px;
-    font-size: 0.85rem;
-    line-height: 30px;
-    white-space: nowrap;
+/* =========================
+   Spacing tightening
+   ========================= */
+
+.rw-pane-body {
+    line-height: 1.5;
 }
 
-.rw-actionbar {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-    align-items: center;
-}
-
-/* --- Global user settings: avatar rows aligned --- */
-.rw-avatar-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px 40px;
-    align-items: start;
-}
-
-.rw-av-row {
-    display: grid;
-    grid-template-columns: 170px 1fr; /* label column fixed -> dropdowns align */
-    gap: 10px;
-    align-items: center;
-}
-
-.rw-av-label {
-    margin: 0;
-    font-size: 0.95rem;
-    white-space: nowrap;
-}
-
-.rw-av-control select {
-    width: 260px; /* consistent dropdown width */
-    max-width: 100%;
-}
-
-/* Make top-level config buttons compact */
-.rw-config-card {
-    padding: 0.75rem 1rem;
-}
-
-    .rw-config-card h5 {
-        font-size: 0.95rem;
-        margin-bottom: 0.25rem;
+    .rw-pane-body p {
+        margin-bottom: 0.5rem;
     }
 
-    .rw-config-card p {
-        font-size: 0.85rem;
-        margin-bottom: 0;
+
+
+/* ============================================================
+   6) Responsive adjustments
+   ============================================================ */
+
+/* Tablet */
+@media (max-width: 992px) {
+    .rw-sidebar {
+        width: 220px;
+        flex-basis: 220px;
     }
 
-/* Allow scrolling for long definition pages */
-.rw-content-scroll {
-    max-height: calc(100vh - 120px);
-    overflow-y: auto;
+    .rw-topbar-centre {
+        justify-content: flex-start;
+    }
+
+    .rw-status-grid {
+        justify-content: flex-start;
+    }
 }
-/* Definitions typography */
-.rw-definitions {
-    font-size: 0.85rem;
-    line-height: 1.4;
+
+/* Phone */
+@media (max-width: 640px) {
+    .rw-topbar {
+        grid-template-columns: 1fr auto;
+        grid-template-areas:
+            "left right"
+            "centre centre";
+        align-items: start;
+    }
+
+    .rw-topbar-left {
+        grid-area: left;
+    }
+
+    .rw-topbar-right {
+        grid-area: right;
+    }
+
+    .rw-topbar-centre {
+        grid-area: centre;
+        justify-content: flex-start;
+    }
 }
-
-    .rw-definitions h2,
-    .rw-definitions h3 {
-        font-size: 1rem;
-    }
-
-    .rw-definitions h4 {
-        font-size: 0.9rem;
-    }
-

@@ -10,7 +10,10 @@ Production hardening is explicitly out of scope.
 """
 
 from pathlib import Path
+from dotenv import load_dotenv
 import os
+
+load_dotenv()
 # import certifi
 
 # --------------------------------------------------
@@ -22,7 +25,7 @@ import os
 # --------------------------------------------------
 
 # WARNING: Do not use this secret key in production
-SECRET_KEY = "dev-only-secret-key-change-me"
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
 
 # Prototype = always debug
 DEBUG = True
@@ -40,21 +43,25 @@ AUTHENTICATION_BACKENDS = [
 # --------------------------------------------------
 
 INSTALLED_APPS = [
-    # Django core
+    # Django core...
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django_extensions",
 
     # Project apps
-    "accounts.apps.AccountsConfig",
-    "projects",
+    "accounts",
+    "projects.apps.ProjectsConfig",  # <-- IMPORTANT (was "projects")
     "chats",
     "objects",
     "config",
     "navigator",
+    "notifications",
+    "uploads",
+
 ]
 
 
@@ -99,12 +106,13 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "accounts.context_processors.session_overrides_bar",
+                "accounts.context_processors.active_project_bar",
+                "notifications.context_processors.notifications_bar",
+                "accounts.context_processors.active_chat_bar",
             ],
         },
     },
 ]
-
-
 
 # --------------------------------------------------
 # WSGI / ASGI
@@ -125,8 +133,8 @@ else:
     EMAIL_HOST = "smtp.gmail.com"
     EMAIL_PORT = 587
     EMAIL_USE_TLS = True
-    EMAIL_HOST_USER = os.environ["EMAIL_HOST_USER"]
-    EMAIL_HOST_PASSWORD = os.environ["EMAIL_HOST_PASSWORD"]
+    EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
+    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
     DEFAULT_FROM_EMAIL = "Workbench <aiscape2026@gmail.com>"
     # --------------------------------------------------
 # Database
@@ -167,9 +175,9 @@ USE_TZ = True
 # --------------------------------------------------
 
 
-LOGIN_URL = "/accounts/login/"
-LOGIN_REDIRECT_URL = "/accounts/dashboard/"
-LOGOUT_REDIRECT_URL = "/accounts/login/"
+LOGIN_URL = "accounts:login"
+LOGIN_REDIRECT_URL = "accounts:dashboard"
+LOGOUT_REDIRECT_URL = "accounts:login"
 
 
 # --------------------------------------------------

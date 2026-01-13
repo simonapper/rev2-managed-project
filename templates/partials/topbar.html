@@ -1,92 +1,82 @@
-﻿{# -*- coding: utf-8 -*- #}
-{# templates/partials/topbar.html #}
+﻿{# templates/partials/topbar.html #}
 {% load rw_extras %}
 
-<nav class="navbar border-bottom bg-white">
-  <div class="container-fluid px-3">
+<header class="rw-topbar" role="banner">
 
-    <div class="navbar-brand fw-semibold">
-      AiScape Reasoning Workbench
+  <!-- LEFT: Brand / identity -->
+  <div class="rw-topbar-left">
+    <div class="rw-brand">
+      <div class="rw-brand-name">AiScape</div>
+      <div class="rw-brand-user">{{ request.user.username }}</div>
     </div>
+  </div>
 
-    <div class="ms-auto d-flex align-items-center gap-2">
-      {% if user.is_authenticated %}
+  <!-- CENTRE: Reporting only (no controls) -->
+  <div class="rw-topbar-centre">
+    <div class="rw-status-grid" aria-label="Active configuration status">
 
-        {% if rw_overrides %}
-          <form id="rw-overrides-form"
-                method="post"
-                action="{% url 'accounts:session_overrides_update' %}"
-                class="rw-ov-grid">
-            {% csrf_token %}
-            <input type="hidden" name="category" id="rw-ov-category" value="">
-            <input type="hidden" name="avatar_id" id="rw-ov-avatar" value="">
+      <div class="rw-status">
+          <div class="rw-status-label">Project</div>
+          <div class="rw-status-value">
+            {% if rw_projects and rw_projects.active %}
+               {{ rw_projects.active.kind|title }}
+            {% else %}
+               —
+            {% endif %}
+          </div>
+</div>
 
-            {% for cat_key, cat_label in rw_overrides.categories %}
-              <div class="rw-ov">
-                <div class="rw-ov-label">{{ cat_label }}</div>
-                <select class="form-select form-select-sm rw-ov-select"
-                        data-category="{{ cat_key }}"
-                        data-label="{{ cat_label }}">
-                  <option value="">
-                    {{ rw_overrides.defaults|get_item:cat_key }}
-                  </option>
 
-                  {% for a in rw_overrides.choices|get_item:cat_key %}
-                    {% with cur=rw_overrides.current|get_item:cat_key %}
-                      <option value="{{ a.id }}"
-                        {% if cur and cur|stringformat:"s" == a.id|stringformat:"s" %}selected{% endif %}>
-                        {{ a.name }}
-                      </option>
-                    {% endwith %}
-                  {% endfor %}
-                </select>
-              </div>
-            {% endfor %}
-          </form>
-        {% endif %}
-
-        <div class="rw-userbox">{{ user.username }}</div>
-
-        <a class="btn btn-sm btn-outline-secondary rw-btn-sm"
-           href="{% url 'accounts:logout' %}">Logout</a>
+      {% if rw_overrides %}
+        {% for cat_key, cat_label in rw_overrides.categories %}
+        <div class="rw-status">
+          <div class="rw-status-label">{{ cat_label }}</div>
+          <div class="rw-status-value">{{ rw_overrides.defaults|get_item:cat_key }}</div>
+        </div>
+        {% endfor %}
       {% endif %}
+
+      <div class="rw-status">
+        <div class="rw-status-label">Language</div>
+        <div class="rw-status-value">
+          {% with p=request.user.profile %}
+            {{ p.default_language|default:""|slice:":3"|upper }}/{{ p.default_language_variant|default:""|slice:":3"|upper }}
+          {% endwith %}
+        </div>
+      </div>
     </div>
+    <div class="rw-status">
+      <div class="rw-status-label">Turns</div>
+      <div class="rw-status-value">
+        {% if rw_chat %}{{ rw_chat.turn_count }}{% else %}—{% endif %}
+      </div>
+</div>
 
   </div>
-</nav>
 
-<script>
-(function(){
-  const form = document.getElementById("rw-overrides-form");
-  if(!form) return;
+  <!-- RIGHT: Actions -->
+  <div class="rw-topbar-right">
 
-  const catInput = document.getElementById("rw-ov-category");
-  const avInput  = document.getElementById("rw-ov-avatar");
+    <a class="btn btn-sm btn-outline-secondary rw-topbar-btn rw-bell-btn"
+       href="{% url 'notifications:list' %}">
+      Notifications
+      {% if rw_notifications and rw_notifications.unread_count %}
+        <span class="rw-bell-badge">{{ rw_notifications.unread_count }}</span>
+      {% endif %}
+    </a>
 
-  form.querySelectorAll(".rw-ov-select").forEach(sel => {
-    sel.addEventListener("change", () => {
-      const label = sel.getAttribute("data-label");
-      const category = sel.getAttribute("data-category");
+    <form action="{% url 'accounts:logout' %}" method="post" class="rw-inline-form">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-sm btn-outline-secondary rw-topbar-btn">
+        Logout
+      </button>
+    </form>
 
-      const prevText = sel.getAttribute("data-prev-text") || "";
-      const newText = sel.options[sel.selectedIndex]?.text || "";
+    {% if request.user.is_superuser %}
+      <a class="btn btn-sm btn-outline-secondary rw-topbar-btn" href="/admin/">
+        Admin
+      </a>
+    {% endif %}
+  </div>
 
-      const ok = window.confirm(`Apply ${label} for this session?\n\nFrom: ${prevText}\nTo:   ${newText}`);
-      if(!ok){
-        sel.value = sel.getAttribute("data-prev-val") || "";
-        return;
-      }
-
-      catInput.value = category;
-      avInput.value = sel.value; // blank clears override -> default
-      sel.setAttribute("data-prev-val", sel.value || "");
-      sel.setAttribute("data-prev-text", newText);
-
-      form.submit();
-    });
-
-    sel.setAttribute("data-prev-val", sel.value || "");
-    sel.setAttribute("data-prev-text", sel.options[sel.selectedIndex]?.text || "");
-  });
-})();
-</script>
+</header>

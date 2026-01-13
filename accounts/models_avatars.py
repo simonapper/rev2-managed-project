@@ -29,10 +29,6 @@ class Avatar(models.Model):
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
 
-    # Later you can add fields like:
-    # - config_block_text (TextField)
-    # - version, etc.
-
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -44,20 +40,15 @@ class Avatar(models.Model):
         ]
 
     def __str__(self) -> str:
-        # User-facing: show only the avatar name (e.g. "Laptop"), not "PRESENTATION:Laptop"
         return self.name
 
 
 class UserProfile(models.Model):
     """
     User-visible configuration knobs for prototype:
-    - Language + variant (user-defined)
+    - Preferred language + variant (user-defined free text)
     - One avatar choice per L1 section
     """
-
-    class LanguageVariant(models.TextChoices):
-        EN_GB = "en-gb", "British English"
-        EN_US = "en-us", "American English"
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -65,12 +56,9 @@ class UserProfile(models.Model):
         related_name="profile",
     )
 
+    # User-preference language fields (free text)
     default_language = models.CharField(max_length=40, default="English")
-    default_language_variant = models.CharField(
-        max_length=10,
-        choices=LanguageVariant.choices,
-        default=LanguageVariant.EN_GB,
-    )
+    default_language_variant = models.CharField(max_length=40, default="British English")
 
     language_switching_permitted = models.BooleanField(default=True)
     persist_language_switch_for_session = models.BooleanField(default=True)

@@ -1,51 +1,30 @@
 ﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/config_menu.html #}
+
 {% extends "base.html" %}
 
 {% block content %}
 <div class="container-fluid px-4 py-4">
 
-  <!-- Header -->
-  <div class="d-flex align-items-center justify-content-between mb-3">
+  <div class="d-flex align-items-start justify-content-between mb-3">
     <div>
-      <h5 class="mb-1">Configuration</h5>
-      <div class="text-secondary small">
-        Choose what you want to configure
-      </div>
+      <h3 class="mb-1">Settings</h3>
     </div>
 
-    <a href="{% url 'accounts:dashboard' %}"
-       class="btn btn-sm btn-outline-secondary">
-      Back
-    </a>
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:dashboard' %}">Back</a>
   </div>
 
-  <!-- Config buttons -->
-  <div class="d-flex flex-column gap-2" style="max-width: 520px;">
-
- <div class="row g-3">
-
-  <!-- Global User Settings -->
-  <div class="col-md-4">
+  <div class="rw-config-buttons">
     <a href="{% url 'accounts:user_config_user' %}"
-       class="btn btn-outline-primary text-start rw-config-btn w-100">
-      <div class="fw-semibold">User Settings</div>
-      <div class="small text-secondary">
-      </div>
+       class="btn btn-outline-primary btn-sm rw-config-btn">
+      User Settings
+    </a>
+
+    <a href="{% url 'accounts:project_config_list' %}"
+       class="btn btn-outline-primary btn-sm rw-config-btn">
+      Project Settings
     </a>
   </div>
-
-  <!-- Project Settings -->
-  <div class="col-md-4">
-    <a href="#"
-       class="btn btn-outline-secondary text-start rw-config-btn w-100 disabled">
-      <div class="fw-semibold">Project Settings</div>
-      <div class="small text-secondary">
-      </div>
-    </a>
-  </div>
-
-</div>
-
 
 </div>
 {% endblock %}

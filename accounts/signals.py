@@ -107,7 +107,7 @@ def _ensure_user_profile(user: User) -> None:
         user=user,
         defaults={
             "default_language": "English",
-            "default_language_variant": UserProfile.LanguageVariant.EN_GB,
+            "default_language_variant": "British English",
             "language_switching_permitted": True,
             "persist_language_switch_for_session": True,
             "cognitive_avatar": cognitive,

@@ -1,0 +1,55 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/config_project_definitions.html #}
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-4 py-3">
+
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h5 class="mb-1">Project Settings — Definitions</h5>
+      <div class="text-secondary small">{{ project.name }}</div>
+    </div>
+
+    <a href="{% url 'accounts:project_config_edit' project.id %}"
+       class="btn btn-sm btn-outline-secondary">
+      Back
+    </a>
+  </div>
+
+  <div class="card">
+    <div class="card-body rw-definitions rw-content-scroll">
+
+      <h4>What “Operating Profile” means</h4>
+      <p>
+        A project’s Operating Profile is the project-scoped Level 4 configuration record.
+        It expresses how work should run by default inside this project: work type, mode,
+        evaluation posture, checkpointing posture, and off-ramps.
+      </p>
+
+      <h4>What it does</h4>
+      <ul>
+        <li>Provides defaults when a user starts work in the project.</li>
+        <li>Gives a stable, auditable “starting posture” for project work.</li>
+        <li>Enables consistent behaviour across users and sessions for that project.</li>
+      </ul>
+
+      <h4>What it does not do</h4>
+      <ul>
+        <li>It does not override Level 3 governance or sovereignty controls.</li>
+        <li>It does not grant authority (authority is via roles, not config).</li>
+        <li>It does not make chat history canonical.</li>
+      </ul>
+
+      <h4>Resolution order (effective configuration)</h4>
+      <ol class="mb-0">
+        <li>User defaults (Level 1)</li>
+        <li>Project defaults (Level 4 Operating Profile)</li>
+        <li>Session overrides (ephemeral)</li>
+      </ol>
+
+    </div>
+  </div>
+
+</div>
+{% endblock %}

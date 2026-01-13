@@ -12,6 +12,7 @@ class KnowledgeObject(models.Model):
     Object-type-specific rules are enforced at the governance layer,
     not via subclassing.
     """
+
     class ObjectType(models.TextChoices):
         CKO = "CKO", "Canonical Knowledge Object"
         WKO = "WKO", "Workflow Knowledge Object"
@@ -49,8 +50,16 @@ class KnowledgeObject(models.Model):
     domain = models.CharField(max_length=200, blank=True)
     scope_text = models.TextField(blank=True)
 
-    status = models.CharField(max_length=30, choices=Status.choices, default=Status.CANDIDATE)
-    classification = models.CharField(max_length=20, choices=Classification.choices, default=Classification.INTERNAL)
+    status = models.CharField(
+        max_length=30,
+        choices=Status.choices,
+        default=Status.CANDIDATE,
+    )
+    classification = models.CharField(
+        max_length=20,
+        choices=Classification.choices,
+        default=Classification.INTERNAL,
+    )
 
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -67,9 +76,41 @@ class KnowledgeObject(models.Model):
         related_name="knowledge_objects",
     )
 
+    # Approval metadata (additive, nullable)
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="submitted_objects",
+    )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approved_objects",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    rejected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="rejected_objects",
+    )
+    rejected_at = models.DateTimeField(null=True, blank=True)
+
+    rejection_reason = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"{self.object_type}:{self.title}"
 
 
 class KnowledgeObjectVersion(models.Model):
@@ -83,6 +124,9 @@ class KnowledgeObjectVersion(models.Model):
 
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"{self.obj_id}@{self.version}"
 
 
 class KnowledgeLink(models.Model):
@@ -103,3 +147,6 @@ class KnowledgeLink(models.Model):
     note = models.CharField(max_length=500, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"{self.from_object_id} -{self.link_type}-> {self.to_object_id}"

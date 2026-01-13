@@ -2,13 +2,15 @@
   "ExpandedNodes": [
     "",
     "\\accounts",
+    "\\accounts\\management\\commands",
+    "\\chats",
+    "\\projects",
     "\\static",
-    "\\templates",
     "\\templates\\accounts",
     "\\templates\\partials",
     "\\templates\\registration",
     "\\workbench"
   ],
-  "SelectedNode": "\\accounts\\urls.py",
+  "SelectedNode": "\\objects",
   "PreviewInSolutionExplorer": false
 }

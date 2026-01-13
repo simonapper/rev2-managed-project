@@ -1,8 +1,11 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # projects/models.py
+
+from __future__ import annotations
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 
 
 class Project(models.Model):
@@ -11,28 +14,73 @@ class Project(models.Model):
     Everything meaningful lives inside a Project.
     """
 
+    class Kind(models.TextChoices):
+        STANDARD = "STANDARD", "Standard"
+        SANDBOX = "SANDBOX", "Sandbox"
+
+    # Work intent (orthogonal to Kind)
+    class PrimaryType(models.TextChoices):
+        META = "META", "Meta / Programme"
+        KNOWLEDGE = "KNOWLEDGE", "Knowledge"
+        DELIVERY = "DELIVERY", "Delivery"
+        RESEARCH = "RESEARCH", "Research"
+        OPERATIONS = "OPERATIONS", "Operations"
+
+    class Mode(models.TextChoices):
+        PLAN = "PLAN", "Plan"
+        EXECUTE = "EXECUTE", "Execute"
+        REVIEW = "REVIEW", "Review"
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        PAUSED = "PAUSED", "Paused"
+        ARCHIVED = "ARCHIVED", "Archived"
+
     name = models.CharField(max_length=200, unique=True)
     description = models.TextField(blank=True)
 
-    # Owner is accountable for the project (stewardship/provenance).
-    # Authority should be enforced via UserRole (project-scoped).
+    # Short, explicit "why this exists" statement (distinct from description/notes)
+    purpose = models.TextField(blank=True, default="")
+
+    kind = models.CharField(
+        max_length=20,
+        choices=Kind.choices,
+        default=Kind.STANDARD,
+    )
+
+    primary_type = models.CharField(
+        max_length=20,
+        choices=PrimaryType.choices,
+        default=PrimaryType.DELIVERY,
+    )
+
+    mode = models.CharField(
+        max_length=10,
+        choices=Mode.choices,
+        default=Mode.PLAN,
+    )
+
+    status = models.CharField(
+        max_length=10,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+
+    # Owner has ultimate authority for the project (business rule enforced in services/admin).
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name="owned_projects",
     )
 
-    # Active Level-4 (session) configuration for this project.
-    # This points to a ConfigRecord (Level 4) whose ConfigVersion holds the
-    # actual .session.conf content.
+    # Project-level Operating Profile (Level 4)
+    # Points to a Level-4 ConfigRecord scoped to this project.
     active_l4_config = models.ForeignKey(
         "config.ConfigRecord",
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
-        on_delete=models.SET_NULL,
-        related_name="projects_using_as_l4",
-        limit_choices_to={"level": 4},
-        help_text="Active Level-4 (session) configuration for this project.",
+        related_name="projects_using_as_active_l4",
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -40,6 +88,225 @@ class Project(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+
+class ProjectPolicy(models.Model):
+    """
+    Project-wide constraints / defaults ("rails").
+    This is the project half of Level 4 (project-wide constraints),
+    plus pointers to inherited Level 1–3 configs.
+
+    Keep this 1:1 with Project.
+    """
+
+    project = models.OneToOneField(Project, on_delete=models.CASCADE, related_name="policy")
+
+    # Pointers to active project-scoped config records (Levels 1–3)
+    # If you later create a dedicated ConfigScope, enforce that there.
+    active_l1_config = models.ForeignKey(
+        "config.ConfigRecord",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="projects_using_as_active_l1",
+    )
+    active_l2_config = models.ForeignKey(
+        "config.ConfigRecord",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="projects_using_as_active_l2",
+    )
+    active_l3_config = models.ForeignKey(
+        "config.ConfigRecord",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="projects_using_as_active_l3",
+    )
+
+    # Policy refs (store as FK later if you model these explicitly)
+    authority_model_ref = models.CharField(max_length=255, blank=True, default="")
+    checkpoint_policy_ref = models.CharField(max_length=255, blank=True, default="")
+    llm_policy_ref = models.CharField(max_length=255, blank=True, default="")
+
+    # Project defaults
+    language_default = models.CharField(max_length=20, default="en-GB")
+    output_format_default = models.CharField(max_length=50, default="code_format")
+
+    # Permission gates (project controls what users may override)
+    user_can_override_language = models.BooleanField(default=True)
+    user_can_override_checkpointing = models.BooleanField(default=True)
+    user_can_override_output_format = models.BooleanField(default=True)
+    user_can_override_templates = models.BooleanField(default=False)
+
+    feature_flags = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"Policy:{self.project_id}"
+
+class ChatReadScope(models.TextChoices):
+    OWNER_ONLY = "OWNER_ONLY", "Owner only"
+    PROJECT_MANAGERS = "PROJECT_MANAGERS", "Project owner + project managers"
+    ANY_MANAGER = "ANY_MANAGER", "Any manager (global)"
+    
+chat_read_scope = models.CharField(
+    max_length=30,
+    choices=ChatReadScope.choices,
+    default=ChatReadScope.PROJECT_MANAGERS,
+)
+
+class UserProjectPrefs(models.Model):
+    """
+    Per-user preferences within a project ("driving position").
+    This is the user half of Level 4 (user-wide within project).
+    """
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="user_prefs")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="project_prefs",
+    )
+
+    # Blank means "inherit"
+    active_language = models.CharField(max_length=20, blank=True, default="")
+    verbosity = models.CharField(max_length=20, blank=True, default="")   # terse/standard/detailed
+    tone = models.CharField(max_length=20, blank=True, default="")        # neutral/direct/coaching
+    formatting = models.CharField(max_length=20, blank=True, default="")  # bullets/tables/mixed
+
+    checkpointing_override = models.CharField(max_length=20, blank=True, default="")  # inherit/strict/standard/light
+    preferred_outputs = models.JSONField(default=list, blank=True)  # e.g. ["checklist", "decision_log"]
+
+    ui_overrides = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["project", "user"], name="uniq_userprefs_per_project"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Prefs:{self.project_id}:{self.user_id}"
+
+
+class ProjectMembership(models.Model):
+    """
+    Membership and roles for a project, time-bounded and scope-aware.
+    """
+
+    class Role(models.TextChoices):
+        OWNER = "OWNER", "Owner"
+        MANAGER = "MANAGER", "Manager"
+        CONTRIBUTOR = "CONTRIBUTOR", "Contributor"
+        OBSERVER = "OBSERVER", "Observer"
+
+    class ScopeType(models.TextChoices):
+        PROJECT = "PROJECT", "Project"
+        MODULE = "MODULE", "Module"
+        ARTEFACT = "ARTEFACT", "Artefact"
+        TAG = "TAG", "Tag"
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        INVITED = "INVITED", "Invited"
+        SUSPENDED = "SUSPENDED", "Suspended"
+        LEFT = "LEFT", "Left"
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="memberships")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="project_memberships",
+    )
+
+    role = models.CharField(max_length=20, choices=Role.choices)
+    scope_type = models.CharField(max_length=20, choices=ScopeType.choices, default=ScopeType.PROJECT)
+    scope_ref = models.CharField(max_length=255, blank=True, default="")  # required if scope_type != PROJECT
+
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+
+    effective_from = models.DateTimeField(auto_now_add=True)
+    effective_to = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "user"]),
+            models.Index(fields=["project", "role"]),
+        ]
+        constraints = [
+            # One active membership record for the same role/scope combination
+            models.UniqueConstraint(
+                fields=["project", "user", "role", "scope_type", "scope_ref"],
+                condition=Q(effective_to__isnull=True),
+                name="uniq_active_membership_per_scope",
+            ),
+            # If scope_type is PROJECT, scope_ref must be blank
+           models.CheckConstraint(
+                condition=Q(scope_type="PROJECT", scope_ref="") | Q(scope_type__in=["MODULE", "ARTEFACT", "TAG"]),
+                name="chk_project_scope_ref_blank",
+            ),
+
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.user_id}:{self.role}"
+
+
+class AuditLog(models.Model):
+    """
+    Append-only audit stream for project-scoped events.
+    """
+
+    class Source(models.TextChoices):
+        SYSTEM = "SYSTEM", "System"
+        UI = "UI", "UI"
+        API = "API", "API"
+        MIGRATION = "MIGRATION", "Migration"
+        ADMIN = "ADMIN", "Admin"
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="audit_events")
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="audit_events",
+    )
+
+    event_type = models.CharField(max_length=50)  # keep flexible; enforce via constants later if desired
+    entity_type = models.CharField(max_length=50)
+    entity_id = models.CharField(max_length=64)
+
+    field_changes = models.JSONField(null=True, blank=True)  # {field: {before:..., after:...}}
+    summary = models.CharField(max_length=255)
+
+    request_id = models.CharField(max_length=64, blank=True, default="")
+    source = models.CharField(max_length=20, choices=Source.choices, default=Source.SYSTEM)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "created_at"]),
+            models.Index(fields=["actor", "created_at"]),
+            models.Index(fields=["entity_type", "entity_id"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        # append-only behaviour (basic guard)
+        if self.pk is not None:
+            raise ValueError("AuditLog is append-only.")
+        return super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.event_type}@{self.created_at.isoformat()}"
 
 
 class Folder(models.Model):
@@ -50,7 +317,6 @@ class Folder(models.Model):
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="folders")
 
-    # Self-referential parent for tree structure
     parent = models.ForeignKey(
         "self",
         on_delete=models.CASCADE,
@@ -63,12 +329,10 @@ class Folder(models.Model):
     ordering = models.IntegerField(default=0)
 
     class Meta:
-        # Prevent duplicate names at the same tree level
         unique_together = [("project", "parent", "name")]
         indexes = [
-            models.Index(fields=["project", "ordering"]),
-            models.Index(fields=["project", "parent"]),
+            models.Index(fields=["project", "parent", "ordering"]),
         ]
 
     def __str__(self) -> str:
-        return f"{self.project}: {self.name}"
+        return f"{self.project_id}:{self.name}"
