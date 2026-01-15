@@ -3,80 +3,102 @@
 
 <header class="rw-topbar" role="banner">
 
-  <!-- LEFT: Brand / identity -->
-  <div class="rw-topbar-left">
-    <div class="rw-brand">
-      <div class="rw-brand-name">AiScape</div>
-      <div class="rw-brand-user">{{ request.user.username }}</div>
+    <!-- LEFT: Brand / identity + mobile menu toggle -->
+    <div class="rw-topbar-left">
+
+        <!-- Mobile menu button (opens offcanvas sidebar) -->
+        <button class="btn btn-sm btn-outline-secondary d-lg-none me-2"
+                type="button"
+                data-bs-toggle="offcanvas"
+                data-bs-target="#rwSidebarOffcanvas"
+                aria-controls="rwSidebarOffcanvas"
+                aria-label="Open menu">
+            <i class="bi bi-list"></i>
+        </button>
+
+        <div class="rw-brand">
+            <div class="rw-brand-name">AiScape</div>
+            <div class="rw-brand-user">{{ request.user.username }}</div>
+        </div>
     </div>
-  </div>
 
-  <!-- CENTRE: Reporting only (no controls) -->
-  <div class="rw-topbar-centre">
-    <div class="rw-status-grid" aria-label="Active configuration status">
+    <!-- CENTRE: Reporting tiles (read-only) -->
+    <div class="rw-topbar-centre">
+        <div class="rw-status-grid" aria-label="Active configuration status">
 
-      <div class="rw-status">
-          <div class="rw-status-label">Project</div>
-          <div class="rw-status-value">
-            {% if rw_projects and rw_projects.active %}
-               {{ rw_projects.active.kind|title }}
-            {% else %}
-               —
+            <div class="rw-status">
+                <div class="rw-status-label">Project</div>
+                <div class="rw-status-value">
+                    {% if rw_projects and rw_projects.active %}
+                    {{ rw_projects.active.kind|title }}
+                    {% else %}
+                    —
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if rw_overrides %}
+            {% for cat_key, cat_label in rw_overrides.categories %}
+            <div class="rw-status">
+                <div class="rw-status-label">{{ cat_label }}</div>
+                <div class="rw-status-value">{{ rw_overrides.defaults|get_item:cat_key }}</div>
+            </div>
+            {% endfor %}
             {% endif %}
-          </div>
-</div>
 
+            <div class="rw-status">
+                <div class="rw-status-label">Checkpointing</div>
+                <div class="rw-status-value">
+                    {% if rw_overrides %}
+                    {{ rw_overrides.defaults|get_item:"CHECKPOINTING" }}
+                    {% else %}
+                    —
+                    {% endif %}
+                </div>
+            </div>
 
-      {% if rw_overrides %}
-        {% for cat_key, cat_label in rw_overrides.categories %}
-        <div class="rw-status">
-          <div class="rw-status-label">{{ cat_label }}</div>
-          <div class="rw-status-value">{{ rw_overrides.defaults|get_item:cat_key }}</div>
+            <div class="rw-status">
+                <div class="rw-status-label">Language</div>
+                <div class="rw-status-value">
+                    {% with p=request.user.profile %}
+                    {{ p.default_language|default:""|slice:":3"|upper }}/{{ p.default_language_variant|default:""|slice:":3"|upper }}
+                    {% endwith %}
+                </div>
+            </div>
+
+            <div class="rw-status">
+                <div class="rw-status-label">Turns</div>
+                <div class="rw-status-value">
+                    {% if rw_chat %}{{ rw_chat.turn_count }}{% else %}—{% endif %}
+                </div>
+            </div>
+
         </div>
-        {% endfor %}
-      {% endif %}
-
-      <div class="rw-status">
-        <div class="rw-status-label">Language</div>
-        <div class="rw-status-value">
-          {% with p=request.user.profile %}
-            {{ p.default_language|default:""|slice:":3"|upper }}/{{ p.default_language_variant|default:""|slice:":3"|upper }}
-          {% endwith %}
-        </div>
-      </div>
     </div>
-    <div class="rw-status">
-      <div class="rw-status-label">Turns</div>
-      <div class="rw-status-value">
-        {% if rw_chat %}{{ rw_chat.turn_count }}{% else %}—{% endif %}
-      </div>
-</div>
 
-  </div>
+    <!-- RIGHT: Actions -->
+    <div class="rw-topbar-right">
 
-  <!-- RIGHT: Actions -->
-  <div class="rw-topbar-right">
+        <a class="btn btn-sm btn-outline-secondary rw-topbar-btn rw-bell-btn"
+           href="{% url 'notifications:list' %}">
+            Notifications
+            {% if rw_notifications and rw_notifications.unread_count %}
+            <span class="rw-bell-badge">{{ rw_notifications.unread_count }}</span>
+            {% endif %}
+        </a>
 
-    <a class="btn btn-sm btn-outline-secondary rw-topbar-btn rw-bell-btn"
-       href="{% url 'notifications:list' %}">
-      Notifications
-      {% if rw_notifications and rw_notifications.unread_count %}
-        <span class="rw-bell-badge">{{ rw_notifications.unread_count }}</span>
-      {% endif %}
-    </a>
+        <form action="{% url 'accounts:logout' %}" method="post" class="rw-inline-form">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-secondary rw-topbar-btn">
+                Logout
+            </button>
+        </form>
 
-    <form action="{% url 'accounts:logout' %}" method="post" class="rw-inline-form">
-      {% csrf_token %}
-      <button type="submit" class="btn btn-sm btn-outline-secondary rw-topbar-btn">
-        Logout
-      </button>
-    </form>
-
-    {% if request.user.is_superuser %}
-      <a class="btn btn-sm btn-outline-secondary rw-topbar-btn" href="/admin/">
-        Admin
-      </a>
-    {% endif %}
-  </div>
+        {% if request.user.is_superuser %}
+        <a class="btn btn-sm btn-outline-secondary rw-topbar-btn" href="/admin/">
+            Admin
+        </a>
+        {% endif %}
+    </div>
 
 </header>

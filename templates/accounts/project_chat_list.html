@@ -1,0 +1,129 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/project_chat_list.html #}
+{% extends "base.html" %}
+{% block title %}Project Chats — {{ active_project.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <div>
+            <h5 class="mb-1">Project Chats</h5>
+            <div class="text-secondary small">{{ active_project.name }}</div>
+        </div>
+
+        <div class="d-flex gap-2">
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:project_config_list' %}">Back</a>
+        </div>
+    </div>
+
+    <form method="get" class="row g-2 align-items-end mb-3">
+        <div class="col-sm-3 col-md-2">
+            <label class="form-label small text-secondary mb-1">Status</label>
+            <select name="status" class="form-select form-select-sm">
+                <option value="">All</option>
+                <option value="ACTIVE" {% if filters.status == "ACTIVE" %}selected{% endif %}>Active</option>
+                <option value="ARCHIVED" {% if filters.status == "ARCHIVED" %}selected{% endif %}>Archived</option>
+            </select>
+        </div>
+
+        <div class="col-sm-9 col-md-8">
+            <label class="form-label small text-secondary mb-1">Search</label>
+            <input name="q" class="form-control form-control-sm" value="{{ filters.q }}" placeholder="Title / last output / user">
+        </div>
+
+        <div class="col-sm-12 col-md-2">
+            <button class="btn btn-sm btn-primary w-100" type="submit">Filter</button>
+        </div>
+    </form>
+
+    <div class="card">
+        <div class="card-body">
+
+            {% if page_obj.object_list %}
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>
+                        <a href="?sort=title&dir={% if sort == 'title' and dir == 'asc' %}desc{% else %}asc{% endif %}&status={{ filters.status }}&q={{ filters.q }}">
+                          Chat
+                          {% if sort == 'title' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
+                        </a>
+                      </th>
+
+                      <th>
+                        <a href="?sort=owner&dir={% if sort == 'owner' and dir == 'asc' %}desc{% else %}asc{% endif %}&status={{ filters.status }}&q={{ filters.q }}">
+                          Owner
+                          {% if sort == 'owner' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
+                        </a>
+                      </th>
+
+                      <th>
+                        <a href="?sort=updated&dir={% if sort == 'updated' and dir == 'asc' %}desc{% else %}asc{% endif %}&status={{ filters.status }}&q={{ filters.q }}">
+                          Updated
+                          {% if sort == 'updated' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
+                        </a>
+                      </th>
+
+                      <th>Last output</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {% for c in page_obj.object_list %}
+                      <tr>
+                        <td class="fw-semibold">{{ c.title }}</td>
+                        <td class="text-secondary">{{ c.created_by.username }}</td>
+                        <td class="text-secondary small">{{ c.updated_at }}</td>
+                        <td class="text-secondary small">
+                          {% if c.last_output_snippet %}
+                            {{ c.last_output_snippet }}
+                          {% else %}
+                            —
+                          {% endif %}
+                        </td>
+                        <td class="text-end">
+                          <a class="btn btn-sm btn-outline-secondary"
+                             href="{% url 'accounts:dashboard' %}?chat={{ c.id }}">
+                            Open
+                          </a>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="d-flex justify-content-between align-items-center mt-3">
+                <div class="text-secondary small">
+                  Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+                </div>
+
+                <div class="btn-group">
+                  {% if page_obj.has_previous %}
+                    <a class="btn btn-sm btn-outline-secondary"
+                       href="?status={{ filters.status }}&q={{ filters.q }}&sort={{ sort }}&dir={{ dir }}&page={{ page_obj.previous_page_number }}">
+                      Prev
+                    </a>
+                  {% endif %}
+                  {% if page_obj.has_next %}
+                    <a class="btn btn-sm btn-outline-secondary"
+                       href="?status={{ filters.status }}&q={{ filters.q }}&sort={{ sort }}&dir={{ dir }}&page={{ page_obj.next_page_number }}">
+                      Next
+                    </a>
+                  {% endif %}
+                </div>
+              </div>
+
+            {% else %}
+              <div class="text-secondary">No chats found for this project.</div>
+            {% endif %}
+
+           </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

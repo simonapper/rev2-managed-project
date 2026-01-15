@@ -1,0 +1,23 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/import_preview.html #}
+
+{% extends "base.html" %}
+{% block content %}
+<div class="rw-pane">
+  <div class="rw-pane-body p-3">
+    <h5 class="mb-3">Import preview</h5>
+    <div class="list-group">
+      {% for c in items %}
+        <a class="list-group-item list-group-item-action"
+           href="{% url 'accounts:import_preview_detail' c.id %}">
+          <div class="d-flex justify-content-between">
+            <div class="fw-semibold">{{ c.title }}</div>
+            <div class="text-secondary small">{{ c.updated }}</div>
+          </div>
+          <div class="text-secondary small">{{ c.id }}</div>
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -8,6 +8,9 @@ class ChatWorkspace(models.Model):
     Disposable conversational workspace.
     Chats are never treated as durable knowledge.
     """
+    last_output_snippet = models.CharField(max_length=280, blank=True, default="")
+    last_output_at = models.DateTimeField(null=True, blank=True)
+
 
     class Status(models.TextChoices):
         ACTIVE = "ACTIVE", "Active"
@@ -35,11 +38,24 @@ class ChatWorkspace(models.Model):
         default=Status.ACTIVE,
     )
 
+    last_output_snippet = models.CharField(
+    max_length=280,
+    blank=True,
+    default="",
+)
+
+    last_output_at = models.DateTimeField(
+    null=True,
+    blank=True,
+)
+
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name="created_chats",
     )
+
+    resolved_context = models.JSONField(default=dict, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -65,6 +81,7 @@ class ChatMessage(models.Model):
         ANALYSIS = "ANALYSIS", "Analysis"
         REASONING = "REASONING", "Reasoning"
         SOURCES = "SOURCES", "Sources"
+        VISUALS = "VISUALS", "Visuals"
         META = "META", "Meta"
 
     chat = models.ForeignKey(

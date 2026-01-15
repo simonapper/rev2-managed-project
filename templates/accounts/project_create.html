@@ -1,0 +1,34 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/project_create.html #}
+{% extends "base.html" %}
+{% block title %}Create Project — Reasoning Workbench{% endblock %}
+
+{% block content %}
+<div class="rw-main-inner">
+  <div class="rw-breadcrumbs d-flex align-items-center justify-content-between">
+    <div class="d-flex align-items-center gap-2">
+      <i class="bi bi-house"></i>
+      <span class="text-secondary">Create project</span>
+    </div>
+  </div>
+
+  <div class="rw-workarea">
+    <div class="rw-pane">
+      <div class="rw-pane-header">
+        <div class="fw-semibold">New Project</div>
+      </div>
+
+      <div class="rw-pane-body p-3">
+        <form method="post">
+          {% csrf_token %}
+          {{ form.as_p }}
+          <div class="d-flex gap-2">
+            <button class="btn btn-sm btn-primary" type="submit">Create</button>
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:dashboard' %}">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

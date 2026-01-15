@@ -1,16 +1,6 @@
 {
   "ExpandedNodes": [
-    "",
-    "\\accounts",
-    "\\accounts\\management\\commands",
-    "\\chats",
-    "\\projects",
-    "\\static",
-    "\\templates\\accounts",
-    "\\templates\\partials",
-    "\\templates\\registration",
-    "\\workbench"
+    ""
   ],
-  "SelectedNode": "\\objects",
   "PreviewInSolutionExplorer": false
 }

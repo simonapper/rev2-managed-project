@@ -14,24 +14,17 @@
         </div>
 
         <div class="d-flex gap-2">
-            <a href="{% url 'accounts:project_create' %}"
-               class="btn btn-sm btn-primary">
+            <a href="{% url 'accounts:project_create' %}" class="btn btn-sm btn-primary">
                 <i class="bi bi-plus-lg me-1"></i>New project
             </a>
-
-
-            <a href="{% url 'accounts:config_menu' %}"
-               class="btn btn-sm btn-outline-secondary">
-                Back
-            </a>
+            <a href="{% url 'accounts:project_config_list' %}" class="btn btn-sm btn-outline-secondary">Back</a>
         </div>
     </div>
-
 
     <div class="card">
         <div class="card-body">
 
-            {% if projects %}
+            {% if projects_with_permissions %}
             <div class="table-responsive">
                 <table class="table table-sm align-middle mb-0">
                     <thead>
@@ -42,7 +35,6 @@
                                     {% if sort == 'name' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
                                 </a>
                             </th>
-
                             <th>
                                 <a href="?sort=owner&dir={% if sort == 'owner' and dir == 'asc' %}desc{% else %}asc{% endif %}">
                                     Owner
@@ -55,40 +47,38 @@
                                     {% if sort == 'updated' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
                                 </a>
                             </th>
-
                             <th>
                                 <a href="?sort=profile&dir={% if sort == 'profile' and dir == 'asc' %}desc{% else %}asc{% endif %}">
                                     Operating Profile
                                     {% if sort == 'profile' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
                                 </a>
                             </th>
-
-                            <th></th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
 
                     <tbody>
-                        {% for p in projects %}
+                        {% for p, can_rename in projects_with_permissions %}
                         <tr>
                             <td class="fw-semibold">{{ p.name }}</td>
                             <td class="text-secondary">{{ p.owner.username }}</td>
                             <td class="text-secondary small">{{ p.updated_at }}</td>
                             <td class="text-secondary">
                                 {% if p.active_l4_config %}
-                                {{ p.active_l4_config.file_name }}
+                                    {{ p.active_l4_config.file_name }}
                                 {% else %}
-                                (none)
+                                    (none)
                                 {% endif %}
                             </td>
-                            <td class="text-end">
+                            <td class="text-end d-flex gap-1">
                                 <a class="btn btn-sm btn-outline-primary"
-                                   href="{% url 'accounts:project_config_edit' p.id %}">
-                                    Edit
-                                </a>
+                                   href="{% url 'accounts:project_config_edit' p.id %}">Edit</a>
                                 <a class="btn btn-sm btn-outline-secondary"
-                                   href="{% url 'accounts:project_chat_list' p.id %}">
-                                    Chats
-                                </a>
+                                   href="{% url 'accounts:project_chat_list' p.id %}">Chats</a>
+                                {% if can_rename %}
+                                    <a class="btn btn-sm btn-outline-primary"
+                                       href="{% url 'projects:rename_project' p.id %}">Rename</a>
+                                {% endif %}
                             </td>
                         </tr>
                         {% endfor %}
@@ -96,7 +86,7 @@
                 </table>
             </div>
             {% else %}
-            <div class="text-secondary">No projects available.</div>
+                <div class="text-secondary">No projects available.</div>
             {% endif %}
 
         </div>

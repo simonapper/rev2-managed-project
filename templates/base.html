@@ -18,26 +18,59 @@
           href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
 
     {% load static %}
-    <link rel="stylesheet" href="{% static 'app.css' %}" />
+    <link rel="stylesheet" href="{% static 'app.css' %}?v=4" />
 </head>
 
 <body class="rw-shell">
+
+<header class="rw-topbar" role="banner">
     {% include "partials/topbar.html" %}
+</header>
 
-    <div class="rw-body">
-        <aside class="rw-sidebar border-end bg-light">
+<div class="rw-body">
+
+    <!-- Desktop sidebar -->
+    <aside class="rw-sidebar border-end bg-light d-none d-lg-block">
+        {% include "partials/sidebar.html" %}
+    </aside>
+
+    <!-- Mobile offcanvas sidebar -->
+    <div class="offcanvas offcanvas-start d-lg-none rw-offcanvas-sidebar"
+         tabindex="-1"
+         id="rwSidebarOffcanvas"
+         aria-labelledby="rwSidebarOffcanvasLabel">
+        <div class="offcanvas-header">
+            <h5 class="offcanvas-title" id="rwSidebarOffcanvasLabel">Menu</h5>
+            <button type="button" class="btn-close"
+                    data-bs-dismiss="offcanvas"
+                    aria-label="Close"></button>
+        </div>
+        <div class="offcanvas-body">
             {% include "partials/sidebar.html" %}
-        </aside>
-
-        <main class="rw-main" role="main">
-            {% block content %}{% endblock %}
-        </main>
+        </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
-            integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
-            crossorigin="anonymous"></script>
+    <main class="rw-main" role="main">
 
-    <script src="{% static 'app.js' %}"></script>
+        {# GLOBAL FLASH MESSAGES #}
+        {% if messages %}
+          <div class="container-fluid px-0 mb-3">
+            {% for message in messages %}
+              <div class="alert alert-{{ message.tags|default:'info' }} py-2 mb-2" role="alert">
+                {{ message }}
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
+
 </body>
 </html>

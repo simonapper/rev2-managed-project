@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 # accounts/urls.py
-# WHOLE FILE
-
 from __future__ import annotations
 
 from django.contrib.auth import views as auth_views
@@ -19,19 +17,27 @@ urlpatterns = [
     # Invite flow
     path("set-password/<uidb64>/<token>/", views.set_password_from_invite, name="set_password"),
 
-# App
+    # Dashboard
     path("dashboard/", views.dashboard, name="dashboard"),
     path("projects/create/", views.project_create, name="project_create"),
+
+    # Project chats
     path("projects/<int:project_id>/chats/", views.project_chat_list, name="project_chat_list"),
 
+    # Chat routes
     path("chats/", views.chat_list, name="chat_list"),
     path("chats/message/", views.chat_message_create, name="chat_message_create"),
     path("chats/browse/", views.chat_browse, name="chat_browse"),
+    path("chats/<int:chat_id>/", views.chat_detail, name="chat_detail"),
+    path("chats/new/", views.chat_create, name="chat_create"),
+    path("chats/<int:chat_id>/rename/", views.chat_rename, name="chat_rename"),
 
-        # Active project (session)
+
+
+    # Active project (session)
     path("active-project/", views.active_project_set, name="active_project_set"),
 
-    # Settings
+    # Settings menu
     path("config/", views.config_menu, name="config_menu"),
 
     # User (L1)
@@ -48,6 +54,10 @@ urlpatterns = [
         name="project_config_definitions",
     ),
     path("config/projects/<int:project_id>/info/", views.project_config_info, name="project_config_info"),
+
+    # # Imports
+    # path("imports/preview/", views.import_preview, name="import_preview"),
+    # path("imports/preview/<str:conv_id>/", views.import_preview_detail, name="import_preview_detail"),
 
     # Session overrides
     path("session-overrides/", views.session_overrides_update, name="session_overrides_update"),

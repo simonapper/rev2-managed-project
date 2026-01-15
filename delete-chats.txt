@@ -1,0 +1,4 @@
+from chats.models import ChatWorkspace
+
+ChatWorkspace.objects.filter(project_id=7).count()
+ChatWorkspace.objects.filter(project_id=7).delete()

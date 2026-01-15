@@ -5,9 +5,14 @@
 
 from django.conf import settings
 from django.conf.urls.static import static
+from django.urls import path, include
+from projects import views
+
+app_name = "projects"
 
 urlpatterns = [
-    # ...
+    path("<int:project_id>/rename/", views.rename_project, name="rename_project"),
+    # add other project-specific routes here
 ]
 
 if settings.DEBUG:

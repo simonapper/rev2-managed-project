@@ -1,0 +1,29 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/chat_create.html #}
+{% extends "base.html" %}
+{% block content %}
+<div class="container-sm py-4">
+  <h5 class="mb-3">New chat</h5>
+
+  <form method="post">
+    {% csrf_token %}
+
+    <div class="mb-2">
+      <label class="form-label small text-secondary">Title</label>
+      <input name="title" class="form-control form-control-sm" required>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label small text-secondary">Project</label>
+      <select name="project" class="form-select form-select-sm" required>
+        {% for p in projects %}
+          <option value="{{ p.id }}">{{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <button class="btn btn-sm btn-primary">Create</button>
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:dashboard' %}">Cancel</a>
+  </form>
+</div>
+{% endblock %}

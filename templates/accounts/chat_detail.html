@@ -1,0 +1,180 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/chat_detail.html #}
+{% extends "base.html" %}
+{% block title %}{{ chat.title }} — Reasoning Workbench{% endblock %}
+
+{% block content %}
+<div class="rw-main-inner">
+
+<form method="post" action="{% url 'accounts:chat_rename' chat.id %}" class="d-flex gap-2 align-items-center">
+  {% csrf_token %}
+  <input name="title" class="form-control form-control-sm" value="{{ chat.title }}" style="max-width: 420px;">
+  <button class="btn btn-sm btn-outline-secondary" type="submit">Rename</button>
+</form>
+
+
+  <div class="rw-breadcrumbs d-flex align-items-center justify-content-between">
+    <div class="d-flex align-items-center gap-2">
+      <i class="bi bi-house"></i>
+      <span class="text-secondary">{{ chat.project.name }}</span>
+      <i class="bi bi-chevron-right"></i>
+      <span class="text-secondary">Chat</span>
+      <i class="bi bi-chevron-right"></i>
+      <span class="fw-semibold">{{ chat.title }}</span>
+    </div>
+
+    <div class="d-flex align-items-center gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:chat_browse' %}">Back</a>
+    </div>
+  </div>
+
+  <div class="rw-workarea">
+    <div class="rw-pane">
+      <div class="rw-pane-body p-3">
+
+        {# Attachments list (copied from dashboard) #}
+        {% if attachments %}
+          <div class="mb-3">
+            <div class="text-secondary small mb-1">Attachments in this chat</div>
+            <div class="list-group">
+              {% for a in attachments %}
+                <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+                   href="{{ a.file.url }}">
+                  <span>{{ a.original_name }}</span>
+                  <span class="text-secondary small">{{ a.size_bytes }} bytes</span>
+                </a>
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
+
+        {# MASTER–DETAIL TURNS (copied from dashboard) #}
+        {% if not turn_items %}
+          <div class="alert alert-secondary mb-0">No messages yet.</div>
+        {% else %}
+          <div class="rw-turn-split">
+
+            <div class="rw-turn-list">
+              <table class="rw-turn-table">
+                <thead>
+                  <tr>
+                    <th style="width:70px;">
+                      <a href="?turn_sort=number&turn_dir={% if turn_sort == 'number' and turn_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_turn %}&turn={{ active_turn.turn_id }}{% endif %}">
+                        Turn
+                      </a>
+                    </th>
+                    <th>
+                      <a href="?turn_sort=title&turn_dir={% if turn_sort == 'title' and turn_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_turn %}&turn={{ active_turn.turn_id }}{% endif %}">
+                        Title
+                      </a>
+                    </th>
+                    <th style="width:140px;">
+                      <a href="?turn_sort=updated&turn_dir={% if turn_sort == 'updated' and turn_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_turn %}&turn={{ active_turn.turn_id }}{% endif %}">
+                        Updated
+                      </a>
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {% for t in turn_items %}
+                    <tr class="{% if active_turn and t.turn_id == active_turn.turn_id %}rw-turn-row-active{% endif %}">
+                      <td>
+                        <a class="rw-turn-rowlink"
+                           href="?turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}">
+                          {{ t.number }}
+                        </a>
+                      </td>
+                      <td>
+                        <a class="rw-turn-rowlink"
+                           href="?turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}">
+                          {{ t.input.0.content|default:"(no input)"|truncatechars:60 }}
+                        </a>
+                      </td>
+                      <td>
+                        <a class="rw-turn-rowlink"
+                           href="?turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}">
+                          {{ t.created_at|date:"Y-m-d H:i" }}
+                        </a>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+
+            <div class="rw-turn-detail">
+              {% if not active_turn %}
+                <div class="alert alert-secondary mb-0">Select a turn to view its panes.</div>
+              {% else %}
+                {% with pane=active_turn %}
+                  <div class="d-flex flex-column gap-2">
+
+                    <details open class="rw-channel">
+                      <summary class="fw-semibold">INPUT</summary>
+                      <div class="pt-2">
+                        {% if pane.input %}
+                          {% for m in pane.input %}{% include "partials/_message.html" with m=m %}{% endfor %}
+                        {% else %}<div class="text-secondary small">No inputs yet.</div>{% endif %}
+                      </div>
+                    </details>
+
+                    <details open class="rw-channel">
+                      <summary class="fw-semibold">ANSWER</summary>
+                      <div class="pt-2">
+                        {% if pane.answer %}
+                          {% for m in pane.answer %}{% include "partials/_message.html" with m=m %}{% endfor %}
+                        {% else %}<div class="text-secondary small">No ANSWER messages.</div>{% endif %}
+                      </div>
+                    </details>
+
+                    <details open class="rw-channel">
+                      <summary class="fw-semibold">KEY INFO</summary>
+                      <div class="pt-2">
+                        {% if pane.keyinfo %}
+                          {% for m in pane.keyinfo %}{% include "partials/_message.html" with m=m %}{% endfor %}
+                        {% else %}<div class="text-secondary small">No KEY INFO yet.</div>{% endif %}
+                      </div>
+                    </details>
+
+                    <details open class="rw-channel">
+                      <summary class="fw-semibold">VISUALS</summary>
+                      <div class="pt-2">
+                        {% if pane.visuals %}
+                          {% for m in pane.visuals %}{% include "partials/_message.html" with m=m %}{% endfor %}
+                        {% else %}<div class="text-secondary small">No VISUALS yet.</div>{% endif %}
+                      </div>
+                    </details>
+
+                    <details class="rw-channel">
+                      <summary class="fw-semibold">REASONING</summary>
+                      <div class="pt-2">
+                        {% if pane.reasoning %}
+                          {% for m in pane.reasoning %}{% include "partials/_message.html" with m=m %}{% endfor %}
+                        {% else %}<div class="text-secondary small">No REASONING messages.</div>{% endif %}
+                      </div>
+                    </details>
+
+                    <details class="rw-channel">
+                      <summary class="fw-semibold">OUTPUT</summary>
+                      <div class="pt-2">
+                        {% if pane.output %}
+                          {% for m in pane.output %}{% include "partials/_message.html" with m=m %}{% endfor %}
+                        {% else %}<div class="text-secondary small">No OUTPUT yet.</div>{% endif %}
+                      </div>
+                    </details>
+
+                  </div>
+                {% endwith %}
+              {% endif %}
+            </div>
+
+          </div>
+        {% endif %}
+
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

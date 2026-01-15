@@ -3,7 +3,8 @@
    Purpose:
    - Shell layout (topbar / sidebar / main)
    - Reporting UI (topbar status grid)
-   - Keep behavioural JS out of CSS
+   - Turn master/detail UI
+   - Bootstrap offcanvas sidebar on mobile
    ============================================================ */
 
 
@@ -34,10 +35,6 @@
 
 /* ============================================================
    2) Topbar layout
-   Purpose:
-   - Identity on left
-   - Reporting in centre (read-only)
-   - Actions on right
    ============================================================ */
 
 .rw-topbar {
@@ -52,6 +49,9 @@
 
 .rw-topbar-left {
     min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
 .rw-topbar-centre {
@@ -90,11 +90,6 @@
 
 /* ============================================================
    4) Topbar status grid (REPORTING ONLY)
-   Purpose:
-   - Fixed-size tiles
-   - Equal visual weight
-   - Text centred
-   - No flex resizing based on content
    ============================================================ */
 
 .rw-status-grid {
@@ -143,7 +138,6 @@
 }
 
 
-
 /* ============================================================
    5) Buttons & forms (topbar actions)
    ============================================================ */
@@ -176,63 +170,43 @@
 }
 
 
-/* =========================================================
-   Sidebar compact mode (≈ 50% visual size)
-   ========================================================= */
+/* ============================================================
+   6) Sidebar (desktop fixed)
+   ============================================================ */
 
 .rw-sidebar {
-    width: 130px;
-    flex: 0 0 130px;
+    width: 220px;
+    flex: 0 0 220px;
     border-right: 1px solid #dee2e6;
     background: #fff;
     overflow: auto;
 }
-/* Reduce text + spacing inside sidebar */
+
+/* Sidebar nav sizing */
 .rw-sidebar-nav .nav-link {
-    font-size: 0.80rem; /* was ~1rem */
-    padding: 0.30rem 0.45rem; /* reduce click area */
+    font-size: 0.80rem;
+    padding: 0.30rem 0.45rem;
     line-height: 1.1;
 }
 
-/* Tighten the nav list padding */
 .rw-sidebar-nav .nav {
     padding-left: 0.5rem !important;
     padding-right: 0.5rem !important;
     padding-top: 0.5rem !important;
     padding-bottom: 0.5rem !important;
-    gap: 0.25rem !important; /* smaller than your current gap-1 */
+    gap: 0.25rem !important;
 }
 
-/* Make icons smaller */
 .rw-sidebar-nav .nav-link i {
     font-size: 0.85rem;
-    margin-right: 0.35rem !important; /* override me-2 feel */
+    margin-right: 0.35rem !important;
 }
 
-/* =========================
-   Turn cards
-   ========================= */
 
-.rw-turn {
-    border: 1px solid #e5e7eb;
-    border-radius: 10px;
-    padding: 0.25rem 0.75rem;
-    background: #fff;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-}
+/* ============================================================
+   7) Turn master/detail
+   ============================================================ */
 
-    .rw-turn > summary {
-        cursor: pointer;
-        list-style: none;
-        font-weight: 600;
-        padding: 0.6rem 0.4rem;
-    }
-
-        .rw-turn > summary::-webkit-details-marker {
-            display: none;
-        }
-
-/* two-column master/detail for turns */
 .rw-turn-split {
     display: flex;
     gap: 16px;
@@ -257,7 +231,7 @@
 /* table look */
 .rw-turn-table {
     width: 100%;
-    font-size: 0.9rem;
+    font-size: 0.90rem;
     border-collapse: collapse;
 }
 
@@ -273,25 +247,23 @@
         top: 0;
         background: #fff;
         z-index: 2;
-        font-size: 0.8rem;
+        font-size: 0.80rem;
         text-transform: uppercase;
         letter-spacing: .04em;
         color: #64748b;
     }
+
     /* Centre table headings only */
     .rw-turn-table th {
         text-align: center;
     }
 
-    /* Keep body cells as-is, except Turn number */
+    /* Centre TURN column cells only */
     .rw-turn-table td:first-child {
         text-align: center;
     }
 
-    .rw-turn-table td:first-child {
-        text-align: center;
-    }
-
+/* row links */
 .rw-turn-rowlink {
     display: block;
     color: inherit;
@@ -307,9 +279,9 @@
 }
 
 
-/* =========================
-   Channel panes
-   ========================= */
+/* ============================================================
+   8) Channel panes
+   ============================================================ */
 
 .rw-channel {
     border: 1px solid #f0f0f0;
@@ -335,51 +307,14 @@
         padding-top: 0.5rem !important;
     }
 
-/* =========================
-   Content tweaks
-   ========================= */
 
-/* Hide noisy meta unless needed */
+/* ============================================================
+   9) Content tweaks
+   ============================================================ */
+
 .rw-message-meta {
     display: none;
 }
-
-/* INPUT */
-.rw-channel summary:has(+ div .rw-message-user) {
-    color: #2563eb;
-}
-
-/* ANSWER */
-.rw-channel summary:contains("ANSWER") {
-    color: #111;
-}
-
-/* KEY INFO */
-.rw-channel summary:contains("KEY INFO") {
-    color: #047857;
-}
-
-/* VISUALS */
-.rw-channel summary:contains("VISUALS") {
-    color: #7c3aed;
-}
-
-    .rw-channel summary:contains("VISUALS") + div {
-        font-size: 1.2rem;
-        text-align: center;
-    }
-
-/* OUTPUT */
-.rw-channel summary:contains("OUTPUT") + div {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    background: #f9fafb;
-    border-radius: 6px;
-    padding: 0.5rem;
-}
-
-/* =========================
-   Spacing tightening
-   ========================= */
 
 .rw-pane-body {
     line-height: 1.5;
@@ -390,28 +325,87 @@
     }
 
 
-
 /* ============================================================
-   6) Responsive adjustments
+   10) Mobile sidebar (Bootstrap offcanvas)
+   Notes:
+   - You must add class "rw-offcanvas-sidebar" to the offcanvas div
+   - Example:
+   <div class="offcanvas offcanvas-start d-lg-none rw-offcanvas-sidebar" ...>
    ============================================================ */
 
-/* Tablet */
-@media (max-width: 992px) {
+/* < lg: hide fixed sidebar and let main fill width */
+@media (max-width: 991.98px) {
+
+    /* offcanvas body padding controlled here */
+    .rw-offcanvas-sidebar .offcanvas-body {
+        padding: .25rem !important;
+    }
+
+    /* kill the big padding from: <ul class="... px-3 py-3 ..."> inside sidebar.html */
+    .rw-offcanvas-sidebar .rw-sidebar-nav .nav {
+        padding: .25rem .25rem !important;
+        margin: 0 !important;
+        gap: .25rem !important;
+    }
+
     .rw-sidebar {
-        width: 220px;
-        flex-basis: 220px;
+        display: none;
     }
 
-    .rw-topbar-centre {
-        justify-content: flex-start;
+    .rw-body {
+        display: block;
     }
 
-    .rw-status-grid {
-        justify-content: flex-start;
+    .rw-main {
+        padding: 0.75rem;
     }
+
+    /* Offcanvas sizing */
+    .rw-offcanvas-sidebar {
+        top: 72px !important; /* below topbar (adjust if needed) */
+        bottom: auto !important; /* prevent full-height fill */
+        height: auto !important;
+        width: 220px !important; /* menu width */
+        max-width: 85vw !important;
+        border-right: 1px solid #e5e7eb;
+        box-shadow: 4px 0 16px rgba(0,0,0,0.12);
+    }
+
+        /* Make the header compact and remove "gap" under Menu */
+        .rw-offcanvas-sidebar .offcanvas-header {
+            padding: 0.35rem 0.6rem !important;
+            align-items: center;
+        }
+
+        .rw-offcanvas-sidebar .offcanvas-title {
+            margin: 0 !important; /* kills default h5 margins */
+            line-height: 1.1;
+            font-size: 1rem;
+        }
+
+        .rw-offcanvas-sidebar .btn-close {
+            padding: 0.25rem;
+        }
+
+        /* Body scroll within the menu (not the whole page) */
+        .rw-offcanvas-sidebar .offcanvas-body {
+            overflow-y: auto !important;
+            max-height: calc(100vh - 120px) !important;
+            padding: 0.25rem 0.25rem !important;
+        }
+
+        /* IMPORTANT: remove the big padding under “Menu” created by py-3 */
+        .rw-offcanvas-sidebar .rw-sidebar-nav .nav {
+            padding-top: 0.25rem !important;
+            padding-bottom: 0.25rem !important;
+        }
 }
 
-/* Phone */
+
+/* ============================================================
+   11) Small-screen topbar tightening
+   ============================================================ */
+
 @media (max-width: 640px) {
     .rw-topbar {
         grid-template-columns: 1fr auto;
@@ -419,6 +413,8 @@
             "left right"
             "centre centre";
         align-items: start;
+        padding: 0.5rem 0.6rem;
+        gap: 0.5rem;
     }
 
     .rw-topbar-left {
@@ -433,4 +429,173 @@
         grid-area: centre;
         justify-content: flex-start;
     }
+
+    .rw-brand-name {
+        font-size: 1.05rem;
+    }
+
+    .rw-brand-user {
+        font-size: 0.72rem;
+    }
+
+    /* Make status tiles smaller */
+    .rw-status {
+        flex: 0 0 96px;
+        width: 96px;
+        min-width: 96px;
+        max-width: 96px;
+        height: 34px;
+        min-height: 34px;
+        max-height: 34px;
+    }
+
+    .rw-status-label {
+        font-size: 0.6rem;
+    }
+
+    .rw-status-value {
+        font-size: 0.7rem;
+    }
+
+    /* Buttons shrink */
+    .rw-topbar-btn {
+        padding: 0.28rem 0.7rem;
+        font-size: 0.8rem;
+    }
 }
+/* ============================================================
+   Import / utility small buttons
+   ============================================================ */
+
+.rw-btn-xs {
+    padding: 0.18rem 0.45rem;
+    font-size: 0.72rem;
+    line-height: 1.1;
+}
+/* ============================================================
+   Import preview page — compact cards
+   ============================================================ */
+
+.rw-import-card {
+    padding: 0.75rem !important;
+}
+
+    .rw-import-card .form-label {
+        font-size: 0.80rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .rw-import-card .form-control,
+    .rw-import-card .form-select {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.85rem;
+    }
+
+.rw-import-preview {
+    padding: 0.75rem !important;
+}
+
+.rw-import-preview .list-group-item {
+    padding: 0.45rem 0.6rem;
+    font-size: 0.85rem;
+}
+
+.rw-import-preview h6 {
+    margin-bottom: 0.5rem;
+}
+
+/* Import preview header sizing */
+.rw-import-preview h6 {
+    font-size: 1rem; /* match logo text size */
+    margin-bottom: 0.25rem;
+}
+
+/* Smaller secondary text */
+.rw-import-preview .text-muted,
+.rw-import-preview small,
+.rw-import-preview .form-text {
+    font-size: 0.5rem; /* try 0.6rem if you want even smaller */
+}
+
+/* Constrain preview card width */
+/* Import preview — small, left-aligned */
+.rw-import-preview,
+.rw-import-card {
+    max-width: 520px; /* go 480px if you want tighter */
+    margin-left: 0;
+    margin-right: 0;
+}
+.rw-import-subtitle {
+    font-size: 0.8rem;
+}
+
+/* ============================================================
+   Dashboard: recent chat tiles (compact)
+   ============================================================ */
+
+.rw-chat-tile-link {
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
+
+.rw-chat-tile {
+    width: 100%;
+}
+
+    .rw-chat-tile .card-body {
+        height: 72px;
+        padding: 0.4rem 0.5rem;
+        overflow: hidden;
+    }
+
+.rw-chat-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1.15;
+    margin-bottom: 0.15rem;
+}
+
+.rw-chat-snippet {
+    font-size: 0.72rem;
+    line-height: 1.15;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.rw-chat-tile-link-active .rw-chat-tile {
+    border-color: rgba(0, 0, 0, 0.35);
+}
+
+/* Chat Browse Columns*/
+.rw-updated-col {
+    width: 200px;
+    white-space: nowrap;
+}
+
+.rw-chat-table td, .rw-chat-table th {
+    font-size: 0.80rem;
+}
+
+/* Chat browse table header tidy */
+.rw-chat-table thead th {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #5c6f82; /* Bootstrap text-secondary */
+    /*/ text-transform: uppercase; */
+    letter-spacing: 0.03em;
+    border-bottom: 1px solid #dee2e6;
+    padding-top: 0.4rem;
+    padding-bottom: 0.4rem;
+}
+
+    .rw-chat-table thead th a {
+        color: inherit;
+        text-decoration: none;
+    }
+
+        .rw-chat-table thead th a:hover {
+            text-decoration: underline;
+        }

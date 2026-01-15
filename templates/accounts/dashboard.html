@@ -23,7 +23,7 @@
     </div>
 
     <div class="d-flex align-items-center gap-2">
-      <a class="btn btn-sm btn-outline-secondary" href="#">
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:chat_create' %}">
         <i class="bi bi-plus-lg me-1"></i>New chat
       </a>
     </div>
@@ -43,21 +43,47 @@
           </div>
         {% else %}
 
-          {# Chat selector #}
-          <div class="mb-3">
-            {% if chats %}
-              <div class="d-flex flex-wrap gap-2">
-                {% for c in chats %}
-                  <a class="btn btn-sm {% if active_chat and c.id == active_chat.id %}btn-secondary{% else %}btn-outline-secondary{% endif %}"
-                     href="{% url 'accounts:dashboard' %}?chat={{ c.id }}">
-                    {{ c.title }}
+         {# Recent chats (tiles) #}
+            <div class="mb-3">
+              {% if chats %}
+                <div class="row g-2 rw-chat-tiles">
+                  {% for c in chats %}
+                    <div class="col-12 col-sm-6 col-lg-2">
+                      <a class="rw-chat-tile-link {% if active_chat and c.id == active_chat.id %}rw-chat-tile-link-active{% endif %}"
+                         href="{% url 'accounts:dashboard' %}?chat={{ c.id }}">
+                        <div class="card rw-chat-tile h-100">
+                          <div class="card-body">
+                            <div class="rw-chat-title">
+                              {{ c.title|default:"(untitled)"|truncatechars:60 }}
+                            </div>
+
+                            {% if c.last_output_snippet %}
+                              <div class="rw-chat-snippet text-muted">
+                                {{ c.last_output_snippet|truncatechars:140 }}
+                              </div>
+                            {% else %}
+                              <div class="rw-chat-snippet text-muted">
+                                —
+                              </div>
+                            {% endif %}
+                          </div>
+                        </div>
+                      </a>
+                    </div>
+                  {% endfor %}
+                </div>
+
+                <div class="mt-2">
+                  <a class="small text-secondary" href="{% url 'accounts:chat_browse' %}">
+                    View all chats
                   </a>
-                {% endfor %}
-              </div>
-            {% else %}
-              <div class="text-secondary small">No active chats in this project yet.</div>
-            {% endif %}
-          </div>
+                </div>
+
+              {% else %}
+                <div class="text-secondary small">No active chats in this project yet.</div>
+              {% endif %}
+            </div>
+
 
           {% if not active_chat %}
             <div class="alert alert-secondary mb-0">

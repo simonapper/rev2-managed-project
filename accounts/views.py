@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # accounts/views.py
-# WHOLE FILE
 
 from __future__ import annotations
 from django.utils import timezone
@@ -26,11 +25,16 @@ from chats.services.llm import generate_panes
 from uuid import uuid4
 from django.db.models import Count
 from chats.models import ChatMessage
-from projects.services import accessible_projects_qs
+from projects.services import accessible_projects_qs, is_project_manager
 from accounts.forms import ProjectOperatingProfileForm
 from collections import OrderedDict
-
-
+import json
+from pathlib import Path
+from django.conf import settings
+from django.core.files.uploadedfile import UploadedFile
+from django.core.files.storage import default_storage
+from chats.models import ChatWorkspace, ChatMessage
+from uploads.models import ChatAttachment
 
 
 User = get_user_model()
@@ -60,20 +64,91 @@ def set_password_from_invite(request, uidb64: str, token: str):
 
     return render(request, "accounts/set_password.html", {"form": form})
 
-
 # ------------------------------------------------------------
-# Dashboard
+# Chat Context Builder
 # ------------------------------------------------------------
-@login_required
-def dashboard(request):
-    user = request.user
 
-    projects = (
-        accessible_projects_qs(user)
-        .select_related("owner", "active_l4_config")
-        .order_by("name")
+from collections import OrderedDict
+
+def build_chat_turn_context(request, chat):
+    attachments = list(ChatAttachment.objects.filter(chat=chat))
+
+    msg_list = list(
+        ChatMessage.objects.filter(chat=chat).order_by("created_at")
     )
 
+    turns = OrderedDict()
+    for m in msg_list:
+        tid = (m.tool_metadata or {}).get("turn_id") or "legacy"
+        t = turns.setdefault(
+            tid,
+            {
+                "turn_id": tid,
+                "input": [],
+                "answer": [],
+                "keyinfo": [],
+                "visuals": [],
+                "reasoning": [],
+                "output": [],
+                "created_at": None,
+            },
+        )
+
+        if t["created_at"] is None:
+            t["created_at"] = m.created_at
+
+        if m.role == ChatMessage.Role.USER:
+            t["input"].append(m)
+        elif m.channel == ChatMessage.Channel.ANSWER:
+            t["answer"].append(m)
+        elif m.channel == ChatMessage.Channel.SOURCES:
+            t["keyinfo"].append(m)
+        elif m.channel == ChatMessage.Channel.VISUALS:
+            t["visuals"].append(m)
+        elif m.channel in (
+            ChatMessage.Channel.REASONING,
+            ChatMessage.Channel.ANALYSIS,
+            ChatMessage.Channel.META,
+        ):
+            t["reasoning"].append(m)
+        else:
+            t["output"].append(m)
+
+    turn_items = list(turns.values())
+    for i, t in enumerate(turn_items, start=1):
+        t["number"] = i
+
+    selected_turn_id = request.GET.get("turn")
+    active_turn = None
+    if selected_turn_id:
+        active_turn = next((t for t in turn_items if t["turn_id"] == selected_turn_id), None)
+    if active_turn is None and turn_items:
+        active_turn = turn_items[-1]
+
+    turn_sort, turn_dir = normalise_turn_sort(request)
+
+    key_map = {
+        "number": lambda x: x.get("number", 0),
+        "title": lambda x: (x.get("input")[0].content if x.get("input") else ""),
+        "updated": lambda x: x.get("created_at"),
+    }
+    key_fn = key_map.get(turn_sort, key_map["number"])
+    turn_items = sorted(turn_items, key=key_fn, reverse=(turn_dir == "desc"))
+
+    # re-number after sort
+    for i, t in enumerate(turn_items, start=1):
+        t["number"] = i
+
+    return {
+        "attachments": attachments,
+        "turn_items": turn_items,
+        "active_turn": active_turn,
+        "turn_sort": turn_sort,
+        "turn_dir": turn_dir,
+    }
+
+
+def get_active_project_and_chats(request, user, projects):
     active_project = None
     active_project_id = request.session.get("rw_active_project_id")
     if active_project_id:
@@ -85,29 +160,14 @@ def dashboard(request):
             request.session["rw_active_project_id"] = active_project.id
             request.session.modified = True
 
-    active_chat = None
     chats = []
-    attachments = []
-    turn_items = []
-    active_turn = None
-    sort = request.GET.get("sort") or "updated"
+    active_chat = None
 
     if active_project:
-        from chats.models import ChatWorkspace, ChatMessage
-        from uploads.models import ChatAttachment
-
-        order_map = {
-            "updated": ("-updated_at", "-created_at"),
-            "created": ("-created_at",),
-            "title": ("title",),
-        }
-        ordering = order_map.get(sort, order_map["updated"])
-
-        chats = list(
-            ChatWorkspace.objects.filter(
-                project=active_project,
-                status=ChatWorkspace.Status.ACTIVE,
-            ).order_by(*ordering)
+        chats = (
+            ChatWorkspace.objects
+            .filter(project__in=projects)
+            .order_by("-updated_at")[:10]
         )
 
         chat_id = request.GET.get("chat")
@@ -129,75 +189,37 @@ def dashboard(request):
             request.session.pop("rw_active_chat_id", None)
             request.session.modified = True
 
-        if active_chat:
-            attachments = list(ChatAttachment.objects.filter(chat=active_chat))
+    return active_project, chats, active_chat
 
-            msg_list = list(
-                ChatMessage.objects.filter(chat=active_chat).order_by("created_at")
-            )
 
-            turns = OrderedDict()
 
-            for m in msg_list:
-                tid = (m.tool_metadata or {}).get("turn_id") or "legacy"
-                t = turns.setdefault(
-                    tid,
-                    {
-                        "turn_id": tid,
-                        "input": [],
-                        "answer": [],
-                        "keyinfo": [],
-                        "visuals": [],
-                        "reasoning": [],
-                        "output": [],
-                        "created_at": None,
-                    },
-                )
+# ------------------------------------------------------------
+# Dashboard
+# ------------------------------------------------------------
+@login_required
+def dashboard(request):
+    
+    user = request.user
+    projects = (
+        accessible_projects_qs(user)
+        .select_related("owner", "active_l4_config")
+        .order_by("name")
+    )
+    active_project, chats, active_chat = get_active_project_and_chats(request, user, projects)
 
-                if t["created_at"] is None:
-                    t["created_at"] = m.created_at
+    attachments = []
+    turn_items = []
+    active_turn = None
+    turn_sort, turn_dir = normalise_turn_sort(request)
+    sort = request.GET.get("sort") or "updated"
 
-                if m.role == ChatMessage.Role.USER:
-                    t["input"].append(m)
-                elif m.channel == ChatMessage.Channel.ANSWER:
-                    t["answer"].append(m)
-                elif m.channel == ChatMessage.Channel.SOURCES:
-                    t["keyinfo"].append(m)
-                elif m.channel == ChatMessage.Channel.VISUALS:
-                    t["visuals"].append(m)
-                elif m.channel in (
-                    ChatMessage.Channel.REASONING,
-                    ChatMessage.Channel.ANALYSIS,
-                    ChatMessage.Channel.META,
-                ):
-                    t["reasoning"].append(m)
-                else:
-                    t["output"].append(m)
-
-            turn_items = list(turns.values())
-            for i, t in enumerate(turn_items, start=1):
-                t["number"] = i
-
-            selected_turn_id = request.GET.get("turn")
-            if selected_turn_id:
-                active_turn = next((t for t in turn_items if t["turn_id"] == selected_turn_id), None)
-
-            if active_turn is None and turn_items:
-                active_turn = turn_items[-1]
-
-            for i, t in enumerate(turn_items, start=1):
-                t["number"] = i
-
-            turn_sort = request.GET.get("turn_sort") or "number"
-            turn_dir = request.GET.get("turn_dir") or "asc"
-
-            key_map = {
-                "number": lambda x: x.get("number", 0),
-                "title": lambda x: (x.get("input")[0].content if x.get("input") else ""),
-                "updated": lambda x: x.get("created_at"),
-            }
-            key_fn = key_map.get(turn_sort, key_map["number"])
-            turn_items = sorted(turn_items, key=key_fn, reverse=(turn_dir == "desc"))
+    if active_chat:
+        ctx = build_chat_turn_context(request, active_chat)
+        attachments = ctx["attachments"]
+        turn_items = ctx["turn_items"]
+        active_turn = ctx["active_turn"]
+        turn_sort = ctx["turn_sort"]
+        turn_dir = ctx["turn_dir"]
 
 
     return render(
@@ -217,7 +239,20 @@ def dashboard(request):
         },
     )
 
+# ------------------------------------------------------------
+# Sorter Helper
+# ------------------------------------------------------------
 
+def normalise_turn_sort(request):
+    sort = request.GET.get("turn_sort", "number")
+    direction = request.GET.get("turn_dir", "asc")
+
+    if sort not in {"number", "title", "updated"}:
+        sort = "number"
+    if direction not in {"asc", "desc"}:
+        direction = "asc"
+
+    return sort, direction
 # ------------------------------------------------------------
 # Project create
 # ------------------------------------------------------------
@@ -302,6 +337,67 @@ def chat_list(request):
             "chats": chats,
         },
     )
+# ------------------------------------------------------------
+# Chat create (composer POST)
+# ------------------------------------------------------------
+@login_required
+def chat_create(request):
+    user = request.user
+    projects = accessible_projects_qs(user).order_by("name")
+
+    if request.method == "POST":
+        title = (request.POST.get("title") or "").strip()
+        project_id = request.POST.get("project")
+
+        project = projects.filter(id=project_id).first()
+        if not project or not title:
+            messages.error(request, "Title and project are required.")
+            return redirect("accounts:chat_create")
+
+        chat = ChatWorkspace.objects.create(
+            project=project,
+            title=title,
+            status=ChatWorkspace.Status.ACTIVE,
+            created_by=user,
+        )
+
+        request.session["rw_active_project_id"] = project.id
+        request.session["rw_active_chat_id"] = chat.id
+        request.session.modified = True
+
+        return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+    return render(
+        request,
+        "accounts/chat_create.html",
+        {"projects": projects},
+    )
+
+# ------------------------------------------------------------
+# Chat Rename (composer POST)
+# ------------------------------------------------------------
+@login_required
+def chat_rename(request, chat_id: int):
+    if request.method != "POST":
+        return redirect("accounts:chat_detail", chat_id=chat_id)
+
+    chat = get_object_or_404(ChatWorkspace, id=chat_id)
+
+    # Optional access check (recommended if you have it)
+    projects = accessible_projects_qs(request.user)
+    if not projects.filter(id=chat.project_id).exists():
+        return redirect("accounts:chat_browse")
+
+    title = (request.POST.get("title") or "").strip()
+    if not title:
+        messages.error(request, "Title cannot be empty.")
+        return redirect("accounts:chat_detail", chat_id=chat_id)
+
+    chat.title = title[:200]
+    chat.save(update_fields=["title", "updated_at"])
+    messages.success(request, "Chat renamed.")
+    return redirect("accounts:chat_detail", chat_id=chat_id)
+
 
 # ------------------------------------------------------------
 # Chat message create (composer POST)
@@ -408,7 +504,7 @@ def chat_message_create(request):
     chat.last_output_at = timezone.now()
     chat.save(update_fields=["last_output_snippet", "last_output_at", "updated_at"])
 
-    return redirect(next_url or f"{reverse('accounts:dashboard')}?chat={chat.id}")
+    return redirect(next_url or reverse("accounts:chat_detail", args=[chat.id]))
 
 # ------------------------------------------------------------
 # Chat Browser
@@ -500,6 +596,26 @@ def chat_browse(request):
     )
 
 # ------------------------------------------------------------
+# Chat Detail
+# ------------------------------------------------------------
+@login_required
+def chat_detail(request, chat_id: int):
+    chat = get_object_or_404(ChatWorkspace, id=chat_id)
+
+    ctx = build_chat_turn_context(request, chat)
+
+    return render(
+        request,
+        "accounts/chat_detail.html",
+        {
+            "active_project": chat.project,
+            "active_chat": chat,
+            "chat": chat,
+            **ctx,
+        },
+    )
+
+# ------------------------------------------------------------
 # Project Browser
 # ------------------------------------------------------------
 
@@ -577,7 +693,140 @@ def project_chat_list(request, project_id: int):
 def config_menu(request):
     return render(request, "accounts/config_menu.html")
 
+# ------------------------------------------------------------
+# Import Preview
+# ------------------------------------------------------------
 
+# @login_required
+# def import_preview(request):
+#     """
+#     Step 1: Preview ChatGPT JSON import.
+#     Shows user selection, uploaded file, and preview of chats.
+#     """
+#     users = User.objects.filter(is_active=True).order_by("username")
+#     preview_data = None
+#     uploaded_file_name = None
+
+#     if request.method == "POST" and "file" in request.FILES:
+#         file = request.FILES["file"]
+#         uploaded_file_name = file.name
+#         # Store in temporary location to keep between steps
+#         file_path = default_storage.save(f"temp/{file.name}", file)
+#         request.session["import_file_path"] = file_path
+
+#         # Parse the file for preview
+#         try:
+#             preview_data = parse_chatgpt_file(default_storage.open(file_path))
+#         except Exception as e:
+#             messages.error(request, f"Error parsing file: {str(e)}")
+#             preview_data = None
+
+#     return render(
+#         request,
+#         "imports/preview_import.html",
+#         {
+#             "users": users,
+#             "preview_data": preview_data,
+#             "uploaded_file_name": uploaded_file_name,
+#         },
+#     )
+# def parse_chatgpt_file(file):
+#     import json
+#     try:
+#         return json.load(file)
+#     except Exception:
+#         return []
+
+# @login_required
+# def import_chatgpt_action(request):
+#     """
+#     Step 2: Actually import the selected file into the chosen project/user.
+#     Uses session-stored file path from preview step.
+#     """
+#     file_path = request.session.get("import_file_path")
+#     if not file_path:
+#         messages.error(request, "No file selected for import. Please preview first.")
+#         return redirect(reverse("accounts:import_preview"))
+
+#     if request.method == "POST":
+#         project_id = request.POST.get("project")
+#         user_id = request.POST.get("user")
+
+#         try:
+#             project = Project.objects.get(id=project_id)
+#         except Project.DoesNotExist:
+#             messages.error(request, "Selected project does not exist.")
+#             return redirect(reverse("accounts:import_preview"))
+
+#         try:
+#             user = User.objects.get(id=user_id)
+#         except User.DoesNotExist:
+#             messages.error(request, "Selected user does not exist.")
+#             return redirect(reverse("accounts:import_preview"))
+
+#         # Parse the file again for import
+#         try:
+#             chats = parse_chatgpt_file(default_storage.open(file_path))
+#         except Exception as e:
+#             messages.error(request, f"Error parsing file: {str(e)}")
+#             return redirect(reverse("accounts:import_preview"))
+
+#         # Here you would loop through chats and create objects in DB
+#         imported_count = 0
+#         for chat in chats:
+#             # Replace this with your actual chat creation logic
+#             # e.g., Chat.objects.create(project=project, user=user, **chat)
+#             imported_count += 1
+
+#         # Clean up temporary file
+#         default_storage.delete(file_path)
+#         del request.session["import_file_path"]
+
+#         messages.success(request, f"Imported {imported_count} chats into project '{project.name}' for user '{user.username}'.")
+#         return redirect(reverse("accounts:project_config_list"))
+
+#     # If GET request, redirect to preview
+#     return redirect(reverse("accounts:import_preview"))
+# # ------------------------------------------------------------
+# # Import Preview Detail
+# # ------------------------------------------------------------
+
+# @login_required
+# def import_preview_detail(request, conv_id: str):
+#     import json
+#     from pathlib import Path
+#     from django.conf import settings
+
+#     p = Path(settings.BASE_DIR) / "imports" / "chatgpt-export.json"
+#     data = json.loads(p.read_text(encoding="utf-8"))
+#     conversations = data.get("conversations") or data
+
+#     conv = next((c for c in conversations if (c.get("id") or c.get("conversation_id")) == conv_id), None)
+#     if conv is None:
+#         raise Http404()
+
+#     # Build turns for preview only (very rough until we map your export precisely)
+#     turns = []
+#     # common shape in ChatGPT exports: mapping of nodes
+#     mapping = conv.get("mapping") or {}
+#     # pick nodes that have message content
+#     for _node_id, node in mapping.items():
+#         msg = (node or {}).get("message") or {}
+#         author = (msg.get("author") or {}).get("role")
+#         content = (msg.get("content") or {}).get("parts") or []
+#         text = "\n".join([p for p in content if isinstance(p, str)]).strip()
+#         if not text:
+#             continue
+#         turns.append({"author": author, "text": text})
+
+#     # crude ordering fallback
+#     turns = turns[:300]
+
+#     return render(
+#         request,
+#         "accounts/import_preview_detail.html",
+#         {"conv": conv, "turns": turns},
+#     )
 # ------------------------------------------------------------
 # Active project (session)
 # ------------------------------------------------------------
@@ -600,7 +849,7 @@ def active_project_set(request):
     user = request.user
     active_project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
   
-    request.session["rw_active_project_id"] = project.id
+    request.session["rw_active_project_id"] = active_project.id
     request.session.modified = True
 
     return redirect(request.POST.get("next") or "accounts:dashboard")
@@ -640,14 +889,14 @@ def user_config_definitions(request):
 # ------------------------------------------------------------
 # Project config (Level 4 operating profile)
 # ------------------------------------------------------------
+
+
 @login_required
 def project_config_list(request):
     user = request.user
 
-    if user.is_superuser or user.is_staff:
-        qs = accessible_projects_qs(request.user)
-    else:
-        qs = accessible_projects_qs(request.user).filter(Q(owner=user) | Q(scoped_roles__user=user)).distinct()
+    # Base queryset
+    qs = accessible_projects_qs(user)
 
     # Sorting
     sort = request.GET.get("sort", "name")
@@ -659,60 +908,24 @@ def project_config_list(request):
         "profile": "active_l4_config__file_name",
         "updated": "updated_at",
     }
-
-
     order_field = sort_map.get(sort, "name")
     if direction == "desc":
         order_field = f"-{order_field}"
 
     projects = qs.select_related("owner", "active_l4_config").order_by(order_field, "name")
 
+    # Annotate permissions
+    projects_with_permissions = [(p, is_project_manager(p, user)) for p in projects]
+
     return render(
         request,
         "accounts/config_project_list.html",
-        {"projects": projects, "sort": sort, "dir": direction},
-    )
-
-@login_required
-def project_config_edit(request, project_id: int):
-    user = request.user
-    active_project = get_object_or_404(
-        accessible_projects_qs(user),
-        pk=project_id,
-    )
-
-    allowed_qs = (
-        ConfigRecord.objects.filter(
-            level=ConfigRecord.Level.L4,
-            status=ConfigRecord.Status.ACTIVE,
-            scope__scope_type=ConfigScope.ScopeType.PROJECT,
-            scope__project=active_project,
-        )
-        .select_related("scope")
-        .order_by("file_name", "file_id")
-    )
-
-    if request.method == "POST":
-        form = ProjectOperatingProfileForm(request.POST, instance=active_project)
-        form.fields["active_l4_config"].queryset = allowed_qs
-        if form.is_valid():
-            form.save()
-            messages.success(request, "Project Operating Profile saved.")
-            return redirect("accounts:project_config_edit", project_id=active_project.id)
-    else:
-        form = ProjectOperatingProfileForm(instance=active_project)
-        form.fields["active_l4_config"].queryset = allowed_qs
-
-    return render(
-        request,
-        "accounts/config_project_edit.html",
         {
-            "active_project": active_project,
-            "project": active_project,  # <-- add this line
-            "form": form,
+            "projects_with_permissions": projects_with_permissions,
+            "sort": sort,
+            "dir": direction,
         },
     )
-
 
 @login_required
 def project_config_info(request, project_id: int):
@@ -725,7 +938,35 @@ def project_config_definitions(request, project_id: int):
     active_project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
     return render(request, "accounts/config_project_definitions.html", {"project": active_project})
 
+@login_required
+def project_config_edit(request, project_id):
+    project = get_object_or_404(Project, id=project_id)
 
+    # Only allow managers/owners to edit
+    if not is_project_manager(project, request.user):
+        return redirect("accounts:config_project_list")
+
+    if request.method == "POST":
+        new_name = request.POST.get("name")
+        description = request.POST.get("description", "")
+        if new_name:
+            project.name = new_name
+            project.description = description
+            project.save()
+            return redirect("accounts:config_project_list")  # back to list
+        else:
+            error = "Project name cannot be empty."
+    else:
+        error = None
+
+    return render(
+        request,
+        "accounts/config_project_edit.html",
+        {
+            "project": project,
+            "error": error,
+        },
+    )
 # ------------------------------------------------------------
 # Session overrides (AJAX) - keep minimal so URL resolves
 # ------------------------------------------------------------

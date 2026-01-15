@@ -1,7 +1,7 @@
 ﻿{# -*- coding: utf-8 -*- #}
 {# templates/accounts/config_menu.html #}
-
 {% extends "base.html" %}
+{% load static %}
 
 {% block content %}
 <div class="container-fluid px-4 py-4">
@@ -23,6 +23,12 @@
     <a href="{% url 'accounts:project_config_list' %}"
        class="btn btn-outline-primary btn-sm rw-config-btn">
       Project Settings
+    </a>
+
+    {# NEW: ChatGPT Import Button #}
+    <a href="{% url 'imports:preview_import' %}"
+       class="btn btn-outline-primary btn-sm rw-config-btn">
+      Import ChatGPT JSON
     </a>
   </div>
 

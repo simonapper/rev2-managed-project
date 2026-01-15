@@ -4,40 +4,24 @@
 
 {% block content %}
 <div class="container-fluid px-4 py-4">
+    <h5>Edit Project</h5>
 
-  <div class="d-flex align-items-center justify-content-between mb-3">
-    <div>
-      <h5 class="mb-1">Project Operating Profile</h5>
-      <div class="text-secondary small">{{ project.name }}</div>
-    </div>
+    {% if error %}
+        <div class="alert alert-danger">{{ error }}</div>
+    {% endif %}
 
-    <a href="{% url 'accounts:project_config_list' %}" class="btn btn-sm btn-outline-secondary">Back</a>
-  </div>
-
-  <form method="post" novalidate>
-    {% csrf_token %}
-
-    <div class="card mb-3">
-      <div class="card-body">
-
+    <form method="post">
+        {% csrf_token %}
         <div class="mb-3">
-          <label class="form-label">Operating Profile (Level 4 config)</label>
-          {{ form.active_l4_config }}
-          <div class="form-text">
-            Select the Level 4 config record that defines default work type/mode/checkpointing for this project.
-          </div>
+            <label class="form-label">Project Name</label>
+            <input type="text" name="name" class="form-control" value="{{ project.name }}" required>
         </div>
-
-      </div>
-    </div>
-
-    <div class="rw-actionbar mt-2 d-flex gap-2">
-      <a href="{% url 'accounts:project_config_info' project.id %}" class="btn btn-sm btn-outline-secondary">Info</a>
-      <a href="{% url 'accounts:project_config_definitions' project.id %}" class="btn btn-sm btn-outline-secondary">Definitions</a>
-      <button type="submit" class="btn btn-sm btn-primary">Save</button>
-    </div>
-
-  </form>
-
+        <div class="mb-3">
+            <label class="form-label">Description</label>
+            <textarea name="description" class="form-control">{{ project.description }}</textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Save</button>
+        <a href="{% url 'accounts:config_project_list' %}" class="btn btn-outline-secondary">Cancel</a>
+    </form>
 </div>
 {% endblock %}
