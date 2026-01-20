@@ -12,7 +12,6 @@
   <button class="btn btn-sm btn-outline-secondary" type="submit">Rename</button>
 </form>
 
-
   <div class="rw-breadcrumbs d-flex align-items-center justify-content-between">
     <div class="d-flex align-items-center gap-2">
       <i class="bi bi-house"></i>
@@ -32,7 +31,7 @@
     <div class="rw-pane">
       <div class="rw-pane-body p-3">
 
-        {# Attachments list (copied from dashboard) #}
+        {# Attachments list #}
         {% if attachments %}
           <div class="mb-3">
             <div class="text-secondary small mb-1">Attachments in this chat</div>
@@ -48,7 +47,6 @@
           </div>
         {% endif %}
 
-        {# MASTER–DETAIL TURNS (copied from dashboard) #}
         {% if not turn_items %}
           <div class="alert alert-secondary mb-0">No messages yet.</div>
         {% else %}
@@ -88,7 +86,7 @@
                       <td>
                         <a class="rw-turn-rowlink"
                            href="?turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}">
-                          {{ t.input.0.content|default:"(no input)"|truncatechars:60 }}
+                          {{ t.input.raw_text|default:"(no input)"|truncatechars:60 }}
                         </a>
                       </td>
                       <td>
@@ -114,8 +112,12 @@
                       <summary class="fw-semibold">INPUT</summary>
                       <div class="pt-2">
                         {% if pane.input %}
-                          {% for m in pane.input %}{% include "partials/_message.html" with m=m %}{% endfor %}
-                        {% else %}<div class="text-secondary small">No inputs yet.</div>{% endif %}
+                          <div class="rw-message">
+                            <div class="rw-message-body">{{ pane.input.raw_text|linebreaksbr }}</div>
+                          </div>
+                        {% else %}
+                          <div class="text-secondary small">No input.</div>
+                        {% endif %}
                       </div>
                     </details>
 
@@ -123,26 +125,12 @@
                       <summary class="fw-semibold">ANSWER</summary>
                       <div class="pt-2">
                         {% if pane.answer %}
-                          {% for m in pane.answer %}{% include "partials/_message.html" with m=m %}{% endfor %}
-                        {% else %}<div class="text-secondary small">No ANSWER messages.</div>{% endif %}
-                      </div>
-                    </details>
-
-                    <details open class="rw-channel">
-                      <summary class="fw-semibold">KEY INFO</summary>
-                      <div class="pt-2">
-                        {% if pane.keyinfo %}
-                          {% for m in pane.keyinfo %}{% include "partials/_message.html" with m=m %}{% endfor %}
-                        {% else %}<div class="text-secondary small">No KEY INFO yet.</div>{% endif %}
-                      </div>
-                    </details>
-
-                    <details open class="rw-channel">
-                      <summary class="fw-semibold">VISUALS</summary>
-                      <div class="pt-2">
-                        {% if pane.visuals %}
-                          {% for m in pane.visuals %}{% include "partials/_message.html" with m=m %}{% endfor %}
-                        {% else %}<div class="text-secondary small">No VISUALS yet.</div>{% endif %}
+                          <div class="rw-message">
+                            <div class="rw-message-body">{{ pane.answer|linebreaksbr }}</div>
+                          </div>
+                        {% else %}
+                          <div class="text-secondary small">No ANSWER.</div>
+                        {% endif %}
                       </div>
                     </details>
 
@@ -150,8 +138,12 @@
                       <summary class="fw-semibold">REASONING</summary>
                       <div class="pt-2">
                         {% if pane.reasoning %}
-                          {% for m in pane.reasoning %}{% include "partials/_message.html" with m=m %}{% endfor %}
-                        {% else %}<div class="text-secondary small">No REASONING messages.</div>{% endif %}
+                          <div class="rw-message">
+                            <div class="rw-message-body">{{ pane.reasoning|linebreaksbr }}</div>
+                          </div>
+                        {% else %}
+                          <div class="text-secondary small">No REASONING.</div>
+                        {% endif %}
                       </div>
                     </details>
 
@@ -159,8 +151,12 @@
                       <summary class="fw-semibold">OUTPUT</summary>
                       <div class="pt-2">
                         {% if pane.output %}
-                          {% for m in pane.output %}{% include "partials/_message.html" with m=m %}{% endfor %}
-                        {% else %}<div class="text-secondary small">No OUTPUT yet.</div>{% endif %}
+                          <div class="rw-message">
+                            <div class="rw-message-body">{{ pane.output|linebreaksbr }}</div>
+                          </div>
+                        {% else %}
+                          <div class="text-secondary small">No OUTPUT.</div>
+                        {% endif %}
                       </div>
                     </details>
 

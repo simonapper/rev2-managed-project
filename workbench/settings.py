@@ -54,17 +54,20 @@ INSTALLED_APPS = [
     "django_extensions",
 
     # Project apps
-    "accounts",
-    "projects.apps.ProjectsConfig",  # <-- IMPORTANT (was "projects")
+    "accounts.apps.AccountsConfig",
+    "projects.apps.ProjectsConfig",
     "chats",
     "objects",
-    "config",
+    "config.apps.ConfigConfig",
     "navigator",
     "notifications",
     "uploads",
     "imports",
 
+    # Config UI
+    "config_ui.apps.ConfigUiConfig", # ← keep ONE config_ui entry
 ]
+
 
 
 # --------------------------------------------------

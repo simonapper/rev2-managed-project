@@ -18,14 +18,14 @@ from django.utils.http import urlsafe_base64_decode
 from django.urls import reverse
 
 from accounts.forms import UserProfileDefaultsForm
-from config.models import ConfigRecord, ConfigScope
+from config.models import ConfigRecord, ConfigScope, ConfigVersion
 from projects.models import Project
 from uploads.models import ChatAttachment
 from chats.services.llm import generate_panes
 from uuid import uuid4
 from django.db.models import Count
 from chats.models import ChatMessage
-from projects.services import accessible_projects_qs, is_project_manager
+from projects.services_project_membership import accessible_projects_qs, is_project_manager
 from accounts.forms import ProjectOperatingProfileForm
 from collections import OrderedDict
 import json
@@ -35,10 +35,48 @@ from django.core.files.uploadedfile import UploadedFile
 from django.core.files.storage import default_storage
 from chats.models import ChatWorkspace, ChatMessage
 from uploads.models import ChatAttachment
-
+from django.core.paginator import Paginator
+from chats.services.turns import build_chat_turn_context
+from chats.services.chat_bootstrap import bootstrap_chat
+from django.views.decorators.http import require_POST
+from django.db import transaction
+from chats.services.cleanup import delete_empty_sandbox_chats
 
 User = get_user_model()
 
+
+# ------------------------------------------------------------
+# Delete Empty Chats
+# ------------------------------------------------------------
+
+@require_POST
+@login_required
+def chat_delete(request, chat_id: int):
+    chat = get_object_or_404(ChatWorkspace, pk=chat_id)
+
+    # Project access
+    p = chat.project
+    if not (request.user.is_superuser or p.owner_id == request.user.id):
+        messages.error(request, "No permission to delete this chat.")
+        return redirect("accounts:project_chat_list", p.id)
+
+    # SANDBOX only
+    if p.kind != "SANDBOX":
+        messages.error(request, "Chats can only be deleted in SANDBOX projects.")
+        return redirect("accounts:project_chat_list", p.id)
+
+    # Only delete if chat has no USER/ASSISTANT messages
+    has_real_msgs = ChatMessage.objects.filter(
+        chat=chat
+    ).exclude(role="SYSTEM").exists()
+
+    if has_real_msgs:
+        messages.error(request, "Chat contains messages and cannot be deleted.")
+        return redirect("accounts:project_chat_list", p.id)
+
+    chat.delete()
+    messages.success(request, "Empty chat deleted.")
+    return redirect("accounts:project_chat_list", p.id)
 
 # ------------------------------------------------------------
 # Invite flow: set password from emailed link
@@ -65,162 +103,29 @@ def set_password_from_invite(request, uidb64: str, token: str):
     return render(request, "accounts/set_password.html", {"form": form})
 
 # ------------------------------------------------------------
-# Chat Context Builder
-# ------------------------------------------------------------
-
-from collections import OrderedDict
-
-def build_chat_turn_context(request, chat):
-    attachments = list(ChatAttachment.objects.filter(chat=chat))
-
-    msg_list = list(
-        ChatMessage.objects.filter(chat=chat).order_by("created_at")
-    )
-
-    turns = OrderedDict()
-    for m in msg_list:
-        tid = (m.tool_metadata or {}).get("turn_id") or "legacy"
-        t = turns.setdefault(
-            tid,
-            {
-                "turn_id": tid,
-                "input": [],
-                "answer": [],
-                "keyinfo": [],
-                "visuals": [],
-                "reasoning": [],
-                "output": [],
-                "created_at": None,
-            },
-        )
-
-        if t["created_at"] is None:
-            t["created_at"] = m.created_at
-
-        if m.role == ChatMessage.Role.USER:
-            t["input"].append(m)
-        elif m.channel == ChatMessage.Channel.ANSWER:
-            t["answer"].append(m)
-        elif m.channel == ChatMessage.Channel.SOURCES:
-            t["keyinfo"].append(m)
-        elif m.channel == ChatMessage.Channel.VISUALS:
-            t["visuals"].append(m)
-        elif m.channel in (
-            ChatMessage.Channel.REASONING,
-            ChatMessage.Channel.ANALYSIS,
-            ChatMessage.Channel.META,
-        ):
-            t["reasoning"].append(m)
-        else:
-            t["output"].append(m)
-
-    turn_items = list(turns.values())
-    for i, t in enumerate(turn_items, start=1):
-        t["number"] = i
-
-    selected_turn_id = request.GET.get("turn")
-    active_turn = None
-    if selected_turn_id:
-        active_turn = next((t for t in turn_items if t["turn_id"] == selected_turn_id), None)
-    if active_turn is None and turn_items:
-        active_turn = turn_items[-1]
-
-    turn_sort, turn_dir = normalise_turn_sort(request)
-
-    key_map = {
-        "number": lambda x: x.get("number", 0),
-        "title": lambda x: (x.get("input")[0].content if x.get("input") else ""),
-        "updated": lambda x: x.get("created_at"),
-    }
-    key_fn = key_map.get(turn_sort, key_map["number"])
-    turn_items = sorted(turn_items, key=key_fn, reverse=(turn_dir == "desc"))
-
-    # re-number after sort
-    for i, t in enumerate(turn_items, start=1):
-        t["number"] = i
-
-    return {
-        "attachments": attachments,
-        "turn_items": turn_items,
-        "active_turn": active_turn,
-        "turn_sort": turn_sort,
-        "turn_dir": turn_dir,
-    }
-
-
-def get_active_project_and_chats(request, user, projects):
-    active_project = None
-    active_project_id = request.session.get("rw_active_project_id")
-    if active_project_id:
-        active_project = projects.filter(pk=active_project_id).first()
-
-    if active_project is None:
-        active_project = projects.first()
-        if active_project:
-            request.session["rw_active_project_id"] = active_project.id
-            request.session.modified = True
-
-    chats = []
-    active_chat = None
-
-    if active_project:
-        chats = (
-            ChatWorkspace.objects
-            .filter(project__in=projects)
-            .order_by("-updated_at")[:10]
-        )
-
-        chat_id = request.GET.get("chat")
-        if chat_id:
-            try:
-                cid = int(chat_id)
-            except ValueError:
-                cid = None
-            if cid:
-                active_chat = next((c for c in chats if c.id == cid), None)
-
-        if active_chat is None and chats:
-            active_chat = chats[0]
-
-        if active_chat:
-            request.session["rw_active_chat_id"] = active_chat.id
-            request.session.modified = True
-        else:
-            request.session.pop("rw_active_chat_id", None)
-            request.session.modified = True
-
-    return active_project, chats, active_chat
-
-
-
-# ------------------------------------------------------------
-# Dashboard
+# Dashboard (Projects → Chats → Settings) — tiles only
 # ------------------------------------------------------------
 @login_required
 def dashboard(request):
-    
     user = request.user
+
     projects = (
         accessible_projects_qs(user)
         .select_related("owner", "active_l4_config")
         .order_by("name")
     )
-    active_project, chats, active_chat = get_active_project_and_chats(request, user, projects)
 
-    attachments = []
-    turn_items = []
-    active_turn = None
-    turn_sort, turn_dir = normalise_turn_sort(request)
-    sort = request.GET.get("sort") or "updated"
+    active_project_id = request.session.get("rw_active_project_id")
+    active_project = projects.filter(id=active_project_id).first() if active_project_id else None
 
-    if active_chat:
-        ctx = build_chat_turn_context(request, active_chat)
-        attachments = ctx["attachments"]
-        turn_items = ctx["turn_items"]
-        active_turn = ctx["active_turn"]
-        turn_sort = ctx["turn_sort"]
-        turn_dir = ctx["turn_dir"]
+    recent_projects = projects.order_by("-updated_at")[:5]
 
+    recent_chats = (
+        ChatWorkspace.objects
+        .filter(project__in=projects)
+        .select_related("project")
+        .order_by("-updated_at")[:5]
+    )
 
     return render(
         request,
@@ -228,31 +133,16 @@ def dashboard(request):
         {
             "projects": projects,
             "active_project": active_project,
-            "chats": chats,
-            "active_chat": active_chat,
-            "attachments": attachments,
-            "turn_items": turn_items,
-            "active_turn": active_turn,
-            "sort": sort,
-            "turn_sort": turn_sort,
-            "turn_dir": turn_dir,
+
+            # tiles
+            "recent_projects": recent_projects,
+            "recent_chats": recent_chats,
+
+            # backwards-compat with your current dashboard template (if it loops over `chats`)
+            "chats": recent_chats,
         },
     )
 
-# ------------------------------------------------------------
-# Sorter Helper
-# ------------------------------------------------------------
-
-def normalise_turn_sort(request):
-    sort = request.GET.get("turn_sort", "number")
-    direction = request.GET.get("turn_dir", "asc")
-
-    if sort not in {"number", "title", "updated"}:
-        sort = "number"
-    if direction not in {"asc", "desc"}:
-        direction = "asc"
-
-    return sort, direction
 # ------------------------------------------------------------
 # Project create
 # ------------------------------------------------------------
@@ -279,16 +169,60 @@ def project_create(request):
             p = form.save(commit=False)
             p.owner = request.user
             p.save()  # signals handle policy, membership, L4 config
-
+            chat = bootstrap_chat(project=p, user=request.user, title="Chat 1")
+            request.session["rw_active_chat_id"] = chat.id
             request.session["rw_active_project_id"] = p.id
             request.session.modified = True
 
             messages.success(request, "Project created.")
-            return redirect("accounts:project_config_list")
+            return redirect(reverse("accounts:chat_detail", args=[chat.id]))
     else:
         form = ProjectCreateForm()
 
     return render(request, "accounts/project_create.html", {"form": form})
+
+
+# ------------------------------------------------------------
+# Project delete
+# ------------------------------------------------------------
+@require_POST
+@login_required
+def project_delete(request, project_id: int):
+    # Must be accessible to the user
+    p = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+
+    # Safety: only SANDBOX deletions allowed
+    if p.kind != "SANDBOX":
+        messages.error(request, "Only SANDBOX projects can be deleted.")
+        return redirect("accounts:project_config_list")
+
+    # Safety: owner or superuser only
+    if not (request.user.is_superuser or p.owner_id == request.user.id):
+        messages.error(request, "You do not have permission to delete this project.")
+        return redirect("accounts:project_config_list")
+
+    name = p.name
+
+    with transaction.atomic():
+        # Clear protected FK so project-scoped ConfigRecords can be removed
+        Project.objects.filter(pk=p.pk).update(active_l4_config=None)
+
+        # Clean empty chats FIRST (SANDBOX only)
+        delete_empty_sandbox_chats(project=p)
+
+        # Remove project-scoped configs
+        scopes = ConfigScope.objects.filter(project=p)
+        ConfigVersion.objects.filter(config__scope__in=scopes).delete()
+        ConfigRecord.objects.filter(scope__in=scopes).delete()
+        scopes.delete()
+
+        # Finally delete the project
+        p.delete()
+
+
+
+    messages.success(request, f"Deleted SANDBOX project: {name}")
+    return redirect("accounts:project_config_list")
 
 # ------------------------------------------------------------
 # Chats
@@ -320,7 +254,6 @@ def chat_list(request):
 
     chats = []
     if active_project:
-        from chats.models import ChatWorkspace
         chats = list(
             ChatWorkspace.objects.filter(
                 project=active_project,
@@ -354,12 +287,14 @@ def chat_create(request):
             messages.error(request, "Title and project are required.")
             return redirect("accounts:chat_create")
 
-        chat = ChatWorkspace.objects.create(
-            project=project,
-            title=title,
-            status=ChatWorkspace.Status.ACTIVE,
-            created_by=user,
-        )
+        # chat = ChatWorkspace.objects.create(
+        #     project=project,
+        #     title=title,
+        #     status=ChatWorkspace.Status.ACTIVE,
+        #     created_by=user,
+        # )
+        chat = bootstrap_chat(project=project, user=user, title=title)
+
 
         request.session["rw_active_project_id"] = project.id
         request.session["rw_active_chat_id"] = chat.id
@@ -367,11 +302,22 @@ def chat_create(request):
 
         return redirect(reverse("accounts:chat_detail", args=[chat.id]))
 
+    selected_project_id = request.GET.get("project")
+    if selected_project_id is not None:
+        try:
+            selected_project_id = int(selected_project_id)
+        except ValueError:
+            selected_project_id = None
+
     return render(
         request,
         "accounts/chat_create.html",
-        {"projects": projects},
+        {
+            "projects": projects,
+            "selected_project_id": selected_project_id,
+        },
     )
+
 
 # ------------------------------------------------------------
 # Chat Rename (composer POST)
@@ -402,15 +348,11 @@ def chat_rename(request, chat_id: int):
 # ------------------------------------------------------------
 # Chat message create (composer POST)
 # ------------------------------------------------------------
+
 @login_required
 def chat_message_create(request):
     if request.method != "POST":
         return JsonResponse({"ok": False, "error": "POST required"}, status=405)
-
-    from uuid import uuid4
-
-    from chats.models import ChatWorkspace, ChatMessage
-    from chats.services.llm import generate_panes
 
     chat_id = request.POST.get("chat_id")
     content = (request.POST.get("content") or "").strip()
@@ -437,16 +379,16 @@ def chat_message_create(request):
     request.session["rw_active_chat_id"] = chat.id
     request.session.modified = True
 
-    turn_id = uuid4().hex
-
+    # 1) Store the user message (single row)
     user_msg = ChatMessage.objects.create(
         chat=chat,
         role=ChatMessage.Role.USER,
-        channel=ChatMessage.Channel.ANSWER,
-        content=content,
-        tool_metadata={"turn_id": turn_id},
+        raw_text=content,
+        answer_text=content,          # optional convenience
+        segment_meta={"confidence": "N/A", "parser_version": "user_v1"},
     )
 
+    # attachments unchanged (if you have ChatAttachment)
     for f in request.FILES.getlist("attachments"):
         ChatAttachment.objects.create(
             project=project,
@@ -458,49 +400,30 @@ def chat_message_create(request):
             size_bytes=getattr(f, "size", 0) or 0,
         )
 
+    # 2) Generate panes, store ONE assistant message row
     panes = generate_panes(content)
 
-    ChatMessage.objects.create(
-        chat=chat,
-        role=ChatMessage.Role.ASSISTANT,
-        channel=ChatMessage.Channel.ANSWER,
-        content=panes["answer"],
-        tool_metadata={"turn_id": turn_id, "parent": user_msg.id},
-    )
-
-    ChatMessage.objects.create(
-        chat=chat,
-        role=ChatMessage.Role.ASSISTANT,
-        channel=ChatMessage.Channel.SOURCES,
-        content=panes["key_info"],
-        tool_metadata={"turn_id": turn_id, "parent": user_msg.id},
-    )
-
-    ChatMessage.objects.create(
-        chat=chat,
-        role=ChatMessage.Role.ASSISTANT,
-        channel=ChatMessage.Channel.VISUALS,
-        content=panes["visuals"],
-        tool_metadata={"turn_id": turn_id, "parent": user_msg.id},
-    )
-
-    ChatMessage.objects.create(
-        chat=chat,
-        role=ChatMessage.Role.ASSISTANT,
-        channel=ChatMessage.Channel.REASONING,
-        content=panes["reasoning"],
-        tool_metadata={"turn_id": turn_id, "parent": user_msg.id},
+    assistant_raw = (
+        "ANSWER:\n"
+        f"{panes.get('answer','')}\n\n"
+        "REASONING:\n"
+        f"{panes.get('reasoning','')}\n\n"
+        "OUTPUT:\n"
+        f"{panes.get('output','')}\n"
     )
 
     out_msg = ChatMessage.objects.create(
         chat=chat,
         role=ChatMessage.Role.ASSISTANT,
-        channel=ChatMessage.Channel.COMMENTARY,
-        content=panes["output"],
-        tool_metadata={"turn_id": turn_id, "parent": user_msg.id},
+        raw_text=assistant_raw,
+        answer_text=panes.get("answer", ""),
+        reasoning_text=panes.get("reasoning", ""),
+        output_text=panes.get("output", ""),
+        segment_meta={"parser_version": "llm_v1", "confidence": "HIGH"},
     )
 
-    chat.last_output_snippet = (out_msg.content or "")[:280]
+    # 3) Update chat tile cache from Output pane
+    chat.last_output_snippet = (out_msg.output_text or "")[:280]
     chat.last_output_at = timezone.now()
     chat.save(update_fields=["last_output_snippet", "last_output_at", "updated_at"])
 
@@ -513,8 +436,6 @@ def chat_message_create(request):
 @login_required
 def chat_browse(request):
     user = request.user
-
-    from chats.models import ChatWorkspace
 
     # Accessible projects
     if user.is_superuser or user.is_staff:
@@ -578,7 +499,6 @@ def chat_browse(request):
     qs = qs.order_by(order_field, "-created_at")
 
     # Pagination
-    from django.core.paginator import Paginator
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
@@ -594,6 +514,25 @@ def chat_browse(request):
             "dir": direction,
         },
     )
+# ------------------------------------------------------------
+# Chat Select
+# ------------------------------------------------------------
+@login_required
+def chat_select(request, chat_id: int):
+
+    chat = get_object_or_404(
+        ChatWorkspace.objects.only("id", "project_id"),
+        pk=chat_id,
+    )
+
+    # Access check: user must be able to access the chat's project
+    get_object_or_404(accessible_projects_qs(request.user), pk=chat.project_id)
+
+    request.session["rw_active_project_id"] = chat.project_id
+    request.session["rw_active_chat_id"] = chat.id
+    request.session.modified = True
+
+    return redirect(f"/accounts/chats/{chat.id}/")
 
 # ------------------------------------------------------------
 # Chat Detail
@@ -614,7 +553,6 @@ def chat_detail(request, chat_id: int):
             **ctx,
         },
     )
-
 # ------------------------------------------------------------
 # Project Browser
 # ------------------------------------------------------------
@@ -633,9 +571,14 @@ def project_chat_list(request, project_id: int):
 
     active_project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
 
+    # NEW: ensure session active project matches this page
+    prev_project_id = request.session.get("rw_active_project_id")
+    if str(prev_project_id) != str(active_project.id):
+        request.session["rw_active_project_id"] = active_project.id
+        request.session.pop("rw_active_chat_id", None)
+        request.session.modified = True
 
     # Chats in this project
-    from chats.models import ChatWorkspace
     qs = ChatWorkspace.objects.select_related("created_by").filter(project=active_project)
 
     # Filters
@@ -666,7 +609,17 @@ def project_chat_list(request, project_id: int):
     if direction == "desc":
         order_field = f"-{order_field}"
 
-    qs = qs.order_by(order_field, "-created_at")
+    qs = (
+        ChatWorkspace.objects
+        .filter(project=active_project)
+        .annotate(
+            real_msg_count=Count(
+                "messages",
+                filter=~Q(messages__role="SYSTEM"),
+            )
+        )
+    )
+
 
     # Pagination
     from django.core.paginator import Paginator
@@ -686,6 +639,22 @@ def project_chat_list(request, project_id: int):
         },
     )
 
+
+# ------------------------------------------------------------
+# Select Project
+# ------------------------------------------------------------
+
+@login_required
+def project_select(request, project_id: int):
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+
+    request.session["rw_active_project_id"] = project.id
+    request.session.pop("rw_active_chat_id", None)
+    request.session.modified = True
+
+    return redirect("accounts:project_chat_list", project_id=project.id)
+
+
 # ------------------------------------------------------------
 # Config menu
 # ------------------------------------------------------------
@@ -693,140 +662,7 @@ def project_chat_list(request, project_id: int):
 def config_menu(request):
     return render(request, "accounts/config_menu.html")
 
-# ------------------------------------------------------------
-# Import Preview
-# ------------------------------------------------------------
 
-# @login_required
-# def import_preview(request):
-#     """
-#     Step 1: Preview ChatGPT JSON import.
-#     Shows user selection, uploaded file, and preview of chats.
-#     """
-#     users = User.objects.filter(is_active=True).order_by("username")
-#     preview_data = None
-#     uploaded_file_name = None
-
-#     if request.method == "POST" and "file" in request.FILES:
-#         file = request.FILES["file"]
-#         uploaded_file_name = file.name
-#         # Store in temporary location to keep between steps
-#         file_path = default_storage.save(f"temp/{file.name}", file)
-#         request.session["import_file_path"] = file_path
-
-#         # Parse the file for preview
-#         try:
-#             preview_data = parse_chatgpt_file(default_storage.open(file_path))
-#         except Exception as e:
-#             messages.error(request, f"Error parsing file: {str(e)}")
-#             preview_data = None
-
-#     return render(
-#         request,
-#         "imports/preview_import.html",
-#         {
-#             "users": users,
-#             "preview_data": preview_data,
-#             "uploaded_file_name": uploaded_file_name,
-#         },
-#     )
-# def parse_chatgpt_file(file):
-#     import json
-#     try:
-#         return json.load(file)
-#     except Exception:
-#         return []
-
-# @login_required
-# def import_chatgpt_action(request):
-#     """
-#     Step 2: Actually import the selected file into the chosen project/user.
-#     Uses session-stored file path from preview step.
-#     """
-#     file_path = request.session.get("import_file_path")
-#     if not file_path:
-#         messages.error(request, "No file selected for import. Please preview first.")
-#         return redirect(reverse("accounts:import_preview"))
-
-#     if request.method == "POST":
-#         project_id = request.POST.get("project")
-#         user_id = request.POST.get("user")
-
-#         try:
-#             project = Project.objects.get(id=project_id)
-#         except Project.DoesNotExist:
-#             messages.error(request, "Selected project does not exist.")
-#             return redirect(reverse("accounts:import_preview"))
-
-#         try:
-#             user = User.objects.get(id=user_id)
-#         except User.DoesNotExist:
-#             messages.error(request, "Selected user does not exist.")
-#             return redirect(reverse("accounts:import_preview"))
-
-#         # Parse the file again for import
-#         try:
-#             chats = parse_chatgpt_file(default_storage.open(file_path))
-#         except Exception as e:
-#             messages.error(request, f"Error parsing file: {str(e)}")
-#             return redirect(reverse("accounts:import_preview"))
-
-#         # Here you would loop through chats and create objects in DB
-#         imported_count = 0
-#         for chat in chats:
-#             # Replace this with your actual chat creation logic
-#             # e.g., Chat.objects.create(project=project, user=user, **chat)
-#             imported_count += 1
-
-#         # Clean up temporary file
-#         default_storage.delete(file_path)
-#         del request.session["import_file_path"]
-
-#         messages.success(request, f"Imported {imported_count} chats into project '{project.name}' for user '{user.username}'.")
-#         return redirect(reverse("accounts:project_config_list"))
-
-#     # If GET request, redirect to preview
-#     return redirect(reverse("accounts:import_preview"))
-# # ------------------------------------------------------------
-# # Import Preview Detail
-# # ------------------------------------------------------------
-
-# @login_required
-# def import_preview_detail(request, conv_id: str):
-#     import json
-#     from pathlib import Path
-#     from django.conf import settings
-
-#     p = Path(settings.BASE_DIR) / "imports" / "chatgpt-export.json"
-#     data = json.loads(p.read_text(encoding="utf-8"))
-#     conversations = data.get("conversations") or data
-
-#     conv = next((c for c in conversations if (c.get("id") or c.get("conversation_id")) == conv_id), None)
-#     if conv is None:
-#         raise Http404()
-
-#     # Build turns for preview only (very rough until we map your export precisely)
-#     turns = []
-#     # common shape in ChatGPT exports: mapping of nodes
-#     mapping = conv.get("mapping") or {}
-#     # pick nodes that have message content
-#     for _node_id, node in mapping.items():
-#         msg = (node or {}).get("message") or {}
-#         author = (msg.get("author") or {}).get("role")
-#         content = (msg.get("content") or {}).get("parts") or []
-#         text = "\n".join([p for p in content if isinstance(p, str)]).strip()
-#         if not text:
-#             continue
-#         turns.append({"author": author, "text": text})
-
-#     # crude ordering fallback
-#     turns = turns[:300]
-
-#     return render(
-#         request,
-#         "accounts/import_preview_detail.html",
-#         {"conv": conv, "turns": turns},
-#     )
 # ------------------------------------------------------------
 # Active project (session)
 # ------------------------------------------------------------
@@ -916,6 +752,10 @@ def project_config_list(request):
 
     # Annotate permissions
     projects_with_permissions = [(p, is_project_manager(p, user)) for p in projects]
+    p = Paginator(projects, 25)
+    page_obj = p.get_page(request.GET.get("page"))
+
+    projects_with_permissions = [(proj, is_project_manager(proj, user)) for proj in page_obj.object_list]
 
     return render(
         request,
@@ -924,6 +764,7 @@ def project_config_list(request):
             "projects_with_permissions": projects_with_permissions,
             "sort": sort,
             "dir": direction,
+            "page_obj": page_obj,
         },
     )
 
@@ -944,16 +785,16 @@ def project_config_edit(request, project_id):
 
     # Only allow managers/owners to edit
     if not is_project_manager(project, request.user):
-        return redirect("accounts:config_project_list")
+        return redirect("accounts:project_config_list")
 
     if request.method == "POST":
-        new_name = request.POST.get("name")
+        new_name = (request.POST.get("name") or "").strip()
         description = request.POST.get("description", "")
         if new_name:
             project.name = new_name
             project.description = description
             project.save()
-            return redirect("accounts:config_project_list")  # back to list
+            return redirect("accounts:project_config_list")  # back to list
         else:
             error = "Project name cannot be empty."
     else:
@@ -962,12 +803,9 @@ def project_config_edit(request, project_id):
     return render(
         request,
         "accounts/config_project_edit.html",
-        {
-            "project": project,
-            "error": error,
-        },
+        {"project": project, "error": error},
     )
-# ------------------------------------------------------------
+# --------------------------------------------------------
 # Session overrides (AJAX) - keep minimal so URL resolves
 # ------------------------------------------------------------
 @login_required

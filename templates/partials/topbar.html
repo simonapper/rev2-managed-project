@@ -30,7 +30,9 @@
                 <div class="rw-status-label">Project</div>
                 <div class="rw-status-value">
                     {% if rw_projects and rw_projects.active %}
-                    {{ rw_projects.active.kind|title }}
+                        <div class="rw-status-value" title="{{ rw_projects.active.name }}">
+                            {{ rw_projects.active.name }}
+                        </div>
                     {% else %}
                     —
                     {% endif %}
@@ -39,10 +41,12 @@
 
             {% if rw_overrides %}
             {% for cat_key, cat_label in rw_overrides.categories %}
-            <div class="rw-status">
-                <div class="rw-status-label">{{ cat_label }}</div>
-                <div class="rw-status-value">{{ rw_overrides.defaults|get_item:cat_key }}</div>
-            </div>
+                {% if cat_key != "CHECKPOINTING" %}
+                <div class="rw-status">
+                    <div class="rw-status-label">{{ cat_label }}</div>
+                    <div class="rw-status-value">{{ rw_overrides.defaults|get_item:cat_key }}</div>
+                </div>
+                {% endif %}
             {% endfor %}
             {% endif %}
 
@@ -57,6 +61,8 @@
                 </div>
             </div>
 
+            {# --- Row break: start second line at Language --- #}
+            <div class="rw-break" aria-hidden="true"></div>
             <div class="rw-status">
                 <div class="rw-status-label">Language</div>
                 <div class="rw-status-value">
@@ -66,22 +72,23 @@
                 </div>
             </div>
 
+            {% if rw_chat and rw_chat.turn_count and rw_chat.turn_count > 0 %}
             <div class="rw-status">
                 <div class="rw-status-label">Turns</div>
-                <div class="rw-status-value">
-                    {% if rw_chat %}{{ rw_chat.turn_count }}{% else %}—{% endif %}
-                </div>
+                <div class="rw-status-value">{{ rw_chat.turn_count }}</div>
             </div>
+            {% endif %}
 
         </div>
     </div>
 
-    <!-- RIGHT: Actions -->
-    <div class="rw-topbar-right">
+   <!-- RIGHT: Actions (stacked, compact) -->
+    <div class="rw-topbar-right rw-topbar-actions">
 
-        <a class="btn btn-sm btn-outline-secondary rw-topbar-btn rw-bell-btn"
-           href="{% url 'notifications:list' %}">
-            Notifications
+        <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs rw-bell-btn rw-bell-icon"
+           href="{% url 'notifications:list' %}"
+           aria-label="Notifications">
+            🔔
             {% if rw_notifications and rw_notifications.unread_count %}
             <span class="rw-bell-badge">{{ rw_notifications.unread_count }}</span>
             {% endif %}
@@ -89,16 +96,18 @@
 
         <form action="{% url 'accounts:logout' %}" method="post" class="rw-inline-form">
             {% csrf_token %}
-            <button type="submit" class="btn btn-sm btn-outline-secondary rw-topbar-btn">
+            <button type="submit"
+                    class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs">
                 Logout
             </button>
         </form>
 
         {% if request.user.is_superuser %}
-        <a class="btn btn-sm btn-outline-secondary rw-topbar-btn" href="/admin/">
+        <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs" href="/admin/">
             Admin
         </a>
         {% endif %}
     </div>
+
 
 </header>

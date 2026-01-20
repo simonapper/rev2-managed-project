@@ -96,7 +96,20 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.6rem;
-    justify-content: center;
+    justify-content: flex-start; /* left align rows */
+}
+
+}
+/* Force a wrap point in the status grid */
+.rw-status.rw-break {
+    flex-basis: 100%;
+    width: 100%;
+    height: 0;
+    min-height: 0;
+    max-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
 }
 
 /* Authoritative tile definition — ALL boxes identical size */
@@ -115,8 +128,17 @@
     border-radius: 4px;
     background: #f1f3f5;
     text-align: center;
-    padding: 0.05rem;
+    padding: 0 0.25rem;
 }
+/* Force a wrap point in the status grid (no visible tile) */
+.rw-break {
+    flex: 0 0 100%;
+    width: 100%;
+    height: 0;
+    margin: 0;
+    padding: 0;
+}
+
 
 .rw-status-label {
     font-size: 0.65rem;
@@ -135,8 +157,8 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    max-width: 100%;
 }
-
 
 /* ============================================================
    5) Buttons & forms (topbar actions)
@@ -156,6 +178,20 @@
 .rw-bell-btn {
     position: relative;
 }
+/* Stack + shrink topbar actions */
+.rw-topbar-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.2rem;
+}
+
+    .rw-topbar-actions .rw-topbar-btn {
+        padding: 0.18rem 0.55rem;
+        font-size: 0.7rem;
+        line-height: 1.1;
+    }
+
 
 .rw-bell-badge {
     display: inline-block;
@@ -168,6 +204,22 @@
     background: #0d6efd;
     color: #fff;
 }
+/* Bell icon button alignment */
+.rw-bell-icon {
+    position: relative;
+    width: 28px;
+    text-align: center;
+}
+
+    /* Tighter badge for icon button */
+    .rw-bell-icon .rw-bell-badge {
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        margin-left: 0;
+        padding: 0.05rem 0.35rem;
+        font-size: 0.6rem;
+    }
 
 
 /* ============================================================
@@ -231,7 +283,7 @@
 /* table look */
 .rw-turn-table {
     width: 100%;
-    font-size: 0.90rem;
+    font-size: 0.80rem;
     border-collapse: collapse;
 }
 
@@ -324,6 +376,12 @@
         margin-bottom: 0.5rem;
     }
 
+/* Match right-hand message text to turn list size */
+.rw-turn-detail .rw-message-body {
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
 
 /* ============================================================
    10) Mobile sidebar (Bootstrap offcanvas)
@@ -394,7 +452,7 @@
             padding: 0.25rem 0.25rem !important;
         }
 
-        /* IMPORTANT: remove the big padding under “Menu” created by py-3 */
+        /* IMPORTANT: remove the big padding under "Menu” created by py-3 */
         .rw-offcanvas-sidebar .rw-sidebar-nav .nav {
             padding-top: 0.25rem !important;
             padding-bottom: 0.25rem !important;
@@ -599,3 +657,146 @@
         .rw-chat-table thead th a:hover {
             text-decoration: underline;
         }
+
+/* Shared compact card styling (used by imports preview + browse chats) */
+.rw-compact-card {
+    max-width: 520px;
+    margin-left: 0;
+    margin-right: 0;
+    padding: 0.75rem !important;
+}
+
+    .rw-compact-card .form-label {
+        font-size: 0.80rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .rw-compact-card .text-secondary.small,
+    .rw-compact-card .text-muted,
+    .rw-compact-card small {
+        font-size: 0.65rem;
+    }
+/* ============================================================
+   Shared browse pages (projects + chats)
+   ============================================================ */
+
+.rw-browse h5 {
+    font-size: 1rem;
+    margin-bottom: 0.25rem;
+}
+
+.rw-browse .text-secondary.small {
+    font-size: 0.70rem;
+}
+
+.rw-browse .form-label {
+    font-size: 0.75rem;
+    margin-bottom: 0.25rem;
+}
+
+.rw-browse .form-control,
+.rw-browse .form-select {
+    font-size: 0.75rem;
+}
+
+.rw-browse table th {
+    font-size: 0.70rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+.rw-browse table td {
+    font-size: 0.75rem;
+}
+/* ============================================================
+   Shared browse tables (Chats + Projects)
+   ============================================================ */
+
+.rw-browse table {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.rw-browse thead th {
+    font-size: 0.70rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: #5c6f82; /* same header tone you chose */
+    border-bottom: 1px solid #dee2e6;
+    padding: 0.4rem 0.5rem;
+    white-space: nowrap;
+}
+
+    .rw-browse thead th a {
+        color: inherit;
+        text-decoration: none;
+    }
+
+        .rw-browse thead th a:hover {
+            text-decoration: underline;
+        }
+
+.rw-browse tbody td {
+    font-size: 0.75rem;
+    padding: 0.45rem 0.5rem;
+    vertical-align: middle;
+}
+
+.rw-browse tbody tr:hover {
+    background-color: #f8f9fa;
+}
+
+.rw-browse .table-sm > :not(caption) > * > * {
+    padding: 0.45rem 0.5rem;
+}
+/* ============================================================
+   Shared browse tables (Chats + Projects)
+   ============================================================ */
+
+.rw-browse table {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.rw-browse thead th {
+    font-size: 0.70rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: #5c6f82; /* same header tone you chose */
+    border-bottom: 1px solid #dee2e6;
+    padding: 0.4rem 0.5rem;
+    white-space: nowrap;
+}
+
+    .rw-browse thead th a {
+        color: inherit;
+        text-decoration: none;
+    }
+
+        .rw-browse thead th a:hover {
+            text-decoration: underline;
+        }
+
+.rw-browse tbody td {
+    font-size: 0.75rem;
+    padding: 0.45rem 0.5rem;
+    vertical-align: middle;
+}
+
+.rw-browse tbody tr:hover {
+    background-color: #f8f9fa;
+}
+
+.rw-browse .table-sm > :not(caption) > * > * {
+    padding: 0.45rem 0.5rem;
+}
+
+/* Browse tables should be full width (no compact max-width) */
+.rw-browse-table-card {
+    max-width: none;
+}
+/* Browse table footer spacing */
+.rw-browse .table-responsive + .d-flex {
+    padding-bottom: 0.5rem;
+    padding-left: 0.5rem;
+}

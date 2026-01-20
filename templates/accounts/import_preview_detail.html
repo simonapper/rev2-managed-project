@@ -1,28 +1,52 @@
 ﻿{# -*- coding: utf-8 -*- #}
 {# templates/accounts/import_preview_detail.html #}
-
 {% extends "base.html" %}
+
 {% block content %}
 <div class="rw-pane">
   <div class="rw-pane-body p-3">
+      TURN COUNT = {{ turns|length }}
+      <pre>{{ turns.0|safe }}</pre>
+
     <div class="d-flex justify-content-between align-items-center mb-2">
       <div>
         <h5 class="mb-0">{{ conv.title|default:"(untitled)" }}</h5>
-        <div class="text-secondary small">{{ conv_id }}</div>
+        <div class="text-secondary small">
+          Conversation index {{ conv_id }} — {{ turns|length }} turns
+        </div>
       </div>
-      <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:import_preview' %}">Back</a>
+      <a class="btn btn-sm btn-outline-secondary"
+         href="{% url 'imports:preview_import' %}">
+        Back
+      </a>
     </div>
 
     <div class="d-flex flex-column gap-2">
       {% for t in turns %}
         <div class="card">
           <div class="card-body py-2">
-            <div class="text-secondary small mb-1">{{ t.author }}</div>
-            <div style="white-space:pre-wrap;">{{ t.text }}</div>
+
+            {% if t.user_input %}
+              <div class="text-secondary small mb-1">User</div>
+              <div style="white-space: pre-wrap;">
+                {{ t.user_input }}
+              </div>
+            {% endif %}
+
+            {% for r in t.responses %}
+              <div class="mt-2">
+                <div class="text-secondary small mb-1">Assistant</div>
+                <div style="white-space: pre-wrap;">
+                  {{ r.response_answer }}
+                </div>
+              </div>
+            {% endfor %}
+
           </div>
         </div>
       {% endfor %}
     </div>
+
   </div>
 </div>
 {% endblock %}

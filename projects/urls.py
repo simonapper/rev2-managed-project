@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 # projects/urls.py
 # Purpose:
-# Notifications UI routes (prototype-safe GET actions)
+# Project-scoped UI routes
 
 from django.conf import settings
 from django.conf.urls.static import static
-from django.urls import path, include
+from django.urls import path
 from projects import views
 
 app_name = "projects"
 
 urlpatterns = [
     path("<int:project_id>/rename/", views.rename_project, name="rename_project"),
-    # add other project-specific routes here
+    path("<int:project_id>/preferences/", views.project_preferences, name="project_preferences"),
 ]
 
 if settings.DEBUG:

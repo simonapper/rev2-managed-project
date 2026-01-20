@@ -17,7 +17,10 @@
       <label class="form-label small text-secondary">Project</label>
       <select name="project" class="form-select form-select-sm" required>
         {% for p in projects %}
-          <option value="{{ p.id }}">{{ p.name }}</option>
+          <option value="{{ p.id }}"
+             {% if selected_project_id == p.id %}selected{% endif %}>
+             {{ p.name }}
+          </option>
         {% endfor %}
       </select>
     </div>

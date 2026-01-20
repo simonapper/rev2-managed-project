@@ -4,7 +4,7 @@
 {% block title %}Project Chats — {{ active_project.name }}{% endblock %}
 
 {% block content %}
-<div class="container-fluid px-4 py-4">
+<div class="container-fluid px-4 py-4 rw-browse">
 
     <div class="d-flex align-items-center justify-content-between mb-3">
         <div>
@@ -13,8 +13,17 @@
         </div>
 
         <div class="d-flex gap-2">
-            <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:project_config_list' %}">Back</a>
+          <a class="btn btn-sm btn-primary"
+             href="{% url 'accounts:chat_create' %}?project={{ active_project.id }}">
+            New chat
+          </a>
+
+          <a class="btn btn-sm btn-outline-secondary"
+             href="{% url 'accounts:project_config_list' %}">
+            Back
+          </a>
         </div>
+
     </div>
 
     <form method="get" class="row g-2 align-items-end mb-3">
@@ -73,26 +82,41 @@
 
                   <tbody>
                     {% for c in page_obj.object_list %}
-                      <tr>
+                    <tr>
                         <td class="fw-semibold">{{ c.title }}</td>
                         <td class="text-secondary">{{ c.created_by.username }}</td>
                         <td class="text-secondary small">{{ c.updated_at }}</td>
+
                         <td class="text-secondary small">
-                          {% if c.last_output_snippet %}
+                        {% if c.last_output_snippet %}
                             {{ c.last_output_snippet }}
-                          {% else %}
+                        {% else %}
                             —
-                          {% endif %}
+                        {% endif %}
                         </td>
+
                         <td class="text-end">
-                          <a class="btn btn-sm btn-outline-secondary"
-                             href="{% url 'accounts:dashboard' %}?chat={{ c.id }}">
+                        <div class="d-inline-flex gap-1 align-items-center">
+                            <a class="btn btn-sm btn-outline-secondary"
+                                href="{% url 'accounts:chat_select' c.id %}">
                             Open
-                          </a>
+                            </a>
+
+                            {% if active_project.kind == "SANDBOX" and c.real_msg_count == 0 %}
+                            <form method="post"
+                                    action="{% url 'accounts:chat_delete' c.id %}"
+                                    class="d-inline m-0"
+                                    onsubmit="return confirm('Delete this empty chat?');">
+                                {% csrf_token %}
+                                <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                            </form>
+                            {% endif %}
+                        </div>
                         </td>
-                      </tr>
+                    </tr>
                     {% endfor %}
-                  </tbody>
+                    </tbody>
+
                 </table>
               </div>
 

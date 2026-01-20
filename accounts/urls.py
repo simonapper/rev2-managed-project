@@ -5,7 +5,7 @@ from __future__ import annotations
 from django.contrib.auth import views as auth_views
 from django.urls import path
 
-from . import views
+from . import views, views_system
 
 app_name = "accounts"
 
@@ -23,6 +23,8 @@ urlpatterns = [
 
     # Project chats
     path("projects/<int:project_id>/chats/", views.project_chat_list, name="project_chat_list"),
+    path("projects/<int:project_id>/delete/", views.project_delete, name="project_delete"),
+
 
     # Chat routes
     path("chats/", views.chat_list, name="chat_list"),
@@ -31,6 +33,21 @@ urlpatterns = [
     path("chats/<int:chat_id>/", views.chat_detail, name="chat_detail"),
     path("chats/new/", views.chat_create, name="chat_create"),
     path("chats/<int:chat_id>/rename/", views.chat_rename, name="chat_rename"),
+    path("chats/<int:chat_id>/select/", views.chat_select, name="chat_select"),
+    path("chats/<int:chat_id>/delete/", views.chat_delete, name="chat_delete"),
+
+
+    # System (L1-L4 defaults) - superuser only
+    path("config/system/", views_system.system_settings_home, name="system_settings_home"),
+    path("config/system/level/<int:level>/", views_system.system_level_pick, name="system_settings_level_pick"),
+    path("config/system/config/<int:config_id>/", views_system.system_config_detail, name="system_config_detail"),
+    path(
+        "config/system/config/<int:config_id>/versions/new/",
+        views_system.system_config_version_new,
+        name="system_config_version_new",
+    ),
+
+
 
 
 
@@ -48,6 +65,7 @@ urlpatterns = [
     # Project (L4)
     path("config/projects/", views.project_config_list, name="project_config_list"),
     path("config/projects/<int:project_id>/", views.project_config_edit, name="project_config_edit"),
+    path("projects/<int:project_id>/select/", views.project_select, name="project_select"),
     path(
         "config/projects/<int:project_id>/definitions/",
         views.project_config_definitions,

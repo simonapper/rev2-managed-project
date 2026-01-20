@@ -11,6 +11,7 @@ urlpatterns = [
     path("notifications/", include("notifications.urls")),
     path("imports/", include("imports.urls")),
     path("projects/", include(("projects.urls", "projects"), namespace="projects")),
+    path("", include("config_ui.urls")),
 ]
 
 if settings.DEBUG:

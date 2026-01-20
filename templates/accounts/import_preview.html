@@ -1,23 +1,33 @@
 ﻿{# -*- coding: utf-8 -*- #}
 {# templates/accounts/import_preview.html #}
-
 {% extends "base.html" %}
+
 {% block content %}
 <div class="rw-pane">
   <div class="rw-pane-body p-3">
     <h5 class="mb-3">Import preview</h5>
+      TURN COUNT = {{ turns|length }}
+      <pre>{{ turns.0|safe }}</pre>
+
     <div class="list-group">
       {% for c in items %}
         <a class="list-group-item list-group-item-action"
-           href="{% url 'accounts:import_preview_detail' c.id %}">
+           href="{% url 'imports:import_preview_detail' c.idx %}">
           <div class="d-flex justify-content-between">
-            <div class="fw-semibold">{{ c.title }}</div>
-            <div class="text-secondary small">{{ c.updated }}</div>
+            <div class="fw-semibold">
+              {{ c.title|default:"(untitled)" }}
+            </div>
+            <div class="text-secondary small">
+              {{ c.updated }}
+            </div>
           </div>
-          <div class="text-secondary small">{{ c.id }}</div>
+          <div class="text-secondary small">
+            Index {{ forloop.counter0 }}
+          </div>
         </a>
       {% endfor %}
     </div>
+
   </div>
 </div>
 {% endblock %}

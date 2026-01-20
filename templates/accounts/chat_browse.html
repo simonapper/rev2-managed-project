@@ -4,7 +4,8 @@
 {% block title %}Browse Chats — Reasoning Workbench{% endblock %}
 
 {% block content %}
-<div class="container-fluid px-4 py-4">
+
+<div class="container-fluid px-4 py-4 rw-browse">
     {% if active_project %}
       <div class="text-secondary small">Project: {{ active_project.name }}</div>
     {% endif %}
@@ -14,7 +15,10 @@
       <h5 class="mb-1">Browse Chats</h5>
       <div class="text-secondary small">Fast list view across accessible projects</div>
     </div>
-    <a href="{% url 'accounts:dashboard' %}" class="btn btn-sm btn-outline-secondary">Back</a>
+        <div class="d-flex gap-2">
+          <a href="{% url 'accounts:chat_create' %}" class="btn btn-sm btn-primary">New chat</a>
+          <a href="{% url 'accounts:dashboard' %}" class="btn btn-sm btn-outline-secondary">Back</a>
+        </div>
   </div>
 
   <form method="get" class="row g-2 align-items-end mb-3">
@@ -35,7 +39,7 @@
       <select name="status" class="form-select form-select-sm">
         <option value="">All</option>
         <option value="ACTIVE" {% if filters.status == "ACTIVE" %}selected{% endif %}>Active</option>
-        <option value="ARCHIVED" {% if filters.status == "ARCHIVED" %}selected{% endif %}>Archived</option>
+        <option value="ARCHIVED" {% if filters.status == "ARCHIVED" %}selected{% endif %}>Archived</option>compact
       </select>
     </div>
 
@@ -49,8 +53,8 @@
     </div>
   </form>
 
-  <div class="card">
-    <div class="card-body">
+  <div class="card rw-browse-table-card">
+    <div class="card-body p-0">
 
       {% if page_obj.object_list %}
         <div class="table-responsive">
@@ -105,13 +109,13 @@
                   <td class="text-secondary">{{ c.created_by.username }}</td>
                   <td class="text-center text-secondary small">{{ c.turn_count }}</td>
                   <td class="text-secondary rw-updated-col">{{ c.updated_at }}</td>
-                  <td class="text-secondary small">
-                    {% if c.last_output_snippet %}
-                      {{ c.last_output_snippet }}
-                    {% else %}
-                      —
-                    {% endif %}
-                  </td>
+                 <td class="text-secondary small">
+                   {% if c.last_output_snippet %}
+                     {{ c.last_output_snippet|truncatechars:150|default:"(empty)" }}
+                   {% else %}
+                     (empty)
+                   {% endif %}
+                </td>
                   <td class="text-end">
                     <a class="btn btn-sm btn-outline-secondary"
                        href="{% url 'accounts:chat_detail' c.id %}">
@@ -144,7 +148,7 @@
           {% endif %}
         </div>
       {% else %}
-        <div class="text-secondary">No chats found.</div>
+        <div class="text-secondary small">No chats found.</div>
       {% endif %}
 
     </div>

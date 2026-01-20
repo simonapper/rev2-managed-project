@@ -31,4 +31,23 @@
     </div>
   </div>
 </div>
+<script>
+(function () {
+  const kind = document.getElementById("id_kind");
+  const primary = document.getElementById("id_primary_type");
+  const mode = document.getElementById("id_mode");
+
+  function toggleSandbox() {
+    const isSandbox = kind && kind.value === "SANDBOX";
+    if (primary) primary.disabled = isSandbox;
+    if (mode) mode.disabled = isSandbox;
+  }
+
+  if (kind) {
+    kind.addEventListener("change", toggleSandbox);
+    toggleSandbox(); // run once on load
+  }
+})();
+</script>
+
 {% endblock %}
