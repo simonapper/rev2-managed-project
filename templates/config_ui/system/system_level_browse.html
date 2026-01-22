@@ -1,0 +1,68 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/config_ui/system/system_level_browse.html #}
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex align-items-start justify-content-between mb-3">
+    <div>
+      <h5 class="mb-1">Browse {{ level_label }} (ORG)</h5>
+      <div class="text-muted small">
+        {% if current %}Active: {{ current.display_name|default:current.file_id }}{% else %}No active config set{% endif %}
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'config_ui:system_home' %}">Back</a>
+      <a class="btn btn-primary" href="{% url 'config_ui:system_config_create' level %}">Create</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-0">
+      <table class="table mb-0">
+        <thead>
+          <tr>
+            <th>Config</th>
+            <th style="width: 120px;">Status</th>
+            <th style="width: 180px;">Latest version</th>
+            <th style="width: 260px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for cfg, latest in rows %}
+          <tr>
+            <td class="align-middle">
+              <div class="fw-semibold">{{ cfg.display_name|default:cfg.file_id }}</div>
+              <div class="text-muted small">{{ cfg.file_id }} — {{ cfg.file_name }}</div>
+            </td>
+            <td class="align-middle">{{ cfg.status }}</td>
+            <td class="align-middle">
+              {% if latest %}
+                {{ latest.version }}<div class="text-muted small">{{ latest.created_at }}</div>
+              {% else %}
+                <span class="text-muted">None</span>
+              {% endif %}
+            </td>
+            <td class="align-middle text-end">
+              {% if current and current.id == cfg.id %}
+                <span class="badge text-bg-success me-2">Active</span>
+              {% else %}
+                <form method="post" action="{% url 'config_ui:system_set_active' cfg.id %}" class="d-inline">
+                  {% csrf_token %}
+                  <button class="btn btn-sm btn-outline-secondary" type="submit">Set active</button>
+                </form>
+              {% endif %}
+
+              <a class="btn btn-sm btn-outline-primary" href="{% url 'config_ui:system_config_detail' cfg.id %}">View</a>
+              <a class="btn btn-sm btn-primary" href="{% url 'config_ui:system_config_version_new' cfg.id %}">New version</a>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4" class="text-muted p-3">No configs yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

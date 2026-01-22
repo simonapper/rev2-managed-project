@@ -1,18 +1,38 @@
 # -*- coding: utf-8 -*-
 # notifications/views.py
-# Purpose:
-# Minimal notifications UI for prototype:
-# - list unread/all
-# - mark read/unread (GET to avoid nested-form issues)
-# - mark all read (GET to avoid nested-form issues)
 
 from __future__ import annotations
 
 from django.contrib.auth.decorators import login_required
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 
 from notifications.models import Notification
+
+
+def _safe_next(request, fallback_url_name: str) -> str:
+    """
+    Allow only safe same-host redirects.
+    Also block known POST-only endpoints that break if hit via GET.
+    """
+    nxt = (request.GET.get("next") or "").strip()
+    if not nxt:
+        return reverse(fallback_url_name)
+
+    if not url_has_allowed_host_and_scheme(
+        url=nxt,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return reverse(fallback_url_name)
+
+    # Block POST-only endpoints explicitly (prevents redirect loops / 405 JSON)
+    if nxt.startswith("/accounts/chats/message/"):
+        return reverse(fallback_url_name)
+
+    return nxt
 
 
 @login_required
@@ -51,7 +71,7 @@ def notification_set_read(request, notification_id: int, state: str):
     n.is_read = (state == "read")
     n.save(update_fields=["is_read"])
 
-    return redirect(request.GET.get("next") or "notifications:list")
+    return redirect(_safe_next(request, "notifications:list"))
 
 
 @login_required
@@ -60,4 +80,4 @@ def notification_mark_all_read(request):
     Prototype: GET endpoint to avoid nested-form submission failures.
     """
     Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
-    return redirect(request.GET.get("next") or "notifications:list")
+    return redirect(_safe_next(request, "notifications:list"))

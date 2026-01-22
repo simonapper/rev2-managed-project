@@ -10,13 +10,12 @@
       </a>
     </li>
 
-  <li class="nav-item">
+    <li class="nav-item">
       <a class="nav-link" href="{% url 'accounts:chat_browse' %}">
         <i class="bi bi-chat-left-text me-2"></i>
         Chats
       </a>
     </li>
-
 
     <li class="nav-item">
       <a class="nav-link" href="{% url 'accounts:config_menu' %}">
@@ -32,6 +31,27 @@
       </a>
     </li>
 
+    {% if request.user.is_superuser %}
+    <li class="nav-item mt-2">
+      <div class="nav-link text-secondary small">
+        Admin
+      </div>
+    </li>
+
+    <li class="nav-item">
+      <a class="nav-link" href="/admin/">
+        <i class="bi bi-shield-lock me-2"></i>
+        Django
+      </a>
+    </li>
+
+    <li class="nav-item">
+      <a class="nav-link" href="{% url 'accounts:admin_hub' %}">
+        <i class="bi bi-tools me-2"></i>
+        Workbench
+      </a>
+    </li>
+    {% endif %}
+
   </ul>
 </nav>
-

@@ -15,7 +15,7 @@ from django.core.management.base import BaseCommand
 from accounts.models import Role, UserRole
 from objects.models import KnowledgeObject, KnowledgeObjectVersion
 from projects.models import Project
-from projects.services import create_project, ensure_project_seeded
+from projects.services_project_membership import create_project, ensure_project_seeded, accessible_projects_qs
 
 
 class Command(BaseCommand):

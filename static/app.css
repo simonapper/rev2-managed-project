@@ -97,8 +97,7 @@
     flex-wrap: wrap;
     gap: 0.6rem;
     justify-content: flex-start; /* left align rows */
-}
-
+    padding-left: 4rem; /* or px */
 }
 /* Force a wrap point in the status grid */
 .rw-status.rw-break {
@@ -227,8 +226,8 @@
    ============================================================ */
 
 .rw-sidebar {
-    width: 220px;
-    flex: 0 0 220px;
+    width: 120px;
+    flex: 0 0 120px;
     border-right: 1px solid #dee2e6;
     background: #fff;
     overflow: auto;
@@ -253,6 +252,12 @@
     font-size: 0.85rem;
     margin-right: 0.35rem !important;
 }
+.rw-config-btn {
+    width: 120px; /* pick a size you like */
+    text-align: center;
+    white-space: nowrap;
+    font-size: 0.65rem;
+}
 
 
 /* ============================================================
@@ -272,48 +277,123 @@
     border: 1px solid #e5e7eb;
     border-radius: 10px;
     background: #fff;
+
+@media (max-width: 480px) {
+    .rw-turn-list {
+        max-height: 180px;
+    }
 }
+}
+/* ------------------------------------------------------------
+   TURN LIST: table layout + stable columns
+   ------------------------------------------------------------ */
+
+/* Table look */
+.rw-turn-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.80rem;
+}
+
+/* Cells */
+.rw-turn-table th,
+.rw-turn-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: top;
+}
+
+/* Sticky header */
+.rw-turn-table thead th {
+    position: sticky;
+    top: 0;
+    background: #fff;
+    z-index: 2;
+    font-size: 0.80rem;
+    text-transform: none;
+    letter-spacing: 0.01em;
+    font-weight: 600;
+    color: #64748b;
+}
+
+/* Centre table headings only */
+.rw-turn-table th {
+    text-align: center;
+}
+
+    /* ------------------------------------------------------------
+TURN COLUMN: make it narrow and consistent
+------------------------------------------------------------ */
+
+.rw-turn-table th:first-child,
+.rw-turn-table td:first-child {
+    width: 42px;
+    min-width: 42px;
+    max-width: 42px;
+    padding-left: 4px;
+    padding-right: 4px;
+    text-align: center;
+    font-size: 0.70rem;
+}
+
+/* Title column takes remaining width and text aligns left */
+.rw-turn-table th:nth-child(2),
+.rw-turn-table td:nth-child(2) {
+    width: auto;
+    text-align: left;
+}
+
+/* Keep headers centred except Title if you prefer */
+.rw-turn-table thead th:nth-child(2) {
+    text-align: center; /* header label centred */
+}
+
+
+/* ------------------------------------------------------------
+TITLE COLUMN: force single line + ellipsis
+This prevents SYSTEM blocks expanding rows.
+------------------------------------------------------------ */
+
+.rw-turn-table td:nth-child(2) .rw-turn-rowlink {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Optional: keep Updated column tidy too */
+.rw-turn-table td:nth-child(3) .rw-turn-rowlink {
+    display: block;
+    white-space: nowrap;
+}
+/* Make column widths predictable (fixes "Title looks off") */
+.rw-turn-table {
+    table-layout: fixed;
+}
+
+/* Fix Updated column width so Title truly gets the remaining space */
+.rw-turn-table th:nth-child(3),
+.rw-turn-table td:nth-child(3) {
+    width: 140px;
+    min-width: 140px;
+    max-width: 140px;
+}
+
+/* Make the link fill the cell and align consistently */
+.rw-turn-table td:nth-child(2) .rw-turn-rowlink {
+    width: 100%;
+    text-align: left;
+}
+
+/* ------------------------------------------------------------
+   DETAIL PANE: allow scrolling in the right-hand panel
+   ------------------------------------------------------------ */
 
 .rw-turn-detail {
     flex: 1 1 auto;
-    overflow: auto;
     min-width: 0;
+    overflow: auto;
 }
-
-/* table look */
-.rw-turn-table {
-    width: 100%;
-    font-size: 0.80rem;
-    border-collapse: collapse;
-}
-
-    .rw-turn-table th,
-    .rw-turn-table td {
-        padding: 8px 10px;
-        border-bottom: 1px solid #f1f5f9;
-        vertical-align: top;
-    }
-
-    .rw-turn-table thead th {
-        position: sticky;
-        top: 0;
-        background: #fff;
-        z-index: 2;
-        font-size: 0.80rem;
-        text-transform: uppercase;
-        letter-spacing: .04em;
-        color: #64748b;
-    }
-
-    /* Centre table headings only */
-    .rw-turn-table th {
-        text-align: center;
-    }
-
-    /* Centre TURN column cells only */
-    .rw-turn-table td:first-child {
-        text-align: center;
-    }
 
 /* row links */
 .rw-turn-rowlink {
@@ -380,6 +460,59 @@
 .rw-turn-detail .rw-message-body {
     font-size: 0.8rem;
     line-height: 1.5;
+}
+
+/* Full-screen reading mode */
+.rw-fullscreen .rw-topbar {
+    display: none !important;
+}
+
+.rw-fullscreen .rw-sidebar {
+    display: none !important;
+}
+
+.rw-fullscreen .rw-main {
+    padding: 0.5rem !important;
+}
+.rw-fullscreen .rw-turn-split {
+    height: calc(100vh - 24px);
+}
+
+/* Turn view: stack on small screens (list above detail) */
+@media (max-width: 991.98px) {
+    .rw-turn-split {
+        flex-direction: column;
+        height: auto; /* stop forcing viewport height */
+    }
+
+    .rw-turn-list {
+        flex: 0 0 auto;
+        width: 100%;
+        max-height: 40vh; /* list scrolls, detail gets room */
+    }
+
+    .rw-turn-detail {
+        width: 100%;
+        min-width: 0;
+    }
+}
+/* Turn view: stack list above detail when topbar stacks */
+@media (max-width: 640px) {
+    .rw-turn-split {
+        flex-direction: column;
+        height: auto; /* stop forcing a fixed viewport height */
+    }
+
+    .rw-turn-list {
+        flex: 0 0 auto;
+        width: 100%;
+        max-height: 40vh; /* list scrolls, detail stays readable */
+    }
+
+    .rw-turn-detail {
+        width: 100%;
+        min-width: 0;
+    }
 }
 
 
@@ -636,6 +769,12 @@
 .rw-chat-table td, .rw-chat-table th {
     font-size: 0.80rem;
 }
+/* Chat browse: keep action buttons a fixed height (do not stretch with row) */
+.rw-chat-action {
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+}
 
 /* Chat browse table header tidy */
 .rw-chat-table thead th {
@@ -800,3 +939,23 @@
     padding-bottom: 0.5rem;
     padding-left: 0.5rem;
 }
+/* Chat override visual indicator */
+.rw-status.rw-status--overridden {
+    background: #fff3cd;
+    border: 1px solid #ffecb5;
+}
+
+.rw-status.rw-status--overridden .rw-status-label {
+    color: #856404;
+}
+
+.rw-status.rw-status--overridden .rw-status-value {
+    color: #856404;
+    font-weight: 600;
+}
+/* SYSTEM pane: scrollable log area */
+.rw-system-body {
+    max-height: 420px;
+    overflow: auto;
+}
+

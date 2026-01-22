@@ -1,0 +1,150 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/config_chat_overrides.html #}
+
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-3 px-md-4 py-3">
+
+  <h3 class="mb-1">Temporary Settings (This Chat)</h3>
+      <form method="post" novalidate>
+    {% csrf_token %}
+
+  <div class="text-secondary small mb-3">
+      <button type="submit"
+        name="reset"
+        value=1
+        class="btn btn-warning btn-sm btn-xs">
+        Defaults
+      </button>
+  </div>
+    <!-- Language -->
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title mb-2">Language</h5>
+
+        <label class="form-label small mb-1">Language</label>
+        <input type="text"
+               class="form-control form-control-sm"
+               name="language_name"
+               value="{{ language_name_current|default:'English' }}"
+               placeholder="e.g. French, Spanish, German">
+
+        <div class="form-text small text-secondary">
+          If the model cannot respond fluently, it will fall back to English.
+        </div>
+      </div>
+    </div>
+    <!-- Avatars -->
+    <div class="card mb-3">
+      <div class="card-body">
+
+        <h5 class="card-title mb-2">Avatars</h5>
+
+        <div class="row g-2">
+
+          <div class="col-12 col-md-6">
+            <div class="rw-field">
+              <label>Cognitive</label>
+              <select name="cognitive_id" class="form-select form-select-sm">
+                <option value="">(no override)</option>
+                {% for a in cognitive_choices %}
+                  <option value="{{ a.id }}"
+                    {% if chat_override_current.COGNITIVE == a.id|stringformat:"s" %}selected{% endif %}>
+                    {{ a.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6">
+            <div class="rw-field">
+              <label>Interaction</label>
+              <select name="interaction_id" class="form-select form-select-sm">
+                <option value="">(no override)</option>
+                {% for a in interaction_choices %}
+                  <option value="{{ a.id }}"
+                    {% if chat_override_current.INTERACTION == a.id|stringformat:"s" %}selected{% endif %}>
+                    {{ a.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6">
+            <div class="rw-field">
+              <label>Presentation</label>
+              <select name="presentation_id" class="form-select form-select-sm">
+                <option value="">(no override)</option>
+                {% for a in presentation_choices %}
+                  <option value="{{ a.id }}"
+                    {% if chat_override_current.PRESENTATION == a.id|stringformat:"s" %}selected{% endif %}>
+                    {{ a.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6">
+            <div class="rw-field">
+              <label>Epistemic</label>
+              <select name="epistemic_id" class="form-select form-select-sm">
+                <option value="">(no override)</option>
+                {% for a in epistemic_choices %}
+                  <option value="{{ a.id }}"
+                    {% if chat_override_current.EPISTEMIC == a.id|stringformat:"s" %}selected{% endif %}>
+                    {{ a.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6">
+            <div class="rw-field">
+              <label>Performance</label>
+              <select name="performance_id" class="form-select form-select-sm">
+                <option value="">(no override)</option>
+                {% for a in performance_choices %}
+                  <option value="{{ a.id }}"
+                    {% if chat_override_current.PERFORMANCE == a.id|stringformat:"s" %}selected{% endif %}>
+                    {{ a.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6">
+            <div class="rw-field">
+              <label>Checkpointing</label>
+              <select name="checkpointing_id" class="form-select form-select-sm">
+                <option value="">(no override)</option>
+                {% for a in checkpointing_choices %}
+                  <option value="{{ a.id }}"
+                    {% if chat_override_current.CHECKPOINTING == a.id|stringformat:"s" %}selected{% endif %}>
+                    {{ a.name }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="rw-actionbar mt-2">
+      <a href="{% url 'accounts:config_menu' %}" class="btn btn-sm btn-outline-secondary">Back</a>
+      <button type="submit" class="btn btn-sm btn-primary">Save</button>
+    </div>
+
+  </form>
+
+</div>
+{% endblock %}

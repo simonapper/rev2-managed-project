@@ -1,0 +1,37 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# config_ui/templates/config_ui/system/system_config_version_new.html #}
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex align-items-start justify-content-between mb-3">
+    <div>
+      <h5 class="mb-1">New Version — {{ cfg.display_name|default:cfg.file_id }}</h5>
+      <div class="text-muted small">{{ cfg.file_id }} — Level {{ cfg.level }} (ORG)</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{% url 'config_ui:system_config_detail' cfg.id %}">Cancel</a>
+  </div>
+
+  <form method="post" class="card p-3">
+    {% csrf_token %}
+
+    <div class="mb-3">
+      <label class="form-label">Version</label>
+      <input type="text" name="version" class="form-control" value="{{ suggested_version }}" required>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Change note (optional)</label>
+      <input type="text" name="change_note" class="form-control" maxlength="500">
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Content</label>
+      <textarea name="content_text" class="form-control" rows="18" required>{{ suggested_content }}</textarea>
+      <div class="text-muted small mt-2">This creates an immutable version snapshot.</div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Create version</button>
+  </form>
+</div>
+{% endblock %}

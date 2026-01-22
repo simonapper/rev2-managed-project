@@ -37,7 +37,7 @@
 
       <div class="rw-pane-body p-3">
 
-        {% if not active_project %}
+        {% if not recent_projects %}
           <div class="alert alert-secondary mb-0">
             You do not have access to any projects yet.
           </div>
@@ -123,6 +123,12 @@
           <div class="d-flex flex-wrap gap-2 mb-3">
             <a class="btn btn-outline-primary btn-sm rw-config-btn" href="{% url 'accounts:user_config_user' %}">User</a>
             <a class="btn btn-outline-primary btn-sm rw-config-btn" href="{% url 'accounts:project_config_list' %}">Projects</a>
+           {% if can_override_chat %}
+            <a href="{% url 'accounts:chat_config_overrides' %}"
+               class="btn btn-outline-primary btn-sm rw-config-btn">
+              This Chat
+            </a>
+           {% endif %}
             <a class="btn btn-outline-primary btn-sm rw-config-btn" href="{% url 'imports:preview_import' %}">Import Chats</a>
           </div>
 

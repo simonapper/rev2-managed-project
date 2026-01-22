@@ -1,0 +1,74 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/projects/project_preferences.html #}
+{% extends "base.html" %}
+{% load rw_extras %}
+
+{% block title %}Preferences — {{ project.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+
+  <div class="d-flex align-items-start justify-content-between mb-3">
+    <div>
+      <h3 class="mb-1">Preferences</h3>
+      <div class="text-muted small">
+        Project: <span class="fw-semibold">{{ project.name }}</span>
+      </div>
+      <div class="text-muted small">
+        Choose an avatar per axis. “Inherit” uses your UserProfile default.
+      </div>
+    </div>
+  </div>
+
+  {% if messages %}
+    <div class="mb-3">
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'secondary' }} py-2 mb-2" role="alert">
+          {{ message }}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <form method="post" class="card p-3">
+    {% csrf_token %}
+
+    <div class="row g-3">
+      {% for cat, label, field_name in axes %}
+        <div class="col-12 col-lg-6">
+          <div class="border rounded p-3 h-100">
+            <div class="d-flex align-items-start justify-content-between">
+              <div class="fw-semibold">{{ label }}</div>
+              <div class="text-muted small">
+                Inherit: {{ profile_defaults|get_item:cat }}
+              </div>
+            </div>
+
+            <div class="mt-2">
+              <select class="form-select form-select-sm" name="avatar_{{ cat }}">
+                <option value="inherit" {% if not current_ids|get_item:cat %}selected{% endif %}>
+                  Inherit ({{ profile_defaults|get_item:cat }})
+                </option>
+                {% for a in choices|get_item:cat %}
+                  <option value="{{ a.id }}" {% if current_ids|get_item:cat == a.id %}selected{% endif %}>
+                    {{ a.name }}
+                  </option>
+                {% endfor %}
+              </select>
+              {% comment %}
+              If you want descriptions on-screen later, we can add a small help text area fed by JS.
+              {% endcomment %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="d-flex gap-2 mt-3">
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      <a class="btn btn-outline-secondary btn-sm" href="javascript:history.back()">Back</a>
+    </div>
+  </form>
+
+</div>
+{% endblock %}

@@ -13,22 +13,33 @@
 
     <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:dashboard' %}">Back</a>
   </div>
+    <!--<div class="text-secondary small mb-2">
+      debug: active_chat_id={{ active_chat_id|default:"(none)" }},
+      can_override_chat={{ can_override_chat|default:"(missing)" }}
+    </div>-->
 
-  <div class="rw-config-buttons">
+
+    <div class="rw-config-buttons">
     <a href="{% url 'accounts:user_config_user' %}"
        class="btn btn-outline-primary btn-sm rw-config-btn">
-      User Settings
+      User
     </a>
 
     <a href="{% url 'accounts:project_config_list' %}"
        class="btn btn-outline-primary btn-sm rw-config-btn">
-      Project Settings
+      Project
     </a>
 
-    {# NEW: ChatGPT Import Button #}
+    {% if can_override_chat %}
+    <a href="{% url 'accounts:chat_config_overrides' %}"
+       class="btn btn-outline-primary btn-sm rw-config-btn">
+      This Chat
+    </a>
+    {% endif %}
+
     <a href="{% url 'imports:preview_import' %}"
        class="btn btn-outline-primary btn-sm rw-config-btn">
-      Import ChatGPT JSON
+      Import ChatGPT
     </a>
   </div>
 

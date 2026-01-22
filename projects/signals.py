@@ -9,7 +9,10 @@ from django.dispatch import receiver
 
 from config.models import ConfigRecord, ConfigScope, ConfigVersion
 from .models import Project
-from .services import ensure_project_seeded
+from projects.services.project_bootstrap import bootstrap_project
+from projects.services_project_membership import ensure_project_seeded
+
+
 
 
 DEFAULT_L4_OPERATING_PROFILE_TEXT = """# ============================================================

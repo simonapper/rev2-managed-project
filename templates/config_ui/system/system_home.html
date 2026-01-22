@@ -1,0 +1,67 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/config_ui/system/system_home.html #}
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex align-items-start justify-content-between mb-3">
+    <div>
+      <h5 class="mb-1">System Config</h5>
+      <div class="text-muted small">ORG-scoped defaults and active pointers (Levels 1–4)</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-0">
+      <table class="table mb-0">
+        <thead>
+          <tr>
+            <th style="width: 90px;">Level</th>
+            <th>Active Config</th>
+            <th style="width: 110px;">Configs</th>
+            <th style="width: 360px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for level, cfg in active %}
+          <tr>
+            <td class="align-middle">L{{ level }}</td>
+            <td class="align-middle">
+              {% if cfg %}
+                <div class="fw-semibold">{{ cfg.display_name|default:cfg.file_id }}</div>
+                <div class="text-muted small">{{ cfg.file_id }} — {{ cfg.file_name }}</div>
+              {% else %}
+                <span class="text-muted">None set</span>
+              {% endif %}
+            </td>
+            <td class="align-middle">
+              <span class="badge text-bg-light">{{ counts.level }}</span>
+            </td>
+            <td class="align-middle text-end">
+              <a class="btn btn-sm btn-outline-secondary"
+                 href="{% url 'config_ui:system_level_browse' level %}">
+                Browse
+              </a>
+              <a class="btn btn-sm btn-primary"
+                 href="{% url 'config_ui:system_config_create' level %}">
+                Create
+              </a>
+              {% if cfg %}
+                <a class="btn btn-sm btn-outline-primary"
+                   href="{% url 'config_ui:system_config_detail' cfg.id %}">
+                  View
+                </a>
+                <a class="btn btn-sm btn-outline-primary"
+                   href="{% url 'config_ui:system_config_version_new' cfg.id %}">
+                  New version
+                </a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

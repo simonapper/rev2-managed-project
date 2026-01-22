@@ -115,13 +115,32 @@
                    {% else %}
                      (empty)
                    {% endif %}
-                </td>
+                </td>         
                   <td class="text-end">
-                    <a class="btn btn-sm btn-outline-secondary"
+                    <div class="d-inline-flex gap-1">
+
+                    <a class="btn btn-sm btn-outline-secondary rw-chat-action"
                        href="{% url 'accounts:chat_detail' c.id %}">
                       Open
                     </a>
-                  </td>
+                    {% if c.project.kind == "SANDBOX" and c.turn_count == 0 %}
+                        <form method="post"
+                            action="{% url 'accounts:chat_delete' c.id %}"
+                            class="d-inline">
+                        {% csrf_token %}
+                        <button type="submit"
+                                class="btn btn-sm btn-outline-danger rw-chat-action"
+                                onclick="return confirm('Delete this empty Sandbox chat?');">
+                          Delete
+                        </button>
+                        </form>
+                    {% endif %}
+
+                    </div>
+                </td>
+
+
+
                 </tr>
               {% endfor %}
             </tbody>

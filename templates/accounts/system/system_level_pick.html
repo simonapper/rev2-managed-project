@@ -1,0 +1,34 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/accounts/system/system_level_pick.html #}
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+  <h5 class="mb-2">Select Active {{ level_label }}</h5>
+  <div class="text-muted small mb-3">Organisation-scoped configs only (ACTIVE status)</div>
+
+  <form method="post" class="card p-3">
+    {% csrf_token %}
+
+    <div class="mb-3">
+      <label class="form-label">Active config</label>
+      <select class="form-select" name="config_id" required>
+        <option value="">-- select --</option>
+        {% for c in eligible %}
+          <option value="{{ c.id }}" {% if current and c.id == current.id %}selected{% endif %}>
+            {{ c.display_name|default:c.file_id }} ({{ c.file_id }})
+          </option>
+        {% endfor %}
+      </select>
+      {% if current %}
+        <div class="text-muted small mt-2">Current: {{ current.display_name|default:current.file_id }}</div>
+      {% endif %}
+    </div>
+
+    <div class="d-flex gap-2">
+      <button type="submit" class="btn btn-primary">Save</button>
+      <a class="btn btn-outline-secondary" href="{% url 'accounts:system_home' %}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

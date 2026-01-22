@@ -15,7 +15,7 @@
       <a href="{% url 'accounts:project_create' %}" class="btn btn-sm btn-primary">
         <i class="bi bi-plus-lg me-1"></i>New project
       </a>
-      <a href="{% url 'accounts:dashboard' %}" class="btn btn-sm btn-outline-secondary">Back</a>
+      <!--<a href="{% url 'accounts:dashboard' %}" class="btn btn-sm btn-outline-secondary">Back</a>-->
     </div>
   </div>
 
@@ -80,17 +80,16 @@
                           <a class="btn btn-sm btn-outline-primary"
                              href="{% url 'projects:rename_project' p.id %}">Rename</a>
                         {% endif %}                         
-                        {% if p.kind == "SANDBOX" %}
-                          <form method="post"
-                                action="{% url 'accounts:project_delete' p.id %}"
-                                class="d-inline m-0"
-                                onsubmit="return confirm('Delete SANDBOX project: {{ p.name }}? This cannot be undone.');">
+                        {% if p.kind == "SANDBOX" and p.can_delete_sandbox %}
+                          <form method="post" action="{% url 'accounts:project_delete' p.id %}" class="d-inline">
                             {% csrf_token %}
-                            <button class="btn btn-sm btn-outline-danger" type="submit">
+                            <button type="submit" class="btn btn-sm btn-outline-danger"
+                                    onclick="return confirm('Delete this Sandbox project?');">
                               Delete
                             </button>
                           </form>
                         {% endif %}
+
                       </div>
                     </td>
 

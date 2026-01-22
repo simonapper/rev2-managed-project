@@ -1,0 +1,41 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/config_ui/system/system_level_create.html #}
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex align-items-start justify-content-between mb-3">
+    <div>
+      <h5 class="mb-1">Create {{ level_label }} (ORG)</h5>
+      <div class="text-muted small">Creates a new ORG-scoped ConfigRecord. Content is added via versions.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{% url 'config_ui:system_level_browse' level %}">Cancel</a>
+  </div>
+
+  <form method="post" class="card p-3">
+    {% csrf_token %}
+
+    <div class="mb-3">
+      <label class="form-label">file_id</label>
+      <input type="text" name="file_id" class="form-control" required>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">file_name</label>
+      <input type="text" name="file_name" class="form-control" required>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">display_name (optional)</label>
+      <input type="text" name="display_name" class="form-control">
+    </div>
+
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="checkbox" name="make_active" id="make_active" checked>
+      <label class="form-check-label" for="make_active">Set active after create</label>
+    </div>
+
+    <button class="btn btn-primary" type="submit">Create</button>
+  </form>
+</div>
+{% endblock %}

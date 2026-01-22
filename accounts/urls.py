@@ -13,6 +13,7 @@ urlpatterns = [
     # Auth
     path("", auth_views.LoginView.as_view(template_name="accounts/login.html"), name="login"),
     path("logout/", auth_views.LogoutView.as_view(next_page="accounts:login"), name="logout"),
+    path("admin-hub/", views.admin_hub, name="admin_hub"),
 
     # Invite flow
     path("set-password/<uidb64>/<token>/", views.set_password_from_invite, name="set_password"),
@@ -27,6 +28,7 @@ urlpatterns = [
 
 
     # Chat routes
+    path("config/chat/", views.chat_config_overrides, name="chat_config_overrides"),
     path("chats/", views.chat_list, name="chat_list"),
     path("chats/message/", views.chat_message_create, name="chat_message_create"),
     path("chats/browse/", views.chat_browse, name="chat_browse"),

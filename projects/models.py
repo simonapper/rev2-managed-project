@@ -6,6 +6,8 @@ from __future__ import annotations
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+from .enums import ChatReadScope
+from accounts.models_avatars import Avatar
 
 
 class Project(models.Model):
@@ -36,45 +38,51 @@ class Project(models.Model):
         PAUSED = "PAUSED", "Paused"
         ARCHIVED = "ARCHIVED", "Archived"
 
+    # Identity
     name = models.CharField(max_length=200, unique=True)
     description = models.TextField(blank=True)
 
-    # Short, explicit "why this exists" statement (distinct from description/notes)
+    # Short, explicit "why this exists" statement
     purpose = models.TextField(blank=True, default="")
 
+    # Classification
     kind = models.CharField(
         max_length=20,
         choices=Kind.choices,
         default=Kind.STANDARD,
     )
-
     primary_type = models.CharField(
         max_length=20,
         choices=PrimaryType.choices,
         default=PrimaryType.DELIVERY,
     )
-
     mode = models.CharField(
         max_length=10,
         choices=Mode.choices,
         default=Mode.PLAN,
     )
-
     status = models.CharField(
         max_length=10,
         choices=Status.choices,
         default=Status.ACTIVE,
     )
 
-    # Owner has ultimate authority for the project (business rule enforced in services/admin).
+    # Ownership
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name="owned_projects",
     )
 
+    # Artefact storage (authoritative project-owned space)
+    artefact_root_ref = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Root path for project artefacts under MEDIA_ROOT",
+    )
+
     # Project-level Operating Profile (Level 4)
-    # Points to a Level-4 ConfigRecord scoped to this project.
     active_l4_config = models.ForeignKey(
         "config.ConfigRecord",
         on_delete=models.PROTECT,
@@ -83,11 +91,13 @@ class Project(models.Model):
         related_name="projects_using_as_active_l4",
     )
 
+    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self) -> str:
         return self.name
+
 
 
 class ProjectPolicy(models.Model):
@@ -100,6 +110,13 @@ class ProjectPolicy(models.Model):
     """
 
     project = models.OneToOneField(Project, on_delete=models.CASCADE, related_name="policy")
+
+    chat_read_scope_default = models.CharField(
+        max_length=30,
+        choices=ChatReadScope.choices,
+        default=ChatReadScope.PROJECT_MANAGERS,
+    )
+
 
     # Pointers to active project-scoped config records (Levels 1–3)
     # If you later create a dedicated ConfigScope, enforce that there.
@@ -148,17 +165,6 @@ class ProjectPolicy(models.Model):
     def __str__(self) -> str:
         return f"Policy:{self.project_id}"
 
-class ChatReadScope(models.TextChoices):
-    OWNER_ONLY = "OWNER_ONLY", "Owner only"
-    PROJECT_MANAGERS = "PROJECT_MANAGERS", "Project owner + project managers"
-    ANY_MANAGER = "ANY_MANAGER", "Any manager (global)"
-    
-chat_read_scope = models.CharField(
-    max_length=30,
-    choices=ChatReadScope.choices,
-    default=ChatReadScope.PROJECT_MANAGERS,
-)
-
 class UserProjectPrefs(models.Model):
     """
     Per-user preferences within a project ("driving position").
@@ -170,6 +176,54 @@ class UserProjectPrefs(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="project_prefs",
+    )
+    cognitive_avatar = models.ForeignKey(
+        "accounts.Avatar",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="projectprefs_cognitive",
+        limit_choices_to={"category": Avatar.Category.COGNITIVE, "is_active": True},
+    )
+    interaction_avatar = models.ForeignKey(
+        "accounts.Avatar",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="projectprefs_interaction",
+        limit_choices_to={"category": Avatar.Category.INTERACTION, "is_active": True},
+    )
+    presentation_avatar = models.ForeignKey(
+        "accounts.Avatar",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="projectprefs_presentation",
+        limit_choices_to={"category": Avatar.Category.PRESENTATION, "is_active": True},
+    )
+    epistemic_avatar = models.ForeignKey(
+        "accounts.Avatar",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="projectprefs_epistemic",
+        limit_choices_to={"category": Avatar.Category.EPISTEMIC, "is_active": True},
+    )
+    performance_avatar = models.ForeignKey(
+        "accounts.Avatar",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="projectprefs_performance",
+        limit_choices_to={"category": Avatar.Category.PERFORMANCE, "is_active": True},
+    )
+    checkpointing_avatar = models.ForeignKey(
+        "accounts.Avatar",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="projectprefs_checkpointing",
+        limit_choices_to={"category": Avatar.Category.CHECKPOINTING, "is_active": True},
     )
 
     # Blank means "inherit"
@@ -199,6 +253,13 @@ class ProjectMembership(models.Model):
     """
     Membership and roles for a project, time-bounded and scope-aware.
     """
+
+    chat_read_scope_override = models.CharField(
+        max_length=30,
+        choices=ChatReadScope.choices,
+        blank=True,
+        default="",   # empty = inherit project default
+    )
 
     class Role(models.TextChoices):
         OWNER = "OWNER", "Owner"

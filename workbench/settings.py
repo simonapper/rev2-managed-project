@@ -31,8 +31,6 @@ SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
 DEBUG = True
 
 ALLOWED_HOSTS = ["192.168.1.101", "localhost", "127.0.0.1"]
-
-
 AUTH_USER_MODEL = "accounts.User"
 
 AUTHENTICATION_BACKENDS = [
@@ -113,6 +111,7 @@ TEMPLATES = [
                 "accounts.context_processors.session_overrides_bar",
                 "accounts.context_processors.active_project_bar",
                 "notifications.context_processors.notifications_bar",
+                "accounts.context_processors.topbar_context",
                 "accounts.context_processors.active_chat_bar",
             ],
         },
@@ -204,3 +203,10 @@ MEDIA_URL = "/media/"
 # --------------------------------------------------
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# --------------------------------------------------
+# OpenAI links
+# --------------------------------------------------
+
+OPENAI_MODEL = "gpt-5.2"
+OPENAI_TIMEOUT_SECONDS = 30

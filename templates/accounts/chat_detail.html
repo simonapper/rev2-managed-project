@@ -6,30 +6,50 @@
 {% block content %}
 <div class="rw-main-inner">
 
-<form method="post" action="{% url 'accounts:chat_rename' chat.id %}" class="d-flex gap-2 align-items-center">
-  {% csrf_token %}
-  <input name="title" class="form-control form-control-sm" value="{{ chat.title }}" style="max-width: 420px;">
-  <button class="btn btn-sm btn-outline-secondary" type="submit">Rename</button>
-</form>
-
-  <div class="rw-breadcrumbs d-flex align-items-center justify-content-between">
-    <div class="d-flex align-items-center gap-2">
-      <i class="bi bi-house"></i>
-      <span class="text-secondary">{{ chat.project.name }}</span>
-      <i class="bi bi-chevron-right"></i>
-      <span class="text-secondary">Chat</span>
-      <i class="bi bi-chevron-right"></i>
-      <span class="fw-semibold">{{ chat.title }}</span>
-    </div>
-
-    <div class="d-flex align-items-center gap-2">
-      <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:chat_browse' %}">Back</a>
-    </div>
-  </div>
-
   <div class="rw-workarea">
     <div class="rw-pane">
       <div class="rw-pane-body p-3">
+        <hr class="my-3">
+
+        <div class="d-flex justify-content-end mb-2 gap-2">
+          {% if fullscreen %}
+            <a class="btn btn-sm btn-outline-secondary"
+               href="?{{ qs_normal }}{% if show_system %}&system=1{% endif %}">
+              Exit full screen
+            </a>
+          {% else %}
+            <a class="btn btn-sm btn-outline-secondary"
+               href="?{{ qs_fullscreen }}{% if show_system %}&system=1{% endif %}">
+              Full screen
+            </a>
+          {% endif %}
+
+          {% if show_system %}
+            <a class="btn btn-sm btn-outline-warning" href="?{{ qs_hide_system }}">
+              Hide system
+            </a>
+          {% else %}
+            <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_normal }}&system=1">
+              Show system
+            </a>
+          {% endif %}
+        </div>
+
+        <form method="post" action="{% url 'accounts:chat_message_create' %}" enctype="multipart/form-data">
+          {% csrf_token %}
+          <input type="hidden" name="chat_id" value="{{ chat.id }}">
+
+          <div class="d-flex gap-2">
+            <textarea
+              name="content"
+              class="form-control"
+              rows="3"
+              placeholder="Type your message..."
+              required
+            ></textarea>
+            <button type="submit" class="btn btn-primary">Send</button>
+          </div>
+        </form>
 
         {# Attachments list #}
         {% if attachments %}
@@ -48,7 +68,7 @@
         {% endif %}
 
         {% if not turn_items %}
-          <div class="alert alert-secondary mb-0">No messages yet.</div>
+          <div class="alert alert-secondary mb-3">No messages yet.</div>
         {% else %}
           <div class="rw-turn-split">
 
@@ -57,17 +77,17 @@
                 <thead>
                   <tr>
                     <th style="width:70px;">
-                      <a href="?turn_sort=number&turn_dir={% if turn_sort == 'number' and turn_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_turn %}&turn={{ active_turn.turn_id }}{% endif %}">
+                      <a href="?{% if fullscreen %}fullscreen=1&{% endif %}turn_sort=number&turn_dir={% if turn_sort == 'number' and turn_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_turn %}&turn={{ active_turn.turn_id }}{% endif %}{% if show_system %}&system=1{% endif %}">
                         Turn
                       </a>
                     </th>
                     <th>
-                      <a href="?turn_sort=title&turn_dir={% if turn_sort == 'title' and turn_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_turn %}&turn={{ active_turn.turn_id }}{% endif %}">
+                      <a href="?{% if fullscreen %}fullscreen=1&{% endif %}turn_sort=title&turn_dir={% if turn_sort == 'title' and turn_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_turn %}&turn={{ active_turn.turn_id }}{% endif %}{% if show_system %}&system=1{% endif %}">
                         Title
                       </a>
                     </th>
                     <th style="width:140px;">
-                      <a href="?turn_sort=updated&turn_dir={% if turn_sort == 'updated' and turn_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_turn %}&turn={{ active_turn.turn_id }}{% endif %}">
+                      <a href="?{% if fullscreen %}fullscreen=1&{% endif %}turn_sort=updated&turn_dir={% if turn_sort == 'updated' and turn_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_turn %}&turn={{ active_turn.turn_id }}{% endif %}{% if show_system %}&system=1{% endif %}">
                         Updated
                       </a>
                     </th>
@@ -79,19 +99,19 @@
                     <tr class="{% if active_turn and t.turn_id == active_turn.turn_id %}rw-turn-row-active{% endif %}">
                       <td>
                         <a class="rw-turn-rowlink"
-                           href="?turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}">
+                           href="?{% if fullscreen %}fullscreen=1&{% endif %}turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}{% if show_system %}&system=1{% endif %}">
                           {{ t.number }}
                         </a>
                       </td>
                       <td>
                         <a class="rw-turn-rowlink"
-                           href="?turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}">
-                          {{ t.input.raw_text|default:"(no input)"|truncatechars:60 }}
+                           href="?{% if fullscreen %}fullscreen=1&{% endif %}turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}{% if show_system %}&system=1{% endif %}">
+                          {{ t.title|default:"(no input)"|truncatechars:60 }}
                         </a>
                       </td>
                       <td>
                         <a class="rw-turn-rowlink"
-                           href="?turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}">
+                           href="?{% if fullscreen %}fullscreen=1&{% endif %}turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}{% if show_system %}&system=1{% endif %}">
                           {{ t.created_at|date:"Y-m-d H:i" }}
                         </a>
                       </td>
@@ -108,54 +128,101 @@
                 {% with pane=active_turn %}
                   <div class="d-flex flex-column gap-2">
 
-                    <details open class="rw-channel">
-                      <summary class="fw-semibold">INPUT</summary>
-                      <div class="pt-2">
-                        {% if pane.input %}
-                          <div class="rw-message">
-                            <div class="rw-message-body">{{ pane.input.raw_text|linebreaksbr }}</div>
-                          </div>
-                        {% else %}
-                          <div class="text-secondary small">No input.</div>
-                        {% endif %}
-                      </div>
-                    </details>
+                    {% if not is_system_turn %}
+                      <details open class="rw-channel">
+                        <summary class="fw-semibold">INPUT</summary>
+                        <div class="pt-2">
+                          {% if pane.input %}
+                            <div class="rw-message">
+                              <div class="rw-message-body">{{ pane.input.raw_text|linebreaksbr }}</div>
+                            </div>
+                          {% else %}
+                            <div class="text-secondary small">No input.</div>
+                          {% endif %}
+                        </div>
+                      </details>
 
-                    <details open class="rw-channel">
-                      <summary class="fw-semibold">ANSWER</summary>
-                      <div class="pt-2">
-                        {% if pane.answer %}
-                          <div class="rw-message">
-                            <div class="rw-message-body">{{ pane.answer|linebreaksbr }}</div>
-                          </div>
-                        {% else %}
-                          <div class="text-secondary small">No ANSWER.</div>
-                        {% endif %}
-                      </div>
-                    </details>
+                      <details open class="rw-channel">
+                        <summary class="fw-semibold">ANSWER</summary>
+                        <div class="pt-2">
+                          {% if pane.answer %}
+                            <div class="rw-message">
+                              <div class="rw-message-body">{{ pane.answer|linebreaksbr }}</div>
+                            </div>
+                          {% else %}
+                            <div class="text-secondary small">No ANSWER.</div>
+                          {% endif %}
+                        </div>
+                      </details>
+
+                      <details class="rw-channel">
+                        <summary class="fw-semibold">REASONING</summary>
+                        <div class="pt-2">
+                          {% if pane.reasoning %}
+                            <div class="rw-message">
+                              <div class="rw-message-body">{{ pane.reasoning|linebreaksbr }}</div>
+                            </div>
+                          {% else %}
+                            <div class="text-secondary small">No REASONING.</div>
+                          {% endif %}
+                        </div>
+                      </details>
+                    {% endif %}
 
                     <details class="rw-channel">
-                      <summary class="fw-semibold">REASONING</summary>
-                      <div class="pt-2">
-                        {% if pane.reasoning %}
-                          <div class="rw-message">
-                            <div class="rw-message-body">{{ pane.reasoning|linebreaksbr }}</div>
-                          </div>
-                        {% else %}
-                          <div class="text-secondary small">No REASONING.</div>
+                      <summary class="fw-semibold">
+                        {% if show_system %}SYSTEM{% else %}OUTPUT{% endif %}
+                        {% if show_system %}
+                          <span class="text-secondary small ms-2">(stored)</span>
                         {% endif %}
-                      </div>
-                    </details>
+                      </summary>
 
-                    <details class="rw-channel">
-                      <summary class="fw-semibold">OUTPUT</summary>
                       <div class="pt-2">
-                        {% if pane.output %}
-                          <div class="rw-message">
-                            <div class="rw-message-body">{{ pane.output|linebreaksbr }}</div>
-                          </div>
+                        {% if show_system %}
+
+                          {% if system_latest %}
+                            <div class="rw-message mb-2">
+                              <div class="rw-message-body">
+                                <div class="small text-secondary mb-1">Latest per axis</div>
+                                <div class="d-flex flex-column gap-1">
+                                  {% for k, v in system_latest.items %}
+                                    <div>
+                                      <span class="fw-semibold">{{ k }}:</span>
+                                      {% if v %}
+                                        {{ v.value }}
+                                        <span class="text-secondary small">(id {{ v.id }})</span>
+                                      {% else %}
+                                        <span class="text-secondary">-</span>
+                                      {% endif %}
+                                    </div>
+                                  {% endfor %}
+                                </div>
+                              </div>
+                            </div>
+                          {% endif %}
+
+                          {% if system_preview %}
+                            <div class="rw-message">
+                              <div class="rw-message-body rw-system-body">
+                                {{ system_preview|linebreaksbr }}
+                              </div>
+                            </div>
+                          {% else %}
+                            <div class="text-secondary small">No SYSTEM preview.</div>
+                          {% endif %}
+
                         {% else %}
-                          <div class="text-secondary small">No OUTPUT.</div>
+
+                          {% if pane.output %}
+                            <div class="rw-message">
+                              <div class="rw-message-body">
+                                {{ pane.output|linebreaksbr }}
+                              </div>
+                            </div>
+                          {% else %}
+                            <div class="text-secondary small">No OUTPUT.</div>
+                          {% endif %}
+
                         {% endif %}
                       </div>
                     </details>
@@ -167,7 +234,6 @@
 
           </div>
         {% endif %}
-
       </div>
     </div>
   </div>

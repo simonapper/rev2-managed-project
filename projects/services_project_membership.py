@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# projects/services.py
+# projects/services_project_membership.py
 # Purpose:
 # Centralise project membership + sandbox invariants (no rules in views/templates).
 
