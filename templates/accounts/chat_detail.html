@@ -40,32 +40,58 @@
           <input type="hidden" name="chat_id" value="{{ chat.id }}">
 
           <div class="d-flex gap-2">
-            <textarea
-              name="content"
-              class="form-control"
-              rows="3"
-              placeholder="Type your message..."
-              required
-            ></textarea>
+            <textarea id="rw-chat-input"
+                      name="content"
+                      class="form-control"
+                      rows="3"
+                      placeholder="Type message..."></textarea>
+
             <button type="submit" class="btn btn-primary">Send</button>
           </div>
+
+          <div id="rw-paste-status" class="small text-secondary mt-2"></div>
+
+          <script>
+            window.RW_PASTE_UPLOAD_URL = "{% url 'accounts:chat_attachment_paste' chat.id %}";
+            window.RW_ATTACHMENT_DELETE_URL_TEMPLATE = "{% url 'accounts:chat_attachment_delete' 0 %}";
+          </script>
+            
+          <div class="form-check mt-2">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="rw-include-last-image"
+                     name="include_last_image"
+                     value="1">
+              <label class="form-check-label" for="rw-include-last-image">
+                Include last image
+              </label>
+            </div>
+  
+
         </form>
 
         {# Attachments list #}
         {% if attachments %}
           <div class="mb-3">
             <div class="text-secondary small mb-1">Attachments in this chat</div>
-            <div class="list-group">
+            <div class="list-group" id="rw-attachment-list">
               {% for a in attachments %}
-                <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
-                   href="{{ a.file.url }}">
-                  <span>{{ a.original_name }}</span>
-                  <span class="text-secondary small">{{ a.size_bytes }} bytes</span>
-                </a>
+                <div class="list-group-item d-flex justify-content-between align-items-center"
+                     data-attachment-id="{{ a.id }}">
+                  <div class="d-flex align-items-center gap-2">
+                    <a href="{{ a.file.url }}">{{ a.original_name }}</a>
+                    <span class="text-secondary small">{{ a.size_bytes }} bytes</span>
+                  </div>
+
+                  <button type="button" class="btn btn-sm btn-outline-danger rw-attachment-delete">
+                    Delete
+                  </button>
+                </div>
               {% endfor %}
             </div>
           </div>
         {% endif %}
+
 
         {% if not turn_items %}
           <div class="alert alert-secondary mb-3">No messages yet.</div>
@@ -127,7 +153,6 @@
               {% else %}
                 {% with pane=active_turn %}
                   <div class="d-flex flex-column gap-2">
-
                     {% if not is_system_turn %}
                       <details open class="rw-channel">
                         <summary class="fw-semibold">INPUT</summary>
@@ -142,19 +167,36 @@
                         </div>
                       </details>
 
+                      {% if show_system %}
+                        <details open class="rw-channel">
+                          <summary class="fw-semibold">ANSWER</summary>
+                          <div class="pt-2">
+                            {% if pane.answer %}
+                              <div class="rw-message">
+                                <div class="rw-message-body">{{ pane.answer|linebreaksbr }}</div>
+                              </div>
+                            {% else %}
+                              <div class="text-secondary small">No ANSWER.</div>
+                            {% endif %}
+                          </div>
+                        </details>
+                      {% endif %}
+
+                      {# OUTPUT always visible, open #}
                       <details open class="rw-channel">
-                        <summary class="fw-semibold">ANSWER</summary>
+                        <summary class="fw-semibold">OUTPUT</summary>
                         <div class="pt-2">
-                          {% if pane.answer %}
+                          {% if pane.output %}
                             <div class="rw-message">
-                              <div class="rw-message-body">{{ pane.answer|linebreaksbr }}</div>
+                              <div class="rw-message-body">{{ pane.output|linebreaksbr }}</div>
                             </div>
                           {% else %}
-                            <div class="text-secondary small">No ANSWER.</div>
+                            <div class="text-secondary small">No OUTPUT.</div>
                           {% endif %}
                         </div>
                       </details>
 
+                      {# REASONING always visible, closed #}
                       <details class="rw-channel">
                         <summary class="fw-semibold">REASONING</summary>
                         <div class="pt-2">
@@ -169,17 +211,13 @@
                       </details>
                     {% endif %}
 
-                    <details class="rw-channel">
-                      <summary class="fw-semibold">
-                        {% if show_system %}SYSTEM{% else %}OUTPUT{% endif %}
-                        {% if show_system %}
-                          <span class="text-secondary small ms-2">(stored)</span>
-                        {% endif %}
-                      </summary>
+                    {% if show_system %}
+                      <details open class="rw-channel">
+                        <summary class="fw-semibold">
+                          SYSTEM <span class="text-secondary small ms-2">(stored)</span>
+                        </summary>
 
-                      <div class="pt-2">
-                        {% if show_system %}
-
+                        <div class="pt-2">
                           {% if system_latest %}
                             <div class="rw-message mb-2">
                               <div class="rw-message-body">
@@ -210,22 +248,9 @@
                           {% else %}
                             <div class="text-secondary small">No SYSTEM preview.</div>
                           {% endif %}
-
-                        {% else %}
-
-                          {% if pane.output %}
-                            <div class="rw-message">
-                              <div class="rw-message-body">
-                                {{ pane.output|linebreaksbr }}
-                              </div>
-                            </div>
-                          {% else %}
-                            <div class="text-secondary small">No OUTPUT.</div>
-                          {% endif %}
-
-                        {% endif %}
-                      </div>
-                    </details>
+                        </div>
+                      </details>
+                    {% endif %}
 
                   </div>
                 {% endwith %}
@@ -239,4 +264,219 @@
   </div>
 
 </div>
+
+<script>
+  (function () {
+    const list = document.querySelector(".rw-turn-list");
+    if (!list) return;
+
+    // Keyed per chat
+    const chatId = "{{ chat.id }}";
+    const key = "rw_turn_scroll_chat_" + chatId;
+
+    // Restore on load
+    const saved = sessionStorage.getItem(key);
+    if (saved !== null) {
+      list.scrollTop = parseInt(saved, 10);
+    }
+
+    // Save on scroll
+    list.addEventListener("scroll", function () {
+      sessionStorage.setItem(key, list.scrollTop);
+    });
+  })();
+
+  (function () {
+    function getCsrfToken() {
+      var el = document.querySelector("input[name=csrfmiddlewaretoken]");
+      return el ? el.value : "";
+    }
+
+    function humanSize(n) {
+      if (!n && n !== 0) return "";
+      if (n < 1024) return n + " B";
+      if (n < 1024 * 1024) return Math.round(n / 1024) + " KB";
+      return Math.round(n / (1024 * 1024)) + " MB";
+    }
+
+    async function uploadImageBlob(blob) {
+      var url = window.RW_PASTE_UPLOAD_URL;
+      if (!url) throw new Error("Missing RW_PASTE_UPLOAD_URL");
+
+      var fd = new FormData();
+      fd.append("file", blob, "pasted-image.png");
+
+      var resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": getCsrfToken()
+        },
+        body: fd,
+        credentials: "same-origin"
+      });
+
+      if (!resp.ok) {
+        var txt = await resp.text();
+        throw new Error("Upload failed: " + txt);
+      }
+      return await resp.json();
+    }
+
+    async function deleteAttachment(attachmentId) {
+      var tmpl = window.RW_ATTACHMENT_DELETE_URL_TEMPLATE;
+      if (!tmpl) throw new Error("Missing delete URL template");
+      var url = tmpl.replace("/0/", "/" + String(attachmentId) + "/");
+
+      var fd = new FormData();
+
+      var resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": getCsrfToken()
+        },
+        body: fd,
+        credentials: "same-origin"
+      });
+
+      if (!resp.ok) {
+        var txt = await resp.text();
+        throw new Error("Delete failed: " + txt);
+      }
+      return await resp.json();
+    }
+
+    function addStatusLine(text) {
+      var box = document.getElementById("rw-paste-status");
+      if (!box) return null;
+      var div = document.createElement("div");
+      div.textContent = text;
+      box.appendChild(div);
+      return div;
+    }
+
+    function addUploadedLine(att) {
+      var box = document.getElementById("rw-paste-status");
+      if (!box) return;
+
+      var row = document.createElement("div");
+      row.className = "d-flex align-items-center gap-2";
+
+      var label = document.createElement("span");
+      label.textContent = "Image uploaded: " + (att.name || "image") + " (" + humanSize(att.size_bytes) + ")";
+
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-sm btn-outline-danger";
+      btn.textContent = "Delete";
+
+      btn.addEventListener("click", function () {
+        if (!confirm("Delete this attachment?")) return;
+
+        btn.disabled = true;
+        deleteAttachment(att.id)
+          .then(function (data) {
+            if (data && data.ok) {
+              row.remove();
+            } else {
+              btn.disabled = false;
+              alert("Delete failed.");
+            }
+          })
+          .catch(function (err) {
+            btn.disabled = false;
+            alert("Delete error: " + (err && err.message ? err.message : String(err)));
+          });
+      });
+
+      row.appendChild(label);
+      row.appendChild(btn);
+      box.appendChild(row);
+    }
+
+    var input = document.getElementById("rw-chat-input");
+    if (!input) return;
+
+    input.addEventListener("paste", function (ev) {
+      var items = ev.clipboardData && ev.clipboardData.items ? ev.clipboardData.items : null;
+      if (!items) return;
+
+      var foundImage = false;
+
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (it && it.type && it.type.indexOf("image/") === 0) {
+          foundImage = true;
+
+          var file = it.getAsFile();
+          if (!file) continue;
+
+          var line = addStatusLine("Pasting image: uploading...");
+          uploadImageBlob(file)
+            .then(function (data) {
+              if (data && data.ok && data.attachment) {
+                if (line) line.remove();
+                addUploadedLine(data.attachment);
+              } else {
+                if (line) line.textContent = "Image upload: unexpected response";
+              }
+            })
+            .catch(function (err) {
+              if (line) {
+                line.textContent = "Image upload error: " + (err && err.message ? err.message : String(err));
+              }
+            });
+        }
+      }
+
+      if (foundImage) {
+        ev.preventDefault();
+      }
+    });
+    })();
+(function () {
+  var list = document.getElementById("rw-attachment-list");
+  if (!list) return;
+
+  list.addEventListener("click", function (ev) {
+    var btn = ev.target && ev.target.classList && ev.target.classList.contains("rw-attachment-delete")
+      ? ev.target
+      : null;
+    if (!btn) return;
+
+    var row = btn.closest("[data-attachment-id]");
+    if (!row) return;
+
+    var id = row.getAttribute("data-attachment-id");
+    if (!id) return;
+
+    if (!confirm("Delete this attachment?")) return;
+
+    btn.disabled = true;
+
+    deleteAttachment(id)
+      .then(function (data) {
+        if (data && data.ok) {
+          row.remove();
+        } else {
+          btn.disabled = false;
+          alert("Delete failed.");
+        }
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        alert("Delete error: " + (err && err.message ? err.message : String(err)));
+      });
+  });
+})();
+(function () {
+  var form = document.querySelector("form[action$='{% url 'accounts:chat_message_create' %}']");
+  if (!form) return;
+
+  form.addEventListener("submit", function () {
+    var cb = document.getElementById("rw-include-last-image");
+    if (cb) cb.checked = false;
+  });
+})();
+</script>
+
 {% endblock %}

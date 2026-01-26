@@ -37,6 +37,15 @@ urlpatterns = [
     path("chats/<int:chat_id>/rename/", views.chat_rename, name="chat_rename"),
     path("chats/<int:chat_id>/select/", views.chat_select, name="chat_select"),
     path("chats/<int:chat_id>/delete/", views.chat_delete, name="chat_delete"),
+    path("chats/<int:chat_id>/attachments/paste/", views.chat_attachment_paste, name="chat_attachment_paste",),
+    path(
+        "chats/attachments/<int:attachment_id>/delete/",
+        views.chat_attachment_delete,
+        name="chat_attachment_delete",
+    ),
+
+
+
 
 
     # System (L1-L4 defaults) - superuser only

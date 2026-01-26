@@ -191,16 +191,19 @@ PROTOCOL_LIBRARY = {
 
 # ------------------------------------------------------------
 # Builder: effective_context -> system messages
+# Single source of truth: resolved context only (no DB amendments)
 # ------------------------------------------------------------
 
 def build_system_messages(effective: dict) -> list[str]:
     """
-    Returns a list of SYSTEM message strings.
-    Caller decides whether to store as one message or multiple.
-    """
-    l2 = effective.get("level2") or {}
-    l2_text = (l2.get("content_text") or "").strip()
+    Returns a list of SYSTEM message strings intended for LLM calls.
 
+    IMPORTANT DESIGN:
+    - Do NOT include the full Level 2/Level 4 dump text here.
+      You only want that during chat_boot (separate function).
+    - This function returns only the compact protocol blocks that describe
+      the active language + avatars + override policy.
+    """
     l4 = effective.get("level4", {}) or {}
 
     # Resolve avatar selections (defaults must exist as PROTOCOL_LIBRARY keys)
@@ -215,11 +218,7 @@ def build_system_messages(effective: dict) -> list[str]:
 
     blocks: list[list[str]] = []
 
-    # L2 governance block (raw text)
-    if l2_text:
-        blocks.append(["LEVEL 2", l2_text])
-
-    # Fixed ordering
+    # Fixed ordering (protocol blocks)
     blocks.append(PROTOCOL_LIBRARY["language"]["default"])
     blocks.append(PROTOCOL_LIBRARY["epistemic"].get(epistemic, PROTOCOL_LIBRARY["epistemic"]["Canonical"]))
     blocks.append(PROTOCOL_LIBRARY["cognitive"].get(cognitive, PROTOCOL_LIBRARY["cognitive"]["Analyst"]))
@@ -229,4 +228,28 @@ def build_system_messages(effective: dict) -> list[str]:
     blocks.append(PROTOCOL_LIBRARY["checkpointing"].get(checkpointing, PROTOCOL_LIBRARY["checkpointing"]["Manual"]))
     blocks.append(PROTOCOL_LIBRARY["override_policy"]["default"])
 
+    # Effective state summary (authoritative, compact)
+    blocks.append(
+        [
+            "[ACTIVE_AVATARS]",
+            f"Epistemic: {epistemic}",
+            f"Cognitive: {cognitive}",
+            f"Interaction: {interaction}",
+            f"Presentation: {presentation}",
+            f"Performance: {performance}",
+            f"Checkpointing: {checkpointing}",
+            "",
+            "The ACTIVE_AVATARS above are authoritative. Follow them.",
+        ]
+    )
+
     return ["\n".join(block) for block in blocks]
+
+
+def build_boot_dump_level2_text(effective: dict) -> str:
+    """
+    Boot-only helper: returns the raw Level 2 content text (for chat_boot UI/logging).
+    Do NOT feed this into normal LLM calls.
+    """
+    l2 = effective.get("level2") or {}
+    return (l2.get("content_text") or "").strip()

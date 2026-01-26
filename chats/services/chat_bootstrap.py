@@ -33,7 +33,7 @@ def bootstrap_chat(*, project, user, title=None) -> ChatWorkspace:
             if has_assistant:
                 return existing
 
-   # 1) Create chat
+    # 1) Create chat
     chat = ChatWorkspace.objects.create(
         project=project,
         created_by=user,
@@ -47,10 +47,15 @@ def bootstrap_chat(*, project, user, title=None) -> ChatWorkspace:
         session_overrides=getattr(chat, "chat_overrides", None),
     )
 
-    # 3) Build SYSTEM messages
+    # 3) Build LLM-facing boot SYSTEM messages (Level 4 protocol blocks only)
     system_blocks = build_system_messages(resolved)
 
-    # 4) Persist SYSTEM messages
+    # 3b) Boot-only Level 2 dump (for UI/audit only; do NOT persist as ChatMessage)
+    # If you want this stored, attach it to the chat object (if you have a field),
+    # or keep it in a separate audit store. For now we compute it and leave it unused.
+    _l2_dump_text = build_boot_dump_level2_text(resolved)
+
+    # 4) Persist SYSTEM messages (small, LLM-facing only)
     for block in system_blocks:
         ChatMessage.objects.create(
             chat=chat,

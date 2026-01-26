@@ -3,6 +3,7 @@
 <nav class="rw-sidebar-nav">
   <ul class="nav flex-column px-2 py-1 gap-1">
 
+    <!-- Dashboard -->
     <li class="nav-item">
       <a class="nav-link" href="{% url 'accounts:dashboard' %}">
         <i class="bi bi-speedometer2 me-2"></i>
@@ -10,6 +11,15 @@
       </a>
     </li>
 
+    <!-- Projects -->
+    <li class="nav-item">
+      <a class="nav-link" href="{% url 'accounts:project_config_list' %}">
+        <i class="bi bi-folder me-2"></i>
+        Projects
+      </a>
+    </li>
+
+    <!-- Chats -->
     <li class="nav-item">
       <a class="nav-link" href="{% url 'accounts:chat_browse' %}">
         <i class="bi bi-chat-left-text me-2"></i>
@@ -17,17 +27,30 @@
       </a>
     </li>
 
+    <!-- Active chat -->
+    {% with cid=request.session.rw_active_chat_id %}
+      {% if cid %}
+        <li class="nav-item">
+          <a class="nav-link" href="{% url 'accounts:chat_detail' cid %}">
+            <i class="bi bi-chat-dots me-2"></i>
+            Active
+          </a>
+        </li>
+      {% else %}
+        <li class="nav-item">
+          <span class="nav-link text-secondary disabled">
+            <i class="bi bi-chat-dots me-2"></i>
+            No chat selected
+          </span>
+        </li>
+      {% endif %}
+    {% endwith %}
+
+    <!-- Settings -->
     <li class="nav-item">
       <a class="nav-link" href="{% url 'accounts:config_menu' %}">
         <i class="bi bi-sliders me-2"></i>
         Settings
-      </a>
-    </li>
-
-    <li class="nav-item">
-      <a class="nav-link" href="{% url 'accounts:project_config_list' %}">
-        <i class="bi bi-folder me-2"></i>
-        Projects
       </a>
     </li>
 

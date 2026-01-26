@@ -21,6 +21,7 @@ from config.models import ConfigRecord, ConfigScope, ConfigVersion
 from projects.models import Project
 from uploads.models import ChatAttachment
 from chats.services.llm import generate_panes
+from chats.services.llm import build_image_parts_from_attachments
 from uuid import uuid4
 from django.db.models import Count
 from chats.models import ChatMessage
@@ -388,7 +389,6 @@ def chat_rename(request, chat_id: int):
 # ------------------------------------------------------------
 # Chat message create (composer POST)
 # ------------------------------------------------------------
-
 @login_required
 def chat_message_create(request):
     # GET should never land here, but if it does (e.g. login redirect),
@@ -399,6 +399,8 @@ def chat_message_create(request):
     chat_id = request.POST.get("chat_id")
     content = (request.POST.get("content") or "").strip()
     next_url = request.POST.get("next") or None
+
+ #   print("DEBUG include_last_image POST =", repr(request.POST.get("include_last_image")))
 
     if not chat_id:
         messages.error(request, "No chat selected.")
@@ -422,7 +424,7 @@ def chat_message_create(request):
     request.session.modified = True
 
     # 1) Store USER message
-    user_msg = ChatMessage.objects.create(
+    ChatMessage.objects.create(
         chat=chat,
         role=ChatMessage.Role.USER,
         raw_text=content,
@@ -430,7 +432,7 @@ def chat_message_create(request):
         segment_meta={"confidence": "N/A", "parser_version": "user_v1"},
     )
 
-    # Attachments unchanged
+    # 1b) Store new attachments (if any)
     for f in request.FILES.getlist("attachments"):
         ChatAttachment.objects.create(
             project=project,
@@ -443,43 +445,54 @@ def chat_message_create(request):
         )
 
     # 2) Resolve context + build SYSTEM blocks
+    chat_overrides = (
+        request.session.get("rw_chat_overrides", {})
+        .get(str(chat.id), {})
+        or {}
+    )
+    session_overrides = request.session.get("rw_session_overrides", {}) or {}
+
     resolved = resolve_effective_context(
         project_id=project.id,
         user_id=user.id,
-        session_overrides=getattr(chat, "chat_overrides", None),
+        session_overrides=session_overrides,
+        chat_overrides=chat_overrides,
     )
     system_blocks = build_system_messages(resolved)
 
-    # ------------------------------------------------------------
-    # SYSTEM DEBUG (temporary)
-    # Store the exact SYSTEM blocks used for this request so the UI
-    # can show what was sent to the LLM for observability/debugging.
-    # Session-scoped: cleared on logout/session expiry.
-    # ------------------------------------------------------------
+    # SYSTEM preview for UI observability/debugging
     request.session["rw_last_system_preview"] = "\n\n".join(system_blocks)
     request.session["rw_last_system_preview_chat_id"] = chat.id
     request.session["rw_last_system_preview_at"] = timezone.now().isoformat()
     request.session.modified = True
 
-    # 3) Build conversation history (exclude SYSTEM)
-    history = (
-        ChatMessage.objects
-        .filter(chat=chat)
-        .exclude(role=ChatMessage.Role.SYSTEM)
-        .order_by("id")
-    )
+    # 3) Build conversation history (exclude SYSTEM and internal override-push assistant turns)
+   # 3) LLM input: current message only (no history)
+    llm_input = content
 
-    # Convert to text prompt for panes generator
-    transcript = []
-    for m in history:
-        role = "User" if m.role == ChatMessage.Role.USER else "Assistant"
-        transcript.append(f"{role}:\n{m.raw_text}")
 
-    llm_input = "\n\n".join(transcript)
+    # 4) Decide whether to include the last image (Option B) and build image_parts
+    include_last_image = (request.POST.get("include_last_image") == "1")
 
-    # 4) Call LLM (panes) WITH system context applied upstream
+    image_parts = []
+    if include_last_image:
+        img_atts = (
+            ChatAttachment.objects
+            .filter(chat=chat, content_type__startswith="image/")
+            .order_by("-id")[:1]
+        )
+        image_parts = build_image_parts_from_attachments(reversed(list(img_atts)))
+
+    has_images = bool(image_parts)
+
+  #  print("DEBUG include_last_image =", include_last_image)
+  #  print("DEBUG image_parts count =", len(image_parts))
+
+    # 5) Call LLM (panes)
     panes = generate_panes(
-        "\n\n".join(system_blocks) + "\n\n" + llm_input
+        llm_input,
+        image_parts=image_parts,
+        system_blocks=system_blocks,
     )
 
     assistant_raw = (
@@ -501,7 +514,7 @@ def chat_message_create(request):
         segment_meta={"parser_version": "llm_v1", "confidence": "HIGH"},
     )
 
-    # 5) Update chat tile cache
+    # 6) Update chat tile cache
     chat.last_output_snippet = (out_msg.output_text or "")[:280]
     chat.last_output_at = timezone.now()
     chat.save(update_fields=["last_output_snippet", "last_output_at", "updated_at"])
@@ -658,6 +671,8 @@ def chat_detail(request, chat_id: int):
 
     system_latest = {}
 
+    m = None  # <-- define once, outside
+
     if show_system:
         if selected_turn_id.startswith("sys-"):
             try:
@@ -665,17 +680,15 @@ def chat_detail(request, chat_id: int):
             except ValueError:
                 sys_id = None
 
-            m = None
             if sys_id is not None:
                 m = (
                     ChatMessage.objects
                     .filter(chat=chat, role=ChatMessage.Role.SYSTEM, id=sys_id)
                     .first()
                 )
-        system_preview = (m.raw_text or "").strip() if m else ""
 
+    system_preview = (m.raw_text or "").strip() if m else ""
 
-   
     return render(
         request,
         "accounts/chat_detail.html",
@@ -1103,19 +1116,19 @@ def _build_language_block(*, language: str, variant: str | None, code: str | Non
 
 @login_required
 def chat_config_overrides(request):
-   
+
+    import hashlib
+
     chat_overrides = request.session.get("rw_chat_overrides", {}) or {}
     active_chat_id = request.session.get("rw_active_chat_id")
     key = str(active_chat_id) if active_chat_id else None
     per_chat = chat_overrides.get(key, {}) if key else {}
 
     if request.method == "POST" and request.POST.get("reset"):
-        # 1) clear chat overrides for this chat
         if key:
             chat_overrides.pop(key, None)
             request.session["rw_chat_overrides"] = chat_overrides
 
-        # 2) clear session-level overrides (so user defaults show)
         for k in [
             "rw_l4_override_COGNITIVE",
             "rw_l4_override_INTERACTION",
@@ -1130,9 +1143,7 @@ def chat_config_overrides(request):
         messages.success(request, "Temporary overrides cleared (chat + session).")
         return redirect("accounts:chat_config_overrides")
 
-    # --- purge legacy language keys (from older versions) ---
-
-
+    # --- purge legacy language keys ---
     if key and per_chat:
         changed = False
         if "LANGUAGE_VARIANT" in per_chat:
@@ -1147,8 +1158,6 @@ def chat_config_overrides(request):
             request.session["rw_chat_overrides"] = chat_overrides
             request.session.modified = True
 
-
-    # Dropdown choices (all axes)
     def _choices(cat: str):
         return (
             Avatar.objects
@@ -1164,22 +1173,15 @@ def chat_config_overrides(request):
     performance_choices = _choices("PERFORMANCE")
     checkpointing_choices = _choices("CHECKPOINTING")
 
-    # Profile defaults (only for display fallback)
-    profile = getattr(request.user, "profile", None)
-    default_lang = getattr(profile, "default_language", "English") if profile else "English"
-
-    # Chat override language (name-only). Allow blank (means "no override")
-    lang_name_current = per_chat.get("LANGUAGE_NAME") or default_lang
+    lang_name_current = per_chat.get("LANGUAGE_NAME") or ""
 
     if request.method == "POST":
         if not key:
             messages.error(request, "No active chat selected.")
             return redirect("accounts:chat_config_overrides")
 
-        # Re-read per-chat dict
         per_chat = chat_overrides.get(key, {}) or {}
 
-        # ---- old values (before applying this POST) ----
         old_vals = {
             "COGNITIVE": per_chat.get("COGNITIVE"),
             "INTERACTION": per_chat.get("INTERACTION"),
@@ -1190,17 +1192,13 @@ def chat_config_overrides(request):
             "LANGUAGE_NAME": per_chat.get("LANGUAGE_NAME"),
         }
 
-        # ---- new language (name-only override) ----
+        # language (name-only, allow blank)
         new_language_name = (request.POST.get("language_name") or "").strip() or None
-
-        # Persist language override name-only
         per_chat["LANGUAGE_NAME"] = new_language_name
-
-        # Template never posts these, so ALWAYS clear them to avoid stale values
         per_chat.pop("LANGUAGE_VARIANT", None)
         per_chat.pop("LANGUAGE_CODE", None)
 
-        # ---- new values from form (avatars) ----
+        # avatars (IDs)
         new_vals = {
             "COGNITIVE": request.POST.get("cognitive_id") or None,
             "INTERACTION": request.POST.get("interaction_id") or None,
@@ -1210,15 +1208,11 @@ def chat_config_overrides(request):
             "CHECKPOINTING": request.POST.get("checkpointing_id") or None,
         }
 
-        # Persist avatar overrides
         per_chat.update(new_vals)
-
-        # ---- persist per-chat overrides to session ----
         chat_overrides[key] = per_chat
         request.session["rw_chat_overrides"] = chat_overrides
         request.session.modified = True
 
-        # ---- append canonical SYSTEM blocks for anything that changed ----
         chat = ChatWorkspace.objects.filter(pk=int(active_chat_id)).first() if active_chat_id else None
         if chat:
             AXES = [
@@ -1226,36 +1220,126 @@ def chat_config_overrides(request):
                 ("INTERACTION", "interaction", "Structured"),
                 ("PRESENTATION", "presentation", "Laptop"),
                 ("EPISTEMIC", "epistemic", "Canonical"),
-                ("PERFORMANCE", "performance", "Focused"),   # <-- was Tight
+                ("PERFORMANCE", "performance", "Focused"),
                 ("CHECKPOINTING", "checkpointing", "Manual"),
             ]
 
+            to_send_system_texts = []
+
             for store_key, lib_key, fallback in AXES:
                 if new_vals[store_key] != old_vals[store_key]:
-                    name = _safe_avatar_name(new_vals[store_key]) or fallback
-                    lines = PROTOCOL_LIBRARY[lib_key].get(name, PROTOCOL_LIBRARY[lib_key][fallback])
+                    old_name = _safe_avatar_name(old_vals[store_key]) or fallback
+                    new_name = _safe_avatar_name(new_vals[store_key]) or fallback
+
+                    lib = PROTOCOL_LIBRARY.get(lib_key, {})
+                    lines = (
+                        lib.get(new_name)
+                        or lib.get(fallback)
+                        or [f"[{lib_key.upper()}] Unrecognised value: {new_name}"]
+                    )
+
+                    change_header = f"[CONFIG_CHANGE] {store_key}: {old_name} -> {new_name}"
+
+                    system_text = "\n".join(
+                        [change_header, ""] + lines + [
+                            "",
+                            "These settings are now authoritative and override the current settings.",
+                        ]
+                    )
+
+                    # Store audit SYSTEM message
                     ChatMessage.objects.create(
                         chat=chat,
                         role=ChatMessage.Role.SYSTEM,
-                        raw_text="\n".join(lines),
+                        raw_text=system_text,
                     )
 
-            # Language: append if name changed (name-only)
-            if new_language_name != old_vals["LANGUAGE_NAME"]:
-                ChatMessage.objects.create(
-                    chat=chat,
-                    role=ChatMessage.Role.SYSTEM,
-                    raw_text=_build_language_block(
-                        language=new_language_name or default_lang,
-                        variant=None,
-                        code=None,
-                    ),
-                )
+                    # Queue to send to LLM immediately
+                    to_send_system_texts.append(system_text)
+
+            # ---- immediate push to LLM with idempotency hardening ----
+            if to_send_system_texts:
+                # Idempotency signature for "double click" / resubmit
+                sig_src = f"{chat.id}|" + "||".join(to_send_system_texts)
+                push_sig = hashlib.sha1(sig_src.encode("utf-8")).hexdigest()
+
+                last_sig = request.session.get("rw_last_override_push_sig")
+                last_at_iso = request.session.get("rw_last_override_push_at")
+                allow_push = True
+
+                if last_sig == push_sig and last_at_iso:
+                    try:
+                        last_dt = timezone.datetime.fromisoformat(last_at_iso)
+                        if timezone.now() - last_dt < timezone.timedelta(seconds=10):
+                            allow_push = False
+                    except Exception:
+                        pass
+
+                if allow_push:
+                    try:
+                        chat_overrides_now = (
+                            request.session.get("rw_chat_overrides", {})
+                            .get(str(chat.id), {})
+                            or {}
+                        )
+                        session_overrides_now = request.session.get("rw_session_overrides", {}) or {}
+
+                        resolved_now = resolve_effective_context(
+                            project_id=chat.project_id,
+                            user_id=request.user.id,
+                            session_overrides=session_overrides_now,
+                            chat_overrides=chat_overrides_now,
+                        )
+
+                        base_system_blocks = build_system_messages(resolved_now)
+                        system_blocks = base_system_blocks + to_send_system_texts
+
+                        internal_user = "Internal: apply the authoritative override above."
+
+                        panes = generate_panes(
+                            "\n\n".join(system_blocks) + "\n\n" + "User:\n" + internal_user
+                        )
+
+                        assistant_raw = (
+                            "ANSWER:\n"
+                            f"{panes.get('answer','')}\n\n"
+                            "REASONING:\n"
+                            f"{panes.get('reasoning','')}\n\n"
+                            "OUTPUT:\n"
+                            f"{panes.get('output','')}\n"
+                        )
+
+                        out_msg = ChatMessage.objects.create(
+                            chat=chat,
+                            role=ChatMessage.Role.ASSISTANT,
+                            raw_text=assistant_raw,
+                            answer_text=panes.get("answer", ""),
+                            reasoning_text=panes.get("reasoning", ""),
+                            output_text=panes.get("output", ""),
+                            segment_meta={"parser_version": "llm_v1", "confidence": "HIGH", "override_push": True},
+                        )
+
+                        chat.last_output_snippet = (out_msg.output_text or "")[:280]
+                        chat.last_output_at = timezone.now()
+                        chat.save(update_fields=["last_output_snippet", "last_output_at", "updated_at"])
+
+                        # Store idempotency stamp
+                        request.session["rw_last_override_push_sig"] = push_sig
+                        request.session["rw_last_override_push_at"] = timezone.now().isoformat()
+
+                        # Optional system preview
+                        request.session["rw_last_system_preview"] = "\n\n".join(system_blocks)
+                        request.session["rw_last_system_preview_chat_id"] = chat.id
+                        request.session["rw_last_system_preview_at"] = timezone.now().isoformat()
+
+                        request.session.modified = True
+
+                    except Exception as e:
+                        messages.error(request, f"Overrides saved, but LLM push failed: {e}")
 
         messages.success(request, "Temporary overrides saved.")
         return redirect("accounts:chat_config_overrides")
 
-    # GET: load current overrides for this chat
     current = chat_overrides.get(key, {}) if key else {}
 
     return render(
@@ -1265,7 +1349,6 @@ def chat_config_overrides(request):
             "active_chat_id": active_chat_id,
             "chat_override_current": current,
             "language_name_current": lang_name_current,
-
             "cognitive_choices": cognitive_choices,
             "interaction_choices": interaction_choices,
             "presentation_choices": presentation_choices,
@@ -1274,6 +1357,77 @@ def chat_config_overrides(request):
             "checkpointing_choices": checkpointing_choices,
         },
     )
+
+# --------------------------------------------------------
+# Attach Clipboard Picture in Chat
+# ------------------------------------------------------------
+@require_POST
+@login_required
+def chat_attachment_paste(request, chat_id: int):
+    """
+    Accept one pasted clipboard image and store as ChatAttachment.
+    Returns JSON for UI.
+    """
+    chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=chat_id)
+
+    f = request.FILES.get("file")
+    if not f:
+        return JsonResponse({"ok": False, "error": "No file provided."}, status=400)
+
+    ctype = (getattr(f, "content_type", "") or "").lower()
+    if not ctype.startswith("image/"):
+        return JsonResponse({"ok": False, "error": "Only image paste is supported."}, status=400)
+
+    att = ChatAttachment.objects.create(
+        project=chat.project,
+        chat=chat,
+        uploaded_by=request.user,
+        file=f,
+        original_name=getattr(f, "name", "pasted-image"),
+        content_type=ctype,
+        size_bytes=getattr(f, "size", 0) or 0,
+    )
+
+    # If ChatAttachment.file is a FileField, this will usually be available:
+    file_url = ""
+    try:
+        file_url = att.file.url  # may raise if storage has no url
+    except Exception:
+        file_url = ""
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "attachment": {
+                "id": att.id,
+                "name": att.original_name,
+                "content_type": att.content_type,
+                "size_bytes": att.size_bytes,
+                "url": file_url,
+            },
+        }
+    )
+
+
+# --------------------------------------------------------
+# Delete Clipboard Picture in Chat
+# ------------------------------------------------------------
+@require_POST
+@login_required
+def chat_attachment_delete(request, attachment_id: int):
+    qs = ChatAttachment.objects.filter(pk=attachment_id, uploaded_by=request.user)
+    att = qs.first()
+    if not att:
+        return JsonResponse({"ok": True, "already_deleted": True})
+
+    try:
+        if att.file:
+            att.file.delete(save=False)
+    finally:
+        att.delete()
+
+    return JsonResponse({"ok": True})
+
 # --------------------------------------------------------
 # Session overrides (AJAX) - keep minimal so URL resolves
 # ------------------------------------------------------------

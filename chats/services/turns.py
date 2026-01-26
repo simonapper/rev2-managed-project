@@ -139,12 +139,12 @@ def build_chat_turn_context(request, chat):
 
     # Re-number turns after user sort; SYSTEM stays blank
     n = 0
-    for it in items:
-        if it.get("kind") == "turn":
-            n += 1
-            it["number"] = n
-        else:
-            it["number"] = ""
+    # for it in items:
+    #     if it.get("kind") == "turn":
+    #         n += 1
+    #         it["number"] = n
+    #     else:
+    #         it["number"] = ""
 
     return {
         "attachments": attachments,

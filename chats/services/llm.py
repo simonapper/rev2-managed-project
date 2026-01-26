@@ -4,29 +4,94 @@
 from __future__ import annotations
 
 import json
+import base64
 from typing import Dict, List, Optional
 from openai import OpenAI
 
 client = OpenAI()
 
 
-def generate_panes(user_text: str) -> Dict[str, str]:
+# Assumes you already have:
+# client = OpenAI()
+# and ChatAttachment is your model with FileField `file` and `content_type`.
+
+
+def _attachment_to_data_url(att) -> str:
+    """
+    Convert a Django FileField attachment into a base64 data URL.
+    Option B: private images, no public URL required.
+    """
+    mime = (getattr(att, "content_type", "") or "image/png").strip().lower()
+    if not mime.startswith("image/"):
+        mime = "image/png"
+
+    f = getattr(att, "file", None)
+    if not f:
+        raise ValueError("Attachment has no file.")
+
+    f.open("rb")
+    try:
+        data = f.read()
+    finally:
+        f.close()
+
+    b64 = base64.b64encode(data).decode("ascii")
+    return "data:%s;base64,%s" % (mime, b64)
+
+
+def build_image_parts_from_attachments(attachments) -> List[Dict[str, str]]:
+    """
+    Build Responses API image parts: [{"type":"input_image","image_url":"data:..."}]
+    """
+    parts: List[Dict[str, str]] = []
+    for att in attachments:
+        ctype = (getattr(att, "content_type", "") or "").lower()
+        if not ctype.startswith("image/"):
+            continue
+        parts.append(
+            {
+                "type": "input_image",
+                "image_url": _attachment_to_data_url(att),
+            }
+        )
+    return parts
+
+
+from typing import Dict, List, Optional
+
+def generate_panes(
+    user_text: str,
+    image_parts: Optional[List[Dict[str, str]]] = None,
+    system_blocks: Optional[List[str]] = None,
+) -> Dict[str, str]:
+    image_parts = image_parts or []
+    system_blocks = system_blocks or []
+
+    system_contract = (
+        "Return JSON with keys:\n"
+        "- answer: direct response\n"
+        "- key_info: bullets / anchors\n"
+        "- visuals: emojis, steps, breadcrumbs, ASCII diagrams\n"
+        "- reasoning: reasoning summary\n"
+        "- output: extractable artefact text\n"
+    )
+
+    # Multiple system messages are fine.
+    input_msgs = [{"role": "system", "content": system_contract}]
+    for block in system_blocks:
+        if block:
+            input_msgs.append({"role": "system", "content": block})
+
+    input_msgs.append(
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": user_text}] + image_parts,
+        }
+    )
+
     response = client.responses.create(
         model="gpt-4.1-mini",
-        input=[
-            {
-                "role": "system",
-                "content": (
-                    "Return JSON with keys:\n"
-                    "- answer: direct response\n"
-                    "- key_info: bullets / anchors\n"
-                    "- visuals: emojis, steps, breadcrumbs, ASCII diagrams\n"
-                    "- reasoning: reasoning summary\n"
-                    "- output: extractable artefact text\n"
-                ),
-            },
-            {"role": "user", "content": user_text},
-        ],
+        input=input_msgs,
         text={
             "format": {
                 "type": "json_schema",
@@ -48,7 +113,29 @@ def generate_panes(user_text: str) -> Dict[str, str]:
         },
     )
 
-    return json.loads(response.output_text)
+    try:
+        parsed = response.output[0].content[0].parsed  # type: ignore[attr-defined]
+        if isinstance(parsed, dict):
+            return {
+                "answer": parsed.get("answer", "") or "",
+                "key_info": parsed.get("key_info", "") or "",
+                "visuals": parsed.get("visuals", "") or "",
+                "reasoning": parsed.get("reasoning", "") or "",
+                "output": parsed.get("output", "") or "",
+            }
+    except Exception:
+        pass
+
+    import json
+    payload = json.loads(response.output_text or "{}")
+    return {
+        "answer": payload.get("answer", "") or "",
+        "key_info": payload.get("key_info", "") or "",
+        "visuals": payload.get("visuals", "") or "",
+        "reasoning": payload.get("reasoning", "") or "",
+        "output": payload.get("output", "") or "",
+    }
+
 
 def generate_handshake(*, system_blocks: List[str], first_name: Optional[str]) -> str:
     """
@@ -83,7 +170,7 @@ def generate_text(*, system_blocks: list[str], messages: list[dict]) -> str:
     messages: [{'role': 'user'|'assistant', 'content': str}, ...]
     """
     response = client.responses.create(
-        model="gpt-4.1-mini",
+        model="gpt-4.1",
         input=[
             *[{"role": "system", "content": b} for b in system_blocks],
             *messages,
