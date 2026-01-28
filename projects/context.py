@@ -10,14 +10,15 @@ from typing import Any
 from django.contrib.auth import get_user_model
 
 from projects.models import Project, UserProjectPrefs
+from django.contrib.auth.models import AbstractUser
 
-User = get_user_model()
+UserModel = get_user_model()
 
 
 def resolve_effective_context(
     *,
     project: Project,
-    user: User,
+    user: AbstractUser,
     session_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """

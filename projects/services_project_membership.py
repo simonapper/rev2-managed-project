@@ -8,16 +8,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AbstractUser
 from django.db import transaction
+from django.db.models import Q
+from django.db.models.functions import Now
 
 from accounts.models import Role, UserRole
 from projects.models import Project, ProjectMembership, ProjectPolicy
-from django.db.models.functions import Now
-from django.db.models import Q
-from projects.models import Project
 
 
-User = get_user_model()
+UserModel = get_user_model()
+
 
 class ProjectPermissionError(Exception):
     pass
@@ -33,7 +34,7 @@ class MembershipResult:
     user_role: UserRole
 
 
-def is_project_manager(project: Project, user: User) -> bool:
+def is_project_manager(project: Project, user: AbstractUser) -> bool:
     if not getattr(user, "is_authenticated", False):
         return False
     if user.is_superuser or user.is_staff:
@@ -47,7 +48,8 @@ def is_project_manager(project: Project, user: User) -> bool:
         role__name=Role.Name.MANAGER,
     ).exists()
 
-def accessible_projects_qs(user):
+
+def accessible_projects_qs(user: AbstractUser):
     """
     Canonical rule:
     A user may see a project if they own it or have any scoped role in it.
@@ -58,11 +60,10 @@ def accessible_projects_qs(user):
     if user.is_superuser or user.is_staff:
         return Project.objects.all()
 
-    return Project.objects.filter(
-        Q(owner=user) | Q(scoped_roles__user=user)
-    ).distinct()
+    return Project.objects.filter(Q(owner=user) | Q(scoped_roles__user=user)).distinct()
 
-def can_view_project(project: Project, user: User) -> bool:
+
+def can_view_project(project: Project, user: AbstractUser) -> bool:
     if not getattr(user, "is_authenticated", False):
         return False
     if user.is_superuser or user.is_staff:
@@ -74,6 +75,7 @@ def can_view_project(project: Project, user: User) -> bool:
         user=user,
         scope_type=UserRole.ScopeType.PROJECT,
     ).exists()
+
 
 @transaction.atomic
 def ensure_project_seeded(project: Project) -> None:
@@ -98,7 +100,7 @@ def ensure_project_seeded(project: Project) -> None:
 def create_project(
     *,
     name: str,
-    owner: User,
+    owner: AbstractUser,
     description: str = "",
     purpose: str = "",
     kind: str | None = None,
@@ -109,24 +111,25 @@ def create_project(
     Sandbox invariants:
     - Created with owner as the only member.
     """
-    p = create_project(
+    # FIX: create Project model instance (do not call create_project recursively)
+    p = Project.objects.create(
         name=name,
         owner=owner,
         description=description,
         purpose=purpose,
-        kind=kind,
-)
+        kind=kind or Project.Kind.SANDBOX,
+    )
+
     ensure_project_seeded(project=p)
 
-    # If you want parity with accounts.UserRole, you can seed the owner there too.
-    # Many code paths already treat owner as implicit manager, so this is optional.
+    # Optional parity: seed owner as MANAGER in UserRole
     # add_user_role(project=p, user_to_add=owner, role_name=Role.Name.MANAGER, actor=owner)
 
     return p
 
 
 @transaction.atomic
-def add_user_role(*, project: Project, user_to_add: User, role_name: str, actor: User) -> MembershipResult:
+def add_user_role(*, project: Project, user_to_add: AbstractUser, role_name: str, actor: AbstractUser) -> MembershipResult:
     """
     Add or update a user's project-scoped role.
 
@@ -155,10 +158,6 @@ def add_user_role(*, project: Project, user_to_add: User, role_name: str, actor:
         defaults={"role": role},
     )
 
-    # Sync into ProjectMembership:
-    # - Owner always has OWNER membership (seeded).
-    # - For others, map MANAGER/CONTRIBUTOR/OBSERVER where possible.
-    # If your Role.Name set differs, adjust this mapping.
     role_map = {
         getattr(Role.Name, "MANAGER", "MANAGER"): ProjectMembership.Role.MANAGER,
         getattr(Role.Name, "CONTRIBUTOR", "CONTRIBUTOR"): ProjectMembership.Role.CONTRIBUTOR,
@@ -186,7 +185,7 @@ def add_user_role(*, project: Project, user_to_add: User, role_name: str, actor:
 
 
 @transaction.atomic
-def remove_user_from_project(*, project: Project, user_to_remove: User, actor: User) -> int:
+def remove_user_from_project(*, project: Project, user_to_remove: AbstractUser, actor: AbstractUser) -> int:
     """
     Removes all project-scoped roles for a user.
 
@@ -209,7 +208,6 @@ def remove_user_from_project(*, project: Project, user_to_remove: User, actor: U
         scope_type=UserRole.ScopeType.PROJECT,
     ).delete()
 
-    # Best-effort: end-date memberships rather than delete.
     ProjectMembership.objects.filter(
         project=project,
         user=user_to_remove,

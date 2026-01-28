@@ -47,10 +47,32 @@ from django.db.models import Exists, OuterRef
 from django.db.models.functions import Coalesce
 from accounts.models_avatars import Avatar
 from projects.services.llm_instructions import PROTOCOL_LIBRARY
+from config.models import SystemConfigPointers
+from chats.services.cde_injection import build_cde_system_blocks
 
 
+ALLOWED_MODELS = [
+    ("gpt-5.1", "gpt-5.1"),
+    ("gpt-5-mini", "gpt-5-mini"),
+    ("gpt-5-nano", "gpt-5-nano"),
+    ("gpt-4.1", "gpt-4.1"),
+    ("gpt-4.1-mini", "gpt-4.1-mini"),
+    ("gpt-4.1-nano", "gpt-4.1-nano"),
+    ("o3", "o3"),
+    ("o4-mini", "o4-mini"),
+    ("gpt-4o", "gpt-4o"),
+]
 
-User = get_user_model()
+
+class SystemConfigForm(forms.ModelForm):
+    openai_model_default = forms.ChoiceField(
+        choices=ALLOWED_MODELS,
+        widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
+    )
+
+    class Meta:
+        model = SystemConfigPointers
+        fields = ("openai_model_default",)
 
 # ------------------------------------------------------------
 # Admin View on Sidebar
@@ -58,7 +80,32 @@ User = get_user_model()
 
 @login_required
 def admin_hub(request):
-    return render(request, "accounts/admin_hub.html")
+    # singleton row
+    pointers, _ = SystemConfigPointers.objects.get_or_create(id=1)
+
+    if request.method == "POST":
+        form = SystemConfigForm(request.POST, instance=pointers)
+        if form.is_valid():
+            obj = form.save(commit=False)
+            obj.updated_by = request.user
+            obj.save()
+            messages.success(request, "Default LLM model updated.")
+            return redirect("accounts:admin_hub")
+    else:
+        form = SystemConfigForm(instance=pointers)
+
+    return render(
+        request,
+        "accounts/admin_hub.html",
+        {
+            "form": form,
+            "pointers": pointers,
+        },
+    )
+
+
+User = get_user_model()
+
 
 # ------------------------------------------------------------
 # Delete Empty Chats
@@ -202,7 +249,13 @@ def project_create(request):
             p = form.save(commit=False)
             p.owner = request.user
             p.save()  # signals handle policy, membership, L4 config
-            chat = bootstrap_chat(project=p, user=request.user, title="Chat 1")
+            chat = bootstrap_chat(
+                project=p,
+                user=request.user,
+                title="Chat 1",
+                generate_panes_func=generate_panes,
+                session_overrides=(request.session.get("rw_session_overrides", {}) or {}),
+            )
             request.session["rw_active_chat_id"] = chat.id
             request.session["rw_active_project_id"] = p.id
             request.session.modified = True
@@ -328,15 +381,44 @@ def chat_create(request):
             messages.error(request, "Title and project are required.")
             return redirect("accounts:chat_create")
 
-        # chat = ChatWorkspace.objects.create(
-        #     project=project,
-        #     title=title,
-        #     status=ChatWorkspace.Status.ACTIVE,
-        #     created_by=user,
-        # )
-        chat = bootstrap_chat(project=project, user=user, title=title)
+        # Sandbox-only until Standard project path is implemented
+        mode = (getattr(project, "mode", "") or "").strip().upper()
+        kind = (getattr(project, "kind", "") or "").strip().upper()
+        primary_type = (getattr(project, "primary_type", "") or "").strip().upper()
+        name_is_sandbox = "SANDBOX" in (getattr(project, "name", "") or "").upper()
 
+        is_sandbox = (
+            (mode == "SANDBOX")
+            or (kind == "SANDBOX")
+            or (primary_type == "SANDBOX")
+            or name_is_sandbox
+        )
 
+        if not is_sandbox:
+            messages.error(
+                request,
+                "Only Sandbox projects support chat creation right now. "
+                + f"(mode={mode or 'NONE'}, kind={kind or 'NONE'}, primary_type={primary_type or 'NONE'})"
+            )
+            return redirect("accounts:chat_create")
+
+        cde_mode = (request.POST.get("cde_mode") or "SKIP").strip().upper()
+        cde_inputs = {
+            "chat.goal": (request.POST.get("chat_goal") or "").strip(),
+            "chat.success": (request.POST.get("chat_success") or "").strip(),
+            "chat.constraints": (request.POST.get("chat_constraints") or "").strip(),
+            "chat.non_goals": (request.POST.get("chat_non_goals") or "").strip(),
+        }
+
+        chat = bootstrap_chat(
+            project=project,
+            user=user,
+            title=title,
+            generate_panes_func=generate_panes,
+            session_overrides=(request.session.get("rw_session_overrides", {}) or {}),
+            cde_mode=cde_mode,
+            cde_inputs=cde_inputs,
+        )
         request.session["rw_active_project_id"] = project.id
         request.session["rw_active_chat_id"] = chat.id
         request.session.modified = True
@@ -358,8 +440,6 @@ def chat_create(request):
             "selected_project_id": selected_project_id,
         },
     )
-
-
 # ------------------------------------------------------------
 # Chat Rename (composer POST)
 # ------------------------------------------------------------
@@ -391,30 +471,26 @@ def chat_rename(request, chat_id: int):
 # ------------------------------------------------------------
 @login_required
 def chat_message_create(request):
-    # GET should never land here, but if it does (e.g. login redirect),
-    # bounce to dashboard instead of hard-failing JSON.
     if request.method != "POST":
         return redirect("accounts:dashboard")
 
     chat_id = request.POST.get("chat_id")
     content = (request.POST.get("content") or "").strip()
-    next_url = request.POST.get("next") or None
-
- #   print("DEBUG include_last_image POST =", repr(request.POST.get("include_last_image")))
+    next_url = (request.POST.get("next") or "").strip()
 
     if not chat_id:
         messages.error(request, "No chat selected.")
-        return redirect(next_url or "accounts:dashboard")
+        return redirect("accounts:dashboard")
 
     try:
         cid = int(chat_id)
     except ValueError:
         messages.error(request, "Invalid chat.")
-        return redirect(next_url or "accounts:dashboard")
+        return redirect("accounts:dashboard")
 
     if not content:
         messages.error(request, "Message cannot be empty.")
-        return redirect(next_url or f"{reverse('accounts:dashboard')}?chat={cid}")
+        return redirect(reverse("accounts:chat_detail", args=[cid]))
 
     chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=cid)
     project = chat.project
@@ -432,7 +508,7 @@ def chat_message_create(request):
         segment_meta={"confidence": "N/A", "parser_version": "user_v1"},
     )
 
-    # 1b) Store new attachments (if any)
+    # 1b) Store new attachments (if any) (legacy form upload path)
     for f in request.FILES.getlist("attachments"):
         ChatAttachment.objects.create(
             project=project,
@@ -459,6 +535,7 @@ def chat_message_create(request):
         chat_overrides=chat_overrides,
     )
     system_blocks = build_system_messages(resolved)
+    system_blocks.extend(build_cde_system_blocks(chat))
 
     # SYSTEM preview for UI observability/debugging
     request.session["rw_last_system_preview"] = "\n\n".join(system_blocks)
@@ -466,10 +543,8 @@ def chat_message_create(request):
     request.session["rw_last_system_preview_at"] = timezone.now().isoformat()
     request.session.modified = True
 
-    # 3) Build conversation history (exclude SYSTEM and internal override-push assistant turns)
-   # 3) LLM input: current message only (no history)
+    # 3) LLM input base: current message only (no history)
     llm_input = content
-
 
     # 4) Decide whether to include the last image (Option B) and build image_parts
     include_last_image = (request.POST.get("include_last_image") == "1")
@@ -483,10 +558,41 @@ def chat_message_create(request):
         )
         image_parts = build_image_parts_from_attachments(reversed(list(img_atts)))
 
-    has_images = bool(image_parts)
+    # 4b) Include last file (CSV) by appending its text to the message
+    include_last_file = (request.POST.get("include_last_file") == "1")
 
-  #  print("DEBUG include_last_image =", include_last_image)
-  #  print("DEBUG image_parts count =", len(image_parts))
+    if include_last_file:
+        att = (
+            ChatAttachment.objects
+            .filter(chat=chat)
+            .order_by("-created_at")
+            .first()
+        )
+
+        if att and (att.content_type or "").lower() in ("text/csv", "application/csv"):
+            try:
+                with att.file.open("rb") as fh:
+                    raw = fh.read(200_000)
+                csv_text = raw.decode("utf-8", errors="replace")
+            except Exception:
+                csv_text = ""
+
+            if csv_text:
+                content = (
+                    content
+                    + "\n\n[ATTACHMENT: "
+                    + att.original_name
+                    + "]\n"
+                    + csv_text
+                )
+            else:
+                content = content + "\n\n[ATTACHMENT: " + att.original_name + " (unreadable)]"
+        elif att:
+            content = content + "\n\n[ATTACHMENT: " + att.original_name + " (unsupported type)]"
+        else:
+            content = content + "\n\n[ATTACHMENT: none]"
+
+    llm_input = content
 
     # 5) Call LLM (panes)
     panes = generate_panes(
@@ -519,7 +625,18 @@ def chat_message_create(request):
     chat.last_output_at = timezone.now()
     chat.save(update_fields=["last_output_snippet", "last_output_at", "updated_at"])
 
-    return redirect(next_url or reverse("accounts:chat_detail", args=[chat.id]))
+    # Stable redirect: only allow local URLs
+    from django.utils.http import url_has_allowed_host_and_scheme
+
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return redirect(next_url)
+
+    return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
 # ------------------------------------------------------------
 # Chat Browser
 # ------------------------------------------------------------
@@ -632,62 +749,63 @@ def chat_select(request, chat_id: int):
 def chat_detail(request, chat_id: int):
     chat = get_object_or_404(ChatWorkspace, id=chat_id)
 
-    # Fullscreen view of chat
     fullscreen = request.GET.get("fullscreen") in ("1", "true", "yes")
     qs = request.GET.copy()
     qs.pop("fullscreen", None)
     qs_normal = qs.urlencode()
+
     qs_fs = request.GET.copy()
     qs_fs["fullscreen"] = "1"
     qs_fullscreen = qs_fs.urlencode()
 
-    # Hide system: remove debug flag and any sys-* selection
     qs_hide = request.GET.copy()
     qs_hide.pop("system", None)
     qs_hide.pop("turn", None)
     qs_hide.pop("fullscreen", None)
     qs_hide_system = qs_hide.urlencode()
 
-    # Set active chat for topbar counter etc
     request.session["rw_active_chat_id"] = chat.id
     request.session.modified = True
 
     ctx = build_chat_turn_context(request, chat)
+
     show_system = request.GET.get("system") in ("1", "true", "yes")
 
+    q_on = request.GET.copy()
+    q_on["system"] = "1"
+    qs_with_system = q_on.urlencode()
 
-    # SYSTEM toggle
-    show_system = request.GET.get("system") in ("1", "true", "yes")
-    ctx = build_chat_turn_context(request, chat)
-    show_system = request.GET.get("system") in ("1", "true", "yes")
+    q_off = request.GET.copy()
+    q_off.pop("system", None)
+    qs_no_system = q_off.urlencode()
 
-    # ------------------------------------------------------------
-    # SYSTEM PREVIEW (debug)
-    # If a specific SYSTEM row is selected (turn=sys-<id>), show that
-    # one message. Otherwise show the full SYSTEM thread.
-    # ------------------------------------------------------------
     system_preview = ""
     selected_turn_id = request.GET.get("turn") or ""
-
     system_latest = {}
 
-    m = None  # <-- define once, outside
+    m = None
+    if show_system and selected_turn_id.startswith("sys-"):
+        try:
+            sys_id = int(selected_turn_id.split("-", 1)[1])
+        except ValueError:
+            sys_id = None
 
-    if show_system:
-        if selected_turn_id.startswith("sys-"):
-            try:
-                sys_id = int(selected_turn_id.split("-", 1)[1])
-            except ValueError:
-                sys_id = None
-
-            if sys_id is not None:
-                m = (
-                    ChatMessage.objects
-                    .filter(chat=chat, role=ChatMessage.Role.SYSTEM, id=sys_id)
-                    .first()
-                )
+        if sys_id is not None:
+            m = (
+                ChatMessage.objects
+                .filter(chat=chat, role=ChatMessage.Role.SYSTEM, id=sys_id)
+                .first()
+            )
 
     system_preview = (m.raw_text or "").strip() if m else ""
+
+    # ------------------------------------------------------------
+    # Attachment helpers for the "include last image/file" checkboxes
+    # ------------------------------------------------------------
+    atts = ctx.get("attachments") or []
+    has_last_image = any((getattr(a, "source", "") or "").lower() == "paste" for a in atts)
+    has_last_file = any((getattr(a, "source", "") or "").lower() == "filepicker" for a in atts)
+
 
     return render(
         request,
@@ -701,9 +819,12 @@ def chat_detail(request, chat_id: int):
             "qs_fullscreen": qs_fullscreen,
             "qs_hide_system": qs_hide_system,
             "show_system": show_system,
+            "qs_with_system": qs_with_system,
+            "qs_no_system": qs_no_system,
             "system_preview": system_preview,
             "system_latest": system_latest,
-
+            "has_last_image": has_last_image,
+            "has_last_file": has_last_file,
             **ctx,
         },
     )
@@ -887,25 +1008,8 @@ def user_config_edit(request):
             form.save()
             messages.success(request, "Global User Settings saved.")
             return redirect("accounts:user_config_user")
-
-
     else:
         form = UserProfileDefaultsForm(instance=profile)
-
-        # Step 1: align Settings page with topbar effective session overrides (L4)
-        session_map = {
-            "COGNITIVE": "cognitive_avatar",
-            "INTERACTION": "interaction_avatar",
-            "PRESENTATION": "presentation_avatar",
-            "EPISTEMIC": "epistemic_avatar",
-            "PERFORMANCE": "performance_avatar",
-            "CHECKPOINTING": "checkpointing_avatar",
-        }
-
-        for cat_key, field_name in session_map.items():
-            override_id = request.session.get(f"rw_l4_override_{cat_key}")
-            if override_id:
-                form.fields[field_name].initial = override_id
 
     return render(request, "accounts/config_user_edit.html", {"form": form})
 
@@ -1116,7 +1220,6 @@ def _build_language_block(*, language: str, variant: str | None, code: str | Non
 
 @login_required
 def chat_config_overrides(request):
-
     import hashlib
 
     chat_overrides = request.session.get("rw_chat_overrides", {}) or {}
@@ -1129,6 +1232,7 @@ def chat_config_overrides(request):
             chat_overrides.pop(key, None)
             request.session["rw_chat_overrides"] = chat_overrides
 
+        # Also clear old legacy session keys if they exist (safe cleanup)
         for k in [
             "rw_l4_override_COGNITIVE",
             "rw_l4_override_INTERACTION",
@@ -1140,19 +1244,25 @@ def chat_config_overrides(request):
             request.session.pop(k, None)
 
         request.session.modified = True
-        messages.success(request, "Temporary overrides cleared (chat + session).")
+        messages.success(request, "Temporary overrides cleared (chat + legacy session keys).")
         return redirect("accounts:chat_config_overrides")
 
-    # --- purge legacy language keys ---
+    # Purge legacy per-chat keys if present (safe cleanup)
     if key and per_chat:
         changed = False
-        if "LANGUAGE_VARIANT" in per_chat:
-            per_chat.pop("LANGUAGE_VARIANT", None)
-            changed = True
-        if "LANGUAGE_CODE" in per_chat:
-            per_chat.pop("LANGUAGE_CODE", None)
-            changed = True
-
+        for legacy_k in [
+            "COGNITIVE",
+            "INTERACTION",
+            "PRESENTATION",
+            "EPISTEMIC",
+            "PERFORMANCE",
+            "CHECKPOINTING",
+            "LANGUAGE_VARIANT",
+            "LANGUAGE_CODE",
+        ]:
+            if legacy_k in per_chat:
+                per_chat.pop(legacy_k, None)
+                changed = True
         if changed:
             chat_overrides[key] = per_chat
             request.session["rw_chat_overrides"] = chat_overrides
@@ -1166,14 +1276,22 @@ def chat_config_overrides(request):
             .only("id", "name")
         )
 
-    cognitive_choices = _choices("COGNITIVE")
-    interaction_choices = _choices("INTERACTION")
-    presentation_choices = _choices("PRESENTATION")
-    epistemic_choices = _choices("EPISTEMIC")
-    performance_choices = _choices("PERFORMANCE")
-    checkpointing_choices = _choices("CHECKPOINTING")
+    # v2 choices
+    tone_choices = _choices("TONE")
+    reasoning_choices = _choices("REASONING")
+    approach_choices = _choices("APPROACH")
+    control_choices = _choices("CONTROL")
 
     lang_name_current = per_chat.get("LANGUAGE_NAME") or ""
+
+    def _avatar_name_from_id(raw_id):
+        if raw_id is None:
+            return None
+        s = str(raw_id).strip()
+        if not s.isdigit():
+            return None
+        av = Avatar.objects.filter(id=int(s)).only("name").first()
+        return av.name if av else None
 
     if request.method == "POST":
         if not key:
@@ -1183,29 +1301,23 @@ def chat_config_overrides(request):
         per_chat = chat_overrides.get(key, {}) or {}
 
         old_vals = {
-            "COGNITIVE": per_chat.get("COGNITIVE"),
-            "INTERACTION": per_chat.get("INTERACTION"),
-            "PRESENTATION": per_chat.get("PRESENTATION"),
-            "EPISTEMIC": per_chat.get("EPISTEMIC"),
-            "PERFORMANCE": per_chat.get("PERFORMANCE"),
-            "CHECKPOINTING": per_chat.get("CHECKPOINTING"),
+            "tone": per_chat.get("tone"),
+            "reasoning": per_chat.get("reasoning"),
+            "approach": per_chat.get("approach"),
+            "control": per_chat.get("control"),
             "LANGUAGE_NAME": per_chat.get("LANGUAGE_NAME"),
         }
 
         # language (name-only, allow blank)
         new_language_name = (request.POST.get("language_name") or "").strip() or None
         per_chat["LANGUAGE_NAME"] = new_language_name
-        per_chat.pop("LANGUAGE_VARIANT", None)
-        per_chat.pop("LANGUAGE_CODE", None)
 
-        # avatars (IDs)
+        # v2 avatar overrides (IDs stored as strings or None)
         new_vals = {
-            "COGNITIVE": request.POST.get("cognitive_id") or None,
-            "INTERACTION": request.POST.get("interaction_id") or None,
-            "PRESENTATION": request.POST.get("presentation_id") or None,
-            "EPISTEMIC": request.POST.get("epistemic_id") or None,
-            "PERFORMANCE": request.POST.get("performance_id") or None,
-            "CHECKPOINTING": request.POST.get("checkpointing_id") or None,
+            "tone": request.POST.get("tone_id") or None,
+            "reasoning": request.POST.get("reasoning_id") or None,
+            "approach": request.POST.get("approach_id") or None,
+            "control": request.POST.get("control_id") or None,
         }
 
         per_chat.update(new_vals)
@@ -1215,52 +1327,36 @@ def chat_config_overrides(request):
 
         chat = ChatWorkspace.objects.filter(pk=int(active_chat_id)).first() if active_chat_id else None
         if chat:
-            AXES = [
-                ("COGNITIVE", "cognitive", "Analyst"),
-                ("INTERACTION", "interaction", "Structured"),
-                ("PRESENTATION", "presentation", "Laptop"),
-                ("EPISTEMIC", "epistemic", "Canonical"),
-                ("PERFORMANCE", "performance", "Focused"),
-                ("CHECKPOINTING", "checkpointing", "Manual"),
-            ]
+            # Build an audit SYSTEM message for traceability (v2 only)
+            changed_axes = []
+            for axis in ("tone", "reasoning", "approach", "control"):
+                if new_vals.get(axis) != old_vals.get(axis):
+                    old_name = _avatar_name_from_id(old_vals.get(axis)) or "Default"
+                    new_name = _avatar_name_from_id(new_vals.get(axis)) or "Default"
+                    changed_axes.append((axis, old_name, new_name))
 
-            to_send_system_texts = []
+            if (new_language_name != old_vals.get("LANGUAGE_NAME")):
+                old_ln = old_vals.get("LANGUAGE_NAME") or "Default"
+                new_ln = new_language_name or "Default"
+                changed_axes.append(("language_name", old_ln, new_ln))
 
-            for store_key, lib_key, fallback in AXES:
-                if new_vals[store_key] != old_vals[store_key]:
-                    old_name = _safe_avatar_name(old_vals[store_key]) or fallback
-                    new_name = _safe_avatar_name(new_vals[store_key]) or fallback
+            if changed_axes:
+                lines = ["[CONFIG_CHANGE] V2 overrides updated", ""]
+                for axis, old_name, new_name in changed_axes:
+                    lines.append(f"- {axis}: {old_name} -> {new_name}")
+                lines.append("")
+                lines.append("These settings are now authoritative and override the current settings.")
+                audit_system_text = "\n".join(lines)
 
-                    lib = PROTOCOL_LIBRARY.get(lib_key, {})
-                    lines = (
-                        lib.get(new_name)
-                        or lib.get(fallback)
-                        or [f"[{lib_key.upper()}] Unrecognised value: {new_name}"]
-                    )
+                ChatMessage.objects.create(
+                    chat=chat,
+                    role=ChatMessage.Role.SYSTEM,
+                    raw_text=audit_system_text,
+                )
 
-                    change_header = f"[CONFIG_CHANGE] {store_key}: {old_name} -> {new_name}"
-
-                    system_text = "\n".join(
-                        [change_header, ""] + lines + [
-                            "",
-                            "These settings are now authoritative and override the current settings.",
-                        ]
-                    )
-
-                    # Store audit SYSTEM message
-                    ChatMessage.objects.create(
-                        chat=chat,
-                        role=ChatMessage.Role.SYSTEM,
-                        raw_text=system_text,
-                    )
-
-                    # Queue to send to LLM immediately
-                    to_send_system_texts.append(system_text)
-
-            # ---- immediate push to LLM with idempotency hardening ----
-            if to_send_system_texts:
-                # Idempotency signature for "double click" / resubmit
-                sig_src = f"{chat.id}|" + "||".join(to_send_system_texts)
+            # Immediate push to LLM (idempotent)
+            if changed_axes:
+                sig_src = f"{chat.id}|{audit_system_text}"
                 push_sig = hashlib.sha1(sig_src.encode("utf-8")).hexdigest()
 
                 last_sig = request.session.get("rw_last_override_push_sig")
@@ -1291,11 +1387,9 @@ def chat_config_overrides(request):
                             chat_overrides=chat_overrides_now,
                         )
 
-                        base_system_blocks = build_system_messages(resolved_now)
-                        system_blocks = base_system_blocks + to_send_system_texts
+                        system_blocks = build_system_messages(resolved_now)
 
-                        internal_user = "Internal: apply the authoritative override above."
-
+                        internal_user = "Internal: acknowledge the override is active. Say: Ready."
                         panes = generate_panes(
                             "\n\n".join(system_blocks) + "\n\n" + "User:\n" + internal_user
                         )
@@ -1316,18 +1410,20 @@ def chat_config_overrides(request):
                             answer_text=panes.get("answer", ""),
                             reasoning_text=panes.get("reasoning", ""),
                             output_text=panes.get("output", ""),
-                            segment_meta={"parser_version": "llm_v1", "confidence": "HIGH", "override_push": True},
+                            segment_meta={
+                                "parser_version": "llm_v1",
+                                "confidence": "HIGH",
+                                "override_push": True,
+                            },
                         )
 
                         chat.last_output_snippet = (out_msg.output_text or "")[:280]
                         chat.last_output_at = timezone.now()
                         chat.save(update_fields=["last_output_snippet", "last_output_at", "updated_at"])
 
-                        # Store idempotency stamp
                         request.session["rw_last_override_push_sig"] = push_sig
                         request.session["rw_last_override_push_at"] = timezone.now().isoformat()
 
-                        # Optional system preview
                         request.session["rw_last_system_preview"] = "\n\n".join(system_blocks)
                         request.session["rw_last_system_preview_chat_id"] = chat.id
                         request.session["rw_last_system_preview_at"] = timezone.now().isoformat()
@@ -1349,52 +1445,66 @@ def chat_config_overrides(request):
             "active_chat_id": active_chat_id,
             "chat_override_current": current,
             "language_name_current": lang_name_current,
-            "cognitive_choices": cognitive_choices,
-            "interaction_choices": interaction_choices,
-            "presentation_choices": presentation_choices,
-            "epistemic_choices": epistemic_choices,
-            "performance_choices": performance_choices,
-            "checkpointing_choices": checkpointing_choices,
+            "tone_choices": tone_choices,
+            "reasoning_choices": reasoning_choices,
+            "approach_choices": approach_choices,
+            "control_choices": control_choices,
         },
     )
 
 # --------------------------------------------------------
-# Attach Clipboard Picture in Chat
+# Attach Clipboard and files in Chat
 # ------------------------------------------------------------
 @require_POST
 @login_required
-def chat_attachment_paste(request, chat_id: int):
+def chat_attachment_upload(request, chat_id: int):
     """
-    Accept one pasted clipboard image and store as ChatAttachment.
+    Accept one uploaded file and store as ChatAttachment.
+    Behaviour:
+    - source=paste      -> only image/*
+    - source=filepicker -> any file (or later whitelist)
     Returns JSON for UI.
     """
-    chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=chat_id)
+    chat = get_object_or_404(
+        ChatWorkspace.objects.select_related("project"),
+        pk=chat_id,
+    )
 
     f = request.FILES.get("file")
     if not f:
         return JsonResponse({"ok": False, "error": "No file provided."}, status=400)
 
     ctype = (getattr(f, "content_type", "") or "").lower()
-    if not ctype.startswith("image/"):
-        return JsonResponse({"ok": False, "error": "Only image paste is supported."}, status=400)
+    source = (request.POST.get("source", "") or "").lower()
+    # Only restrict clipboard paste
+    if source == "paste":
+        if not ctype.startswith("image/"):
+            return JsonResponse({"ok": False, "error": "Only image paste is supported."}, status=400)
+
+    # Enforce clipboard rule
+    if source == "paste":
+        if not ctype.startswith("image/"):
+            return JsonResponse(
+                {"ok": False, "error": "Only image paste is supported."},
+                status=400,
+            )
 
     att = ChatAttachment.objects.create(
         project=chat.project,
         chat=chat,
         uploaded_by=request.user,
         file=f,
-        original_name=getattr(f, "name", "pasted-image"),
+        original_name=getattr(f, "name", "upload"),
         content_type=ctype,
         size_bytes=getattr(f, "size", 0) or 0,
     )
 
-    # If ChatAttachment.file is a FileField, this will usually be available:
     file_url = ""
     try:
-        file_url = att.file.url  # may raise if storage has no url
+        file_url = att.file.url
     except Exception:
         file_url = ""
-
+    print("DEBUG: UPLOAD HIT", request.POST.get("source"), request.FILES.get("file") and request.FILES["file"].name)
     return JsonResponse(
         {
             "ok": True,
@@ -1407,7 +1517,6 @@ def chat_attachment_paste(request, chat_id: int):
             },
         }
     )
-
 
 # --------------------------------------------------------
 # Delete Clipboard Picture in Chat

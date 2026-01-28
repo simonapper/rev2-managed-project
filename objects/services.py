@@ -8,23 +8,25 @@ from __future__ import annotations
 from typing import Iterable, List, Optional
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AbstractUser
 from django.db import transaction
 from django.utils import timezone
+from django.db.models import Q
 
 from accounts.models import Role, UserRole
 from notifications.models import Notification
 from objects.models import KnowledgeObject
 from projects.models import Project
-from django.db.models import Q
 
-User = get_user_model()
+
+UserModel = get_user_model()
 
 
 class ObjectWorkflowError(Exception):
     pass
 
 
-def _project_managers(project: Project) -> List[User]:
+def _project_managers(project: Project) -> List[AbstractUser]:
     """
     Managers for a project are:
     - explicit MANAGER roles (PROJECT scope)
@@ -39,10 +41,10 @@ def _project_managers(project: Project) -> List[User]:
     )
     if not manager_ids:
         return []
-    return list(User.objects.filter(id__in=manager_ids))
+    return list(UserModel.objects.filter(id__in=manager_ids))
 
 
-def _is_manager(project: Project, user: User) -> bool:
+def _is_manager(project: Project, user: AbstractUser) -> bool:
     if not getattr(user, "is_authenticated", False):
         return False
     if user.is_superuser or user.is_staff:
@@ -59,7 +61,7 @@ def _is_manager(project: Project, user: User) -> bool:
 
 def _notify(
     *,
-    recipients: Iterable[User],
+    recipients: Iterable[AbstractUser],
     project: Optional[Project],
     type_: str,
     title: str,
@@ -93,18 +95,19 @@ def _issue_official_id(obj: KnowledgeObject) -> str:
         return obj.official_id
     return f"{obj.object_type}-{obj.pk:06d}"
 
+
 # ------------------------------------------------------------
 # Selects what projects and chats are available to the user
 # ------------------------------------------------------------
 
 @transaction.atomic
-def submit_object_for_approval(*, obj: KnowledgeObject, actor: User) -> KnowledgeObject:
+def submit_object_for_approval(*, obj: KnowledgeObject, actor: AbstractUser) -> KnowledgeObject:
     if obj.project_id is None:
         raise ObjectWorkflowError("Object must be project-scoped to submit for approval (project is NULL).")
 
     project = obj.project
 
-    # Sandbox: auto-approve (owner is manager; single-user invariant enforced elsewhere)
+    # Sandbox: auto-approve
     if project.kind == Project.Kind.SANDBOX:
         now = timezone.now()
         obj.submitted_by = actor
@@ -148,14 +151,14 @@ def submit_object_for_approval(*, obj: KnowledgeObject, actor: User) -> Knowledg
         project=project,
         type_=Notification.Type.NEEDS_APPROVAL,
         title="Needs approval",
-        body=f"{obj.object_type} ‘{obj.title}’ submitted for approval.",
+        body=f"{obj.object_type} '{obj.title}' submitted for approval.",
         obj=obj,
     )
     return obj
 
 
 @transaction.atomic
-def approve_object(*, obj: KnowledgeObject, actor: User) -> KnowledgeObject:
+def approve_object(*, obj: KnowledgeObject, actor: AbstractUser) -> KnowledgeObject:
     if obj.project_id is None:
         raise ObjectWorkflowError("Object must be project-scoped to approve (project is NULL).")
 
@@ -192,14 +195,14 @@ def approve_object(*, obj: KnowledgeObject, actor: User) -> KnowledgeObject:
         project=project,
         type_=Notification.Type.APPROVED,
         title="Approved",
-        body=f"{obj.object_type} ‘{obj.title}’ was approved.",
+        body=f"{obj.object_type} '{obj.title}' was approved.",
         obj=obj,
     )
     return obj
 
 
 @transaction.atomic
-def reject_object(*, obj: KnowledgeObject, actor: User, reason: str, close: bool = False) -> KnowledgeObject:
+def reject_object(*, obj: KnowledgeObject, actor: AbstractUser, reason: str, close: bool = False) -> KnowledgeObject:
     if obj.project_id is None:
         raise ObjectWorkflowError("Object must be project-scoped to reject (project is NULL).")
 
@@ -222,7 +225,7 @@ def reject_object(*, obj: KnowledgeObject, actor: User, reason: str, close: bool
         project=project,
         type_=Notification.Type.REJECTED,
         title="Rejected",
-        body=f"{obj.object_type} ‘{obj.title}’ was rejected. {obj.rejection_reason}",
+        body=f"{obj.object_type} '{obj.title}' was rejected. {obj.rejection_reason}",
         obj=obj,
     )
     return obj

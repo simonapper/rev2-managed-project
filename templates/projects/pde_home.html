@@ -1,0 +1,308 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/projects/pde_home.html #}
+{% extends "base.html" %}
+{% load rw_extras %}
+
+{% block title %}PDE - {{ project.name }}{% endblock %}
+
+{% block content %}
+
+<div class="rw-main-inner">
+  <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+    <div>
+      <h5 class="mb-1">Project Definition Editor (PDE)</h5>
+      <div class="text-secondary small">
+        Project: <span class="fw-semibold">{{ project.name }}</span>
+        <span class="text-secondary">(id {{ project.id }})</span>
+      </div>
+    </div>
+
+    <div class="d-flex gap-2">
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="rw-pde-refresh">
+        Refresh
+      </button>
+
+      <button type="button" class="btn btn-sm btn-primary" id="rw-pde-create-cko">
+        Create Project CKO
+      </button>
+    </div>
+  </div>
+
+  <div id="rw-pde-flash" class="mb-3"></div>
+
+  <!--{# Expect fields: list of ProjectDefinitionField rows or dicts with:
+     id, field_key, value_text, status, last_validation (dict or None)
+  #}-->
+  <div class="row g-3">
+    {% for f in fields %}
+      {% with last=f.last_validation %}
+      <div class="col-12">
+        <div class="card rw-compact-card rw-browse-table-card">
+          <div class="card-body">
+
+            <div class="d-flex align-items-start justify-content-between gap-2">
+              <div class="min-w-0">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                  <div class="fw-semibold">
+                    {{ labels|get_item:f.field_key|default:f.field_key }}
+                  </div>
+
+                  {% if f.status == "PASS_LOCKED" %}
+                    <span class="badge text-bg-warning border">PASS_LOCKED</span>
+                  {% else %}
+                    <span class="badge text-bg-light border">{{ f.status|default:"DRAFT" }}</span>
+                  {% endif %}
+
+                  {% if last and last.verdict %}
+                    {% if last.verdict == "PASS" %}
+                      <span class="badge text-bg-success">PASS</span>
+                    {% elif last.verdict == "WEAK" %}
+                      <span class="badge text-bg-warning border">WEAK</span>
+                    {% elif last.verdict == "CONFLICT" %}
+                      <span class="badge text-bg-danger">CONFLICT</span>
+                    {% else %}
+                      <span class="badge text-bg-light border">{{ last.verdict }}</span>
+                    {% endif %}
+                  {% endif %}
+                </div>
+
+                {% if last and last.summary %}
+                  <div class="text-secondary small mt-1">{{ last.summary }}</div>
+                {% endif %}
+              </div>
+
+              <div class="d-flex flex-column align-items-end gap-2">
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary rw-pde-verify"
+                        data-field-id="{{ f.id }}"
+                        data-field-key="{{ f.field_key }}">
+                  Verify
+                </button>
+
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary rw-pde-lock"
+                        data-field-id="{{ f.id }}"
+                        {% if f.status == "PASS_LOCKED" %}disabled{% endif %}>
+                  Lock
+                </button>
+              </div>
+            </div>
+
+            <div class="mt-2">
+              <label class="form-label small text-secondary mb-1">Value</label>
+              <textarea class="form-control rw-pde-input"
+                        rows="4"
+                        data-field-id="{{ f.id }}"
+                        data-field-key="{{ f.field_key }}"
+                        {% if f.status == "PASS_LOCKED" %}readonly{% endif %}>{{ f.value_text|default:"" }}</textarea>
+            </div>
+
+            {% if last %}
+              <div class="mt-3">
+                <details class="rw-channel" {% if last.verdict and last.verdict != "PASS" %}open{% endif %}>
+                  <summary class="fw-semibold">Last verification</summary>
+                  <div class="pt-2">
+
+                    {% if last.issues %}
+                      <div class="small">
+                        <div class="text-secondary small mb-1">Issues</div>
+                        <ul class="mb-0">
+                          {% for it in last.issues %}
+                            <li>{{ it }}</li>
+                          {% endfor %}
+                        </ul>
+                      </div>
+                    {% endif %}
+
+                    {% if last.suggested_revision %}
+                      <div class="small mt-2">
+                        <div class="text-secondary small mb-1">Suggested revision</div>
+                        <textarea class="form-control rw-pde-suggested"
+                                  rows="3"
+                                  readonly>{{ last.suggested_revision }}</textarea>
+
+                        <div class="mt-2 d-flex justify-content-end">
+                          <button type="button"
+                                  class="btn btn-sm btn-outline-primary rw-pde-apply-suggested"
+                                  data-field-id="{{ f.id }}">
+                            Apply suggested text
+                          </button>
+                        </div>
+                      </div>
+                    {% endif %}
+
+                  </div>
+                </details>
+              </div>
+            {% endif %}
+
+          </div>
+        </div>
+      </div>
+      {% endwith %}
+    {% endfor %}
+  </div>
+
+</div>
+
+<form style="display:none">
+  {% csrf_token %}
+</form>
+
+<script>
+(function () {
+  function csrfToken() {
+    var el = document.querySelector("input[name=csrfmiddlewaretoken]");
+    return el ? el.value : "";
+  }
+
+  function flash(kind, text) {
+    var box = document.getElementById("rw-pde-flash");
+    if (!box) return;
+    var div = document.createElement("div");
+    div.className = "alert alert-" + (kind || "info") + " py-2 mb-2";
+    div.textContent = text;
+    box.appendChild(div);
+    setTimeout(function () {
+      try { div.remove(); } catch (e) {}
+    }, 6000);
+  }
+
+  function getFieldTextareaById(fieldId) {
+    return document.querySelector(".rw-pde-input[data-field-id='" + String(fieldId) + "']");
+  }
+
+  function formPost(url, dataObj) {
+    var fd = new FormData();
+    for (var k in (dataObj || {})) {
+      if (!Object.prototype.hasOwnProperty.call(dataObj, k)) continue;
+      fd.append(k, dataObj[k]);
+    }
+    return fetch(url, {
+      method: "POST",
+      headers: { "X-CSRFToken": csrfToken() },
+      body: fd,
+      credentials: "same-origin"
+    }).then(function (resp) {
+      if (!resp.ok) {
+        return resp.text().then(function (t) { throw new Error(t || ("HTTP " + resp.status)); });
+      }
+      return resp.json();
+    });
+  }
+
+  // Verify
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target && ev.target.classList && ev.target.classList.contains("rw-pde-verify")
+      ? ev.target : null;
+    if (!btn) return;
+
+    var fieldId = btn.getAttribute("data-field-id");
+    var fieldKey = btn.getAttribute("data-field-key");
+    if (!fieldId || !fieldKey) return;
+
+    var ta = getFieldTextareaById(fieldId);
+    var valueText = ta ? (ta.value || "") : "";
+
+    btn.disabled = true;
+    formPost("{% url 'projects:pde_field_verify' %}", {
+      project_id: "{{ project.id }}",
+      field_key: fieldKey,
+      value_text: valueText
+    }).then(function (data) {
+      flash("success", "Verified: " + fieldKey);
+      window.location.reload();
+    }).catch(function (err) {
+      flash("danger", "Verify failed: " + (err && err.message ? err.message : String(err)));
+    }).finally(function () {
+      btn.disabled = false;
+    });
+  });
+
+  // Lock (expects field_id)
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target && ev.target.classList && ev.target.classList.contains("rw-pde-lock")
+      ? ev.target : null;
+    if (!btn) return;
+
+    var fieldId = btn.getAttribute("data-field-id");
+    if (!fieldId) return;
+
+    if (!confirm("Lock this field?")) return;
+
+    btn.disabled = true;
+    formPost("{% url 'projects:pde_field_lock' %}", {
+      field_id: fieldId
+    }).then(function (data) {
+      flash("success", "Locked field id " + fieldId);
+      window.location.reload();
+    }).catch(function (err) {
+      flash("danger", "Lock failed: " + (err && err.message ? err.message : String(err)));
+    }).finally(function () {
+      btn.disabled = false;
+    });
+  });
+
+  // Apply suggested (client-side only)
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target && ev.target.classList && ev.target.classList.contains("rw-pde-apply-suggested")
+      ? ev.target : null;
+    if (!btn) return;
+
+    var fieldId = btn.getAttribute("data-field-id");
+    if (!fieldId) return;
+
+    var card = btn.closest(".card-body");
+    if (!card) return;
+
+    var sug = card.querySelector(".rw-pde-suggested");
+    var ta = getFieldTextareaById(fieldId);
+    if (!sug || !ta) return;
+
+    ta.value = sug.value || "";
+    flash("info", "Applied suggested text (not yet verified/locked).");
+  });
+
+  // Create Project CKO (project_id only)
+  var createBtn = document.getElementById("rw-pde-create-cko");
+  if (createBtn) {
+    createBtn.addEventListener("click", function () {
+      if (!confirm("Create Project CKO from locked baseline fields?")) return;
+
+      createBtn.disabled = true;
+      formPost("{% url 'projects:pde_create_project_cko' %}", {
+        project_id: "{{ project.id }}"
+      }).then(function (data) {
+        if (data && data.doc_text) {
+          flash("success", "Project CKO generated. KnowledgeObject id: " + (data.knowledge_object_id || "None"));
+
+          // Quick inline preview: open a new window with pre text (ASCII safe)
+          try {
+            var w = window.open("", "_blank");
+            if (w && w.document) {
+              w.document.write("<pre></pre>");
+              w.document.querySelector("pre").textContent = data.doc_text;
+              w.document.title = "Project CKO";
+            }
+          } catch (e) {}
+        } else {
+          flash("warning", "Unexpected response from create_project_cko.");
+        }
+      }).catch(function (err) {
+        flash("danger", "Create CKO failed: " + (err && err.message ? err.message : String(err)));
+      }).finally(function () {
+        createBtn.disabled = false;
+      });
+    });
+  }
+
+  // Refresh
+  var refreshBtn = document.getElementById("rw-pde-refresh");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", function () {
+      window.location.reload();
+    });
+  }
+})();
+</script>
+{% endblock %}

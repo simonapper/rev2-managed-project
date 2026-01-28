@@ -1,13 +1,16 @@
 {
   "ExpandedNodes": [
     "",
-    "\\accounts",
+    "\\chats",
+    "\\chats\\services",
+    "\\config",
     "\\projects",
     "\\projects\\services",
     "\\templates",
     "\\templates\\accounts",
-    "\\templates\\partials"
+    "\\templates\\config_ui",
+    "\\templates\\config_ui\\system"
   ],
-  "SelectedNode": "\\accounts\\views.py",
+  "SelectedNode": "\\chats\\services\\llm.py",
   "PreviewInSolutionExplorer": false
 }

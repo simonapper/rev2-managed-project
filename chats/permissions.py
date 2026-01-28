@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from accounts.services import is_project_manager  # or wherever it lives
+from projects.services_project_membership import is_project_manager
 from chats.models import ChatWorkspace
 
 def can_read_chat(*, chat: ChatWorkspace, user) -> bool:

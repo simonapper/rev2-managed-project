@@ -265,6 +265,13 @@ class SystemConfigPointers(models.Model):
         related_name="+",
         limit_choices_to={"level": ConfigRecord.Level.L4},
     )
+    # OpenAI model selection (used by chats.services.llm.generate_panes)
+    openai_model_default = models.CharField(
+        max_length=80,
+        blank=True,
+        default="gpt-5.1",
+        help_text="Default OpenAI model key, e.g. gpt-5.1, gpt-4.1-mini, o4-mini",
+    )
 
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -281,3 +288,4 @@ class SystemConfigPointers(models.Model):
 
     def __str__(self) -> str:
         return "SystemConfigPointers"
+

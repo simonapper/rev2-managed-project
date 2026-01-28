@@ -5,39 +5,50 @@
 
 {% block content %}
 <div class="rw-main-inner">
-
   <div class="rw-workarea">
     <div class="rw-pane">
-      <div class="rw-pane-body p-3">
-        <hr class="my-3">
+      <div class="rw-pane-body pt-0 px-3 pb-3">
 
-        <div class="d-flex justify-content-end mb-2 gap-2">
-          {% if fullscreen %}
-            <a class="btn btn-sm btn-outline-secondary"
-               href="?{{ qs_normal }}{% if show_system %}&system=1{% endif %}">
-              Exit full screen
-            </a>
-          {% else %}
-            <a class="btn btn-sm btn-outline-secondary"
-               href="?{{ qs_fullscreen }}{% if show_system %}&system=1{% endif %}">
-              Full screen
-            </a>
-          {% endif %}
+        <!--<hr class="my-3">-->
 
-          {% if show_system %}
-            <a class="btn btn-sm btn-outline-warning" href="?{{ qs_hide_system }}">
-              Hide system
-            </a>
-          {% else %}
-            <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_normal }}&system=1">
-              Show system
-            </a>
-          {% endif %}
+        <!-- CDE visual cue + controls -->
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="d-flex gap-2 align-items-stretch">
+            <div class="rw-status">
+              <div class="rw-status-label">CDE</div>
+              <div class="rw-status-value">
+                {% if chat.is_managed %}Controlled{% else %}Loose{% endif %}
+              </div>
+            </div>
+
+            <div class="rw-status">
+              <div class="rw-status-label">Locked</div>
+              <div class="rw-status-value">
+                {% if chat.cde_is_locked %}Yes{% else %}No{% endif %}
+              </div>
+            </div>
+          </div>
+
+          <div class="d-flex gap-2">
+            {% if fullscreen %}
+              <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_normal }}">Exit full screen</a>
+            {% else %}
+              <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_fullscreen }}">Full screen</a>
+            {% endif %}
+
+            {% if show_system %}
+              <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_no_system }}">Hide system</a>
+            {% else %}
+              <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_with_system }}">Show system</a>
+            {% endif %}
+          </div>
         </div>
+
 
         <form method="post" action="{% url 'accounts:chat_message_create' %}" enctype="multipart/form-data">
           {% csrf_token %}
           <input type="hidden" name="chat_id" value="{{ chat.id }}">
+          <input type="hidden" name="next" value="{{ request.get_full_path }}">
 
           <div class="d-flex gap-2">
             <textarea id="rw-chat-input"
@@ -51,12 +62,15 @@
 
           <div id="rw-paste-status" class="small text-secondary mt-2"></div>
 
-          <script>
-            window.RW_PASTE_UPLOAD_URL = "{% url 'accounts:chat_attachment_paste' chat.id %}";
-            window.RW_ATTACHMENT_DELETE_URL_TEMPLATE = "{% url 'accounts:chat_attachment_delete' 0 %}";
-          </script>
-            
-          <div class="form-check mt-2">
+          <!-- Select-a-file upload -->
+          <div class="mt-2 d-flex align-items-center gap-2">
+            <label class="btn btn-sm btn-outline-secondary mb-0" for="rw-file-input">Select file</label>
+            <input id="rw-file-input" type="file" style="display:none">
+            <span id="rw-file-name" class="small text-secondary"></span>
+          </div>
+
+          {% if has_last_image %}
+            <div class="form-check mt-2">
               <input class="form-check-input"
                      type="checkbox"
                      id="rw-include-last-image"
@@ -66,7 +80,20 @@
                 Include last image
               </label>
             </div>
-  
+          {% endif %}
+
+          {% if has_last_file %}
+            <div class="form-check mt-2">
+              <input class="form-check-input"
+                     type="checkbox"
+                     id="rw-include-last-file"
+                     name="include_last_file"
+                     value="1">
+              <label class="form-check-label" for="rw-include-last-file">
+                Include last file
+              </label>
+            </div>
+          {% endif %}
 
         </form>
 
@@ -91,7 +118,6 @@
             </div>
           </div>
         {% endif %}
-
 
         {% if not turn_items %}
           <div class="alert alert-secondary mb-3">No messages yet.</div>
@@ -182,8 +208,7 @@
                         </details>
                       {% endif %}
 
-                      {# OUTPUT always visible, open #}
-                      <details open class="rw-channel">
+                      <details class="rw-channel">
                         <summary class="fw-semibold">OUTPUT</summary>
                         <div class="pt-2">
                           {% if pane.output %}
@@ -196,7 +221,6 @@
                         </div>
                       </details>
 
-                      {# REASONING always visible, closed #}
                       <details class="rw-channel">
                         <summary class="fw-semibold">REASONING</summary>
                         <div class="pt-2">
@@ -212,10 +236,8 @@
                     {% endif %}
 
                     {% if show_system %}
-                      <details open class="rw-channel">
-                        <summary class="fw-semibold">
-                          SYSTEM <span class="text-secondary small ms-2">(stored)</span>
-                        </summary>
+                      <details class="rw-channel">
+                        <summary class="fw-semibold">SYSTEM</summary>
 
                         <div class="pt-2">
                           {% if system_latest %}
@@ -266,26 +288,29 @@
 </div>
 
 <script>
+  // ------------------------------------------------------------
+  // Turn list scroll restore (per chat)
+  // ------------------------------------------------------------
   (function () {
-    const list = document.querySelector(".rw-turn-list");
+    var list = document.querySelector(".rw-turn-list");
     if (!list) return;
 
-    // Keyed per chat
-    const chatId = "{{ chat.id }}";
-    const key = "rw_turn_scroll_chat_" + chatId;
+    var chatId = "{{ chat.id }}";
+    var key = "rw_turn_scroll_chat_" + chatId;
 
-    // Restore on load
-    const saved = sessionStorage.getItem(key);
+    var saved = sessionStorage.getItem(key);
     if (saved !== null) {
       list.scrollTop = parseInt(saved, 10);
     }
 
-    // Save on scroll
     list.addEventListener("scroll", function () {
       sessionStorage.setItem(key, list.scrollTop);
     });
   })();
 
+  // ------------------------------------------------------------
+  // Attachments: upload (paste + file picker) and delete
+  // ------------------------------------------------------------
   (function () {
     function getCsrfToken() {
       var el = document.querySelector("input[name=csrfmiddlewaretoken]");
@@ -299,18 +324,17 @@
       return Math.round(n / (1024 * 1024)) + " MB";
     }
 
-    async function uploadImageBlob(blob) {
+    async function uploadFileToServer(fileOrBlob, filename, source) {
       var url = window.RW_PASTE_UPLOAD_URL;
       if (!url) throw new Error("Missing RW_PASTE_UPLOAD_URL");
 
       var fd = new FormData();
-      fd.append("file", blob, "pasted-image.png");
+      fd.append("file", fileOrBlob, filename || "upload.bin");
+      fd.append("source", source || "");
 
       var resp = await fetch(url, {
         method: "POST",
-        headers: {
-          "X-CSRFToken": getCsrfToken()
-        },
+        headers: { "X-CSRFToken": getCsrfToken() },
         body: fd,
         credentials: "same-origin"
       });
@@ -325,15 +349,13 @@
     async function deleteAttachment(attachmentId) {
       var tmpl = window.RW_ATTACHMENT_DELETE_URL_TEMPLATE;
       if (!tmpl) throw new Error("Missing delete URL template");
-      var url = tmpl.replace("/0/", "/" + String(attachmentId) + "/");
 
+      var url = tmpl.replace("/0/", "/" + String(attachmentId) + "/");
       var fd = new FormData();
 
       var resp = await fetch(url, {
         method: "POST",
-        headers: {
-          "X-CSRFToken": getCsrfToken()
-        },
+        headers: { "X-CSRFToken": getCsrfToken() },
         body: fd,
         credentials: "same-origin"
       });
@@ -362,7 +384,12 @@
       row.className = "d-flex align-items-center gap-2";
 
       var label = document.createElement("span");
-      label.textContent = "Image uploaded: " + (att.name || "image") + " (" + humanSize(att.size_bytes) + ")";
+      label.textContent =
+        "Uploaded: " +
+        (att.name || "file") +
+        " (" +
+        humanSize(att.size_bytes) +
+        ")";
 
       var btn = document.createElement("button");
       btn.type = "button";
@@ -394,89 +421,110 @@
     }
 
     var input = document.getElementById("rw-chat-input");
-    if (!input) return;
+    if (input) {
+      input.addEventListener("paste", function (ev) {
+        var items = ev.clipboardData && ev.clipboardData.items ? ev.clipboardData.items : null;
+        if (!items) return;
 
-    input.addEventListener("paste", function (ev) {
-      var items = ev.clipboardData && ev.clipboardData.items ? ev.clipboardData.items : null;
-      if (!items) return;
+        var foundImage = false;
 
-      var foundImage = false;
+        for (var i = 0; i < items.length; i++) {
+          var it = items[i];
+          if (it && it.type && it.type.indexOf("image/") === 0) {
+            foundImage = true;
 
-      for (var i = 0; i < items.length; i++) {
-        var it = items[i];
-        if (it && it.type && it.type.indexOf("image/") === 0) {
-          foundImage = true;
+            var file = it.getAsFile();
+            if (!file) continue;
 
-          var file = it.getAsFile();
-          if (!file) continue;
-
-          var line = addStatusLine("Pasting image: uploading...");
-          uploadImageBlob(file)
-            .then(function (data) {
-              if (data && data.ok && data.attachment) {
-                if (line) line.remove();
-                addUploadedLine(data.attachment);
-              } else {
-                if (line) line.textContent = "Image upload: unexpected response";
-              }
-            })
-            .catch(function (err) {
-              if (line) {
-                line.textContent = "Image upload error: " + (err && err.message ? err.message : String(err));
-              }
-            });
+            var line = addStatusLine("Pasting image: uploading...");
+            uploadFileToServer(file, "pasted-image.png", "paste")
+              .then(function (data) {
+                if (data && data.ok && data.attachment) {
+                  if (line) line.remove();
+                  addUploadedLine(data.attachment);
+                } else {
+                  if (line) line.textContent = "Image upload: unexpected response";
+                }
+              })
+              .catch(function (err) {
+                if (line) {
+                  line.textContent =
+                    "Image upload error: " + (err && err.message ? err.message : String(err));
+                }
+              });
+          }
         }
-      }
 
-      if (foundImage) {
-        ev.preventDefault();
-      }
-    });
-    })();
-(function () {
-  var list = document.getElementById("rw-attachment-list");
-  if (!list) return;
-
-  list.addEventListener("click", function (ev) {
-    var btn = ev.target && ev.target.classList && ev.target.classList.contains("rw-attachment-delete")
-      ? ev.target
-      : null;
-    if (!btn) return;
-
-    var row = btn.closest("[data-attachment-id]");
-    if (!row) return;
-
-    var id = row.getAttribute("data-attachment-id");
-    if (!id) return;
-
-    if (!confirm("Delete this attachment?")) return;
-
-    btn.disabled = true;
-
-    deleteAttachment(id)
-      .then(function (data) {
-        if (data && data.ok) {
-          row.remove();
-        } else {
-          btn.disabled = false;
-          alert("Delete failed.");
-        }
-      })
-      .catch(function (err) {
-        btn.disabled = false;
-        alert("Delete error: " + (err && err.message ? err.message : String(err)));
+        if (foundImage) ev.preventDefault();
       });
-  });
-})();
-(function () {
-  var form = document.querySelector("form[action$='{% url 'accounts:chat_message_create' %}']");
-  if (!form) return;
+    }
 
-  form.addEventListener("submit", function () {
-    var cb = document.getElementById("rw-include-last-image");
-    if (cb) cb.checked = false;
-  });
-})();
+    var fileInput = document.getElementById("rw-file-input");
+    if (fileInput) {
+      fileInput.addEventListener("change", function () {
+        var file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+        if (!file) return;
+
+        var line = addStatusLine("Selected: " + file.name + " (uploading...)");
+
+        uploadFileToServer(file, file.name, "filepicker")
+          .then(function (data) {
+            if (data && data.ok && data.attachment) {
+              if (line) line.remove();
+              addUploadedLine(data.attachment);
+            } else {
+              if (line) line.textContent = "Upload: unexpected response";
+            }
+          })
+          .catch(function (err) {
+            if (line) {
+              line.textContent =
+                "Upload error: " + (err && err.message ? err.message : String(err));
+            }
+          })
+          .finally(function () {
+            fileInput.value = "";
+          });
+      });
+    }
+
+    var list = document.getElementById("rw-attachment-list");
+    if (list) {
+      list.addEventListener("click", function (ev) {
+        var btn =
+          ev.target &&
+          ev.target.classList &&
+          ev.target.classList.contains("rw-attachment-delete")
+            ? ev.target
+            : null;
+        if (!btn) return;
+
+        var row = btn.closest("[data-attachment-id]");
+        if (!row) return;
+
+        var id = row.getAttribute("data-attachment-id");
+        if (!id) return;
+
+        if (!confirm("Delete this attachment?")) return;
+
+        btn.disabled = true;
+
+        deleteAttachment(id)
+          .then(function (data) {
+            if (data && data.ok) {
+              row.remove();
+            } else {
+              btn.disabled = false;
+              alert("Delete failed.");
+            }
+          })
+          .catch(function (err) {
+            btn.disabled = false;
+            alert("Delete error: " + (err && err.message ? err.message : String(err)));
+          });
+      });
+    }
+  })();
 </script>
 
 {% endblock %}

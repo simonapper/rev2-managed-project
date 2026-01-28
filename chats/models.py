@@ -56,6 +56,15 @@ class ChatWorkspace(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    is_managed = models.BooleanField(default=False)
+
+    goal_text = models.TextField(blank=True, default="")
+    success_text = models.TextField(blank=True, default="")
+    constraints_text = models.TextField(blank=True, default="")
+    non_goals_text = models.TextField(blank=True, default="")
+    cde_is_locked = models.BooleanField(default=False)
+
+
     def __str__(self) -> str:
         return self.title
 

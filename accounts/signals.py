@@ -7,6 +7,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AbstractUser
 from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
@@ -15,7 +16,7 @@ from config.models import ConfigScope, ConfigRecord, ConfigVersion
 from accounts.models_avatars import Avatar, UserProfile
 
 
-User = get_user_model()
+UserModel = get_user_model()
 
 
 DEFAULT_L1_USER_SETTINGS_TEXT = """# ============================================================
@@ -92,10 +93,9 @@ def _get_default_avatar(category: str, key: str) -> Avatar:
     return Avatar.objects.get(category=category, key=key, is_active=True)
 
 
-def _ensure_user_profile(user: User) -> None:
+def _ensure_user_profile(user: AbstractUser) -> None:
     _ensure_default_avatars()
 
-    # Canonical defaults
     cognitive = _get_default_avatar(Avatar.Category.COGNITIVE, "analyst")
     interaction = _get_default_avatar(Avatar.Category.INTERACTION, "minimal")
     presentation = _get_default_avatar(Avatar.Category.PRESENTATION, "laptop")
@@ -120,7 +120,7 @@ def _ensure_user_profile(user: User) -> None:
     )
 
 
-def _ensure_default_l1_config(user: User) -> None:
+def _ensure_default_l1_config(user: AbstractUser) -> None:
     scope, _ = ConfigScope.objects.get_or_create(
         scope_type=ConfigScope.ScopeType.USER,
         user=user,
@@ -148,8 +148,8 @@ def _ensure_default_l1_config(user: User) -> None:
         )
 
 
-@receiver(post_save, sender=User)
-def user_post_create(sender, instance: User, created: bool, **kwargs) -> None:
+@receiver(post_save, sender=UserModel)
+def user_post_create(sender, instance: AbstractUser, created: bool, **kwargs) -> None:
     if not created:
         return
 

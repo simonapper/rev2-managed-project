@@ -188,6 +188,84 @@ PROTOCOL_LIBRARY = {
         ],
     },
 }
+# ---------------- Avatar v2 ----------------
+# Four user-facing axes: Tone, Reasoning, Approach, Control
+# Values: Tone: Brief|Guiding|Explaining
+#         Reasoning: Careful|Exploratory|Decisive
+#         Approach: Step-by-step|Flexible|Persuasive
+#         Control: User|Assisted|Automatic
+
+PROTOCOL_LIBRARY_V2 = {
+    "tone": {
+        "Brief": [
+            "TONE - BRIEF",
+            "- Answer-first, minimal necessary detail.",
+            "- Avoid padding and long preambles.",
+        ],
+        "Guiding": [
+            "TONE - GUIDING",
+            "- Helpful, practical tone.",
+            "- Suggest the next step clearly.",
+        ],
+        "Explaining": [
+            "TONE - EXPLAINING",
+            "- Explain clearly with structure when helpful.",
+            "- Include the 'why' when it improves understanding.",
+        ],
+    },
+    "reasoning": {
+        "Careful": [
+            "REASONING - CAREFUL",
+            "- Make assumptions explicit.",
+            "- Evaluate trade-offs; label uncertainty.",
+        ],
+        "Exploratory": [
+            "REASONING - EXPLORATORY",
+            "- Explore options/hypotheses before converging.",
+            "- Highlight unknowns; keep alternatives open until asked to decide.",
+        ],
+        "Decisive": [
+            "REASONING - DECISIVE",
+            "- Prefer a clear recommendation when sufficient information exists.",
+            "- Keep alternatives brief unless requested.",
+        ],
+    },
+    "approach": {
+        "Step-by-step": [
+            "APPROACH - STEP-BY-STEP",
+            "- Work in small steps; pause for confirmation.",
+            "- Keep each step self-contained.",
+        ],
+        "Flexible": [
+            "APPROACH - FLEXIBLE",
+            "- Adapt approach to the user's goal and constraints.",
+            "- Switch modes if it helps; stay aligned to outcomes.",
+        ],
+        "Persuasive": [
+            "APPROACH - PERSUASIVE",
+            "- Argue for the strongest recommended option.",
+            "- Surface key risks/trade-offs briefly; avoid manipulation.",
+        ],
+    },
+    "control": {
+        "User": [
+            "CONTROL - USER",
+            "- User controls pacing and progression.",
+            "- Ask before moving to the next step or broadening scope.",
+        ],
+        "Assisted": [
+            "CONTROL - ASSISTED",
+            "- Suggest checkpoints when useful; user confirms.",
+            "- Offer a recommended next step, but wait for go-ahead.",
+        ],
+        "Automatic": [
+            "CONTROL - AUTOMATIC",
+            "- Propose checkpoints automatically at natural pauses.",
+            "- User confirmation required for promotion/export.",
+        ],
+    },
+}
+
 
 # ------------------------------------------------------------
 # Builder: effective_context -> system messages
@@ -196,54 +274,44 @@ PROTOCOL_LIBRARY = {
 
 def build_system_messages(effective: dict) -> list[str]:
     """
-    Returns a list of SYSTEM message strings intended for LLM calls.
-
-    IMPORTANT DESIGN:
-    - Do NOT include the full Level 2/Level 4 dump text here.
-      You only want that during chat_boot (separate function).
-    - This function returns only the compact protocol blocks that describe
-      the active language + avatars + override policy.
+    Returns SYSTEM message strings for LLM calls.
+    v2-only: Tone, Reasoning, Approach, Control.
     """
+
     l4 = effective.get("level4", {}) or {}
 
-    # Resolve avatar selections (defaults must exist as PROTOCOL_LIBRARY keys)
-    epistemic = l4.get("epistemic_avatar", "Canonical")
-    cognitive = l4.get("cognitive_avatar", "Analyst")
-
-    # Defaults aligned to Level 4 seed text
-    interaction = l4.get("interaction_avatar", "Concise")
-    presentation = l4.get("presentation_avatar", "Laptop")
-    performance = l4.get("performance_avatar", "Balanced")
-    checkpointing = l4.get("checkpointing_avatar", "Manual")
+    # v2 defaults (must exist in Avatar seeds)
+    tone = l4.get("tone") or "Brief"
+    reasoning = l4.get("reasoning") or "Careful"
+    approach = l4.get("approach") or "Step-by-step"
+    control = l4.get("control") or "User"
 
     blocks: list[list[str]] = []
 
-    # Fixed ordering (protocol blocks)
+    # Language block (unchanged)
     blocks.append(PROTOCOL_LIBRARY["language"]["default"])
-    blocks.append(PROTOCOL_LIBRARY["epistemic"].get(epistemic, PROTOCOL_LIBRARY["epistemic"]["Canonical"]))
-    blocks.append(PROTOCOL_LIBRARY["cognitive"].get(cognitive, PROTOCOL_LIBRARY["cognitive"]["Analyst"]))
-    blocks.append(PROTOCOL_LIBRARY["interaction"].get(interaction, PROTOCOL_LIBRARY["interaction"]["Concise"]))
-    blocks.append(PROTOCOL_LIBRARY["presentation"].get(presentation, PROTOCOL_LIBRARY["presentation"]["Laptop"]))
-    blocks.append(PROTOCOL_LIBRARY["performance"].get(performance, PROTOCOL_LIBRARY["performance"]["Balanced"]))
-    blocks.append(PROTOCOL_LIBRARY["checkpointing"].get(checkpointing, PROTOCOL_LIBRARY["checkpointing"]["Manual"]))
-    blocks.append(PROTOCOL_LIBRARY["override_policy"]["default"])
 
-    # Effective state summary (authoritative, compact)
+    # v2 protocol blocks (authoritative)
+    blocks.append(PROTOCOL_LIBRARY_V2["tone"].get(tone, PROTOCOL_LIBRARY_V2["tone"]["Brief"]))
+    blocks.append(PROTOCOL_LIBRARY_V2["reasoning"].get(reasoning, PROTOCOL_LIBRARY_V2["reasoning"]["Careful"]))
+    blocks.append(PROTOCOL_LIBRARY_V2["approach"].get(approach, PROTOCOL_LIBRARY_V2["approach"]["Step-by-step"]))
+    blocks.append(PROTOCOL_LIBRARY_V2["control"].get(control, PROTOCOL_LIBRARY_V2["control"]["User"]))
+
+    # Effective state summary
     blocks.append(
         [
             "[ACTIVE_AVATARS]",
-            f"Epistemic: {epistemic}",
-            f"Cognitive: {cognitive}",
-            f"Interaction: {interaction}",
-            f"Presentation: {presentation}",
-            f"Performance: {performance}",
-            f"Checkpointing: {checkpointing}",
+            f"Tone: {tone}",
+            f"Reasoning: {reasoning}",
+            f"Approach: {approach}",
+            f"Control: {control}",
             "",
             "The ACTIVE_AVATARS above are authoritative. Follow them.",
         ]
     )
 
     return ["\n".join(block) for block in blocks]
+
 
 
 def build_boot_dump_level2_text(effective: dict) -> str:

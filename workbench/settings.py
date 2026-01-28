@@ -30,7 +30,7 @@ SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
 # Prototype = always debug
 DEBUG = True
 
-ALLOWED_HOSTS = ["192.168.1.101", "localhost", "127.0.0.1"]
+ALLOWED_HOSTS = ["testserver", "192.168.1.101", "localhost", "127.0.0.1"]
 AUTH_USER_MODEL = "accounts.User"
 
 AUTHENTICATION_BACKENDS = [

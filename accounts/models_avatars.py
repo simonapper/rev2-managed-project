@@ -12,10 +12,11 @@ class Avatar(models.Model):
     Admin-managed avatar definition.
 
     One table, multiple categories.
-    Users select one avatar per L1 section.
+    Users select one avatar per section.
     """
 
     class Category(models.TextChoices):
+        # -------- Legacy --------
         COGNITIVE = "COGNITIVE", "Cognitive"
         INTERACTION = "INTERACTION", "Interaction"
         PRESENTATION = "PRESENTATION", "Presentation"
@@ -23,8 +24,14 @@ class Avatar(models.Model):
         PERFORMANCE = "PERFORMANCE", "Performance"
         CHECKPOINTING = "CHECKPOINTING", "Checkpointing"
 
+        # -------- Avatar v2 --------
+        TONE = "TONE", "Tone"
+        REASONING = "REASONING", "Reasoning"
+        APPROACH = "APPROACH", "Approach"
+        CONTROL = "CONTROL", "Control"
+
     category = models.CharField(max_length=20, choices=Category.choices)
-    key = models.SlugField(max_length=80)  # unique per category (enforced below)
+    key = models.SlugField(max_length=80)  # unique per category
     name = models.CharField(max_length=120)
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
@@ -46,8 +53,9 @@ class Avatar(models.Model):
 class UserProfile(models.Model):
     """
     User-visible configuration knobs for prototype:
-    - Preferred language + variant (user-defined free text)
-    - One avatar choice per L1 section
+    - Preferred language + variant
+    - Legacy avatars (unchanged)
+    - Avatar v2 axes (Tone, Reasoning, Approach, Control)
     """
 
     user = models.OneToOneField(
@@ -56,12 +64,14 @@ class UserProfile(models.Model):
         related_name="profile",
     )
 
-    # User-preference language fields (free text)
+    # Language preferences
     default_language = models.CharField(max_length=40, default="English")
     default_language_variant = models.CharField(max_length=40, default="British English")
 
     language_switching_permitted = models.BooleanField(default=True)
     persist_language_switch_for_session = models.BooleanField(default=True)
+
+    # -------- Legacy avatar fields (unchanged) --------
 
     cognitive_avatar = models.ForeignKey(
         Avatar,
@@ -98,6 +108,41 @@ class UserProfile(models.Model):
         on_delete=models.PROTECT,
         related_name="users_checkpointing",
         limit_choices_to={"category": Avatar.Category.CHECKPOINTING, "is_active": True},
+    )
+
+    # -------- Avatar v2 fields --------
+
+    tone_avatar = models.ForeignKey(
+        Avatar,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="users_tone",
+        limit_choices_to={"category": Avatar.Category.TONE, "is_active": True},
+    )
+    reasoning_avatar = models.ForeignKey(
+        Avatar,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="users_reasoning",
+        limit_choices_to={"category": Avatar.Category.REASONING, "is_active": True},
+    )
+    approach_avatar = models.ForeignKey(
+        Avatar,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="users_approach",
+        limit_choices_to={"category": Avatar.Category.APPROACH, "is_active": True},
+    )
+    control_avatar = models.ForeignKey(
+        Avatar,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="users_control",
+        limit_choices_to={"category": Avatar.Category.CONTROL, "is_active": True},
     )
 
     created_at = models.DateTimeField(auto_now_add=True)

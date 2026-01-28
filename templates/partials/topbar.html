@@ -22,96 +22,94 @@
         </div>
     </div>
 
-<!-- CENTRE: Reporting tiles (read-only) -->
-<div class="rw-topbar-centre">
-  <div class="rw-status-grid" aria-label="Active configuration status">
+    <!-- CENTRE: Reporting tiles (read-only) -->
+    <div class="rw-topbar-centre">
+      <div class="rw-status-grid" aria-label="Active configuration status">
 
-    {# TOP ROW (left): Language #}
-    <div class="rw-status {% if rw_language %}rw-status--overridden{% endif %}">
-      <div class="rw-status-label">Language</div>
-      <div class="rw-status-value">
-        {% if rw_language %}
-          {{ rw_language.name|default:"English"|slice:":3"|upper }}
-          {% if rw_language.variant %}
-            /{{ rw_language.variant|slice:":3"|upper }}
-          {% else %}
-            /AUTO
-          {% endif %}
-        {% else %}
-          {% with p=request.user.profile %}
-            {{ p.default_language|default:"English"|slice:":3"|upper }}/{{ p.default_language_variant|default:"British English"|slice:":3"|upper }}
-          {% endwith %}
-        {% endif %}
-      </div>
-    </div>
-
-    {# Fill the rest of the top row with the other status tiles (excluding Project) #}
-    {% if rw_overrides %}
-      {% for cat_key, cat_label in rw_overrides.categories %}
-        {% if cat_key != "CHECKPOINTING" %}
-          <div class="rw-status {% if rw_overrides.current|get_item:cat_key %}rw-status--overridden{% endif %}">
-            <div class="rw-status-label">{{ cat_label }}</div>
-            <div class="rw-status-value">{{ rw_overrides.defaults|get_item:cat_key }}</div>
+        {# TOP ROW (left): Language #}
+        <div class="rw-status {% if rw_language %}rw-status--overridden{% endif %}">
+          <div class="rw-status-label">Language</div>
+          <div class="rw-status-value">
+            {% if rw_language %}
+              {{ rw_language.name|default:"English"|slice:":3"|upper }}
+              {% if rw_language.variant %}
+                /{{ rw_language.variant|slice:":3"|upper }}
+              {% else %}
+                /AUTO
+              {% endif %}
+            {% else %}
+              {% with p=request.user.profile %}
+                {{ p.default_language|default:"English"|slice:":3"|upper }}/{{ p.default_language_variant|default:"British English"|slice:":3"|upper }}
+              {% endwith %}
+            {% endif %}
           </div>
-        {% endif %}
-      {% endfor %}
-    {% endif %}
-
-    <div class="rw-status {% if rw_overrides and rw_overrides.current|get_item:'CHECKPOINTING' %}rw-status--overridden{% endif %}">
-      <div class="rw-status-label">Checkpointing</div>
-      <div class="rw-status-value">
-        {% if rw_overrides %}
-          {{ rw_overrides.defaults|get_item:"CHECKPOINTING" }}
-        {% else %}
-          —
-        {% endif %}
-      </div>
-    </div>
-
-    {# --- Row break: bottom row is Project, Chat, Current Turn --- #}
-    <div class="rw-break" aria-hidden="true"></div>
-
-            {# BOTTOM ROW: Project #}
-            <div class="rw-status">
-                <div class="rw-status-label">Project</div>
-                <div class="rw-status-value">
-                    {% if rw_projects and rw_projects.active %}
-                        <div class="rw-status-value" title="{{ rw_projects.active.name }}">
-                            {{ rw_projects.active.name }}
-                        </div>
-                    {% else %}
-                    —
-                    {% endif %}
-                </div>
-            </div>
-
-            {# BOTTOM ROW: Chat #}
-            <div class="rw-status">
-                <div class="rw-status-label">Chat</div>
-                <div class="rw-status-value">
-                    {% if rw_chat and rw_chat.chat_title %}
-                        <div class="rw-status-value" title="{{ rw_chat.chat_title }}">
-                            {{ rw_chat.chat_title }}
-                        </div>
-                    {% else %}
-                    —
-                    {% endif %}
-                </div>
-            </div>
-
-            {# BOTTOM ROW: Current Turn (show even if 0) #}
-            <div class="rw-status">
-                <div class="rw-status-label">Current Turn</div>
-                <div class="rw-status-value">
-                    {% if rw_chat %}
-                    {{ rw_chat.turn_count|default:0 }}
-                    {% else %}
-                    0
-                    {% endif %}
-                </div>
-            </div>
-
         </div>
+
+        {# ---------- V2 AVATAR TILES (CANONICAL) ---------- #}
+        <div class="rw-status">
+          <div class="rw-status-label">Tone</div>
+          <div class="rw-status-value">{% if rw_v2 %}{{ rw_v2.tone }}{% else %}—{% endif %}</div>
+        </div>
+
+        <div class="rw-status">
+          <div class="rw-status-label">Reasoning</div>
+          <div class="rw-status-value">{% if rw_v2 %}{{ rw_v2.reasoning }}{% else %}—{% endif %}</div>
+        </div>
+
+        <div class="rw-status">
+          <div class="rw-status-label">Approach</div>
+          <div class="rw-status-value">{% if rw_v2 %}{{ rw_v2.approach }}{% else %}—{% endif %}</div>
+        </div>
+
+        <div class="rw-status">
+          <div class="rw-status-label">Control</div>
+          <div class="rw-status-value">{% if rw_v2 %}{{ rw_v2.control }}{% else %}—{% endif %}</div>
+        </div>
+
+        {# --- Row break: bottom row is Project, Chat, Current Turn --- #}
+        <div class="rw-break" aria-hidden="true"></div>
+
+        {# BOTTOM ROW: Project #}
+        <div class="rw-status">
+          <div class="rw-status-label">Project</div>
+          <div class="rw-status-value">
+            {% if rw_projects and rw_projects.active %}
+              <div class="rw-status-value" title="{{ rw_projects.active.name }}">
+                {{ rw_projects.active.name }}
+              </div>
+            {% else %}
+              —
+            {% endif %}
+          </div>
+        </div>
+
+        {# BOTTOM ROW: Chat #}
+        <div class="rw-status">
+          <div class="rw-status-label">Chat</div>
+          <div class="rw-status-value">
+            {% if rw_chat and rw_chat.chat_title %}
+              <div class="rw-status-value" title="{{ rw_chat.chat_title }}">
+                {{ rw_chat.chat_title }}
+              </div>
+            {% else %}
+              —
+            {% endif %}
+          </div>
+        </div>
+
+        {# BOTTOM ROW: Current Turn #}
+        <div class="rw-status">
+          <div class="rw-status-label">Current Turn</div>
+          <div class="rw-status-value">
+            {% if rw_chat %}
+              {{ rw_chat.turn_count|default:0 }}
+            {% else %}
+              0
+            {% endif %}
+          </div>
+        </div>
+
+      </div>
     </div>
 
     <!-- RIGHT: Actions (stacked, compact) -->

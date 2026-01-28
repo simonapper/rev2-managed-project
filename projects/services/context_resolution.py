@@ -18,31 +18,14 @@ from django.contrib.auth import get_user_model
 from accounts.models_avatars import Avatar
 from config.models import ConfigRecord, ConfigVersion, SystemConfigPointers
 from projects.models import Project, UserProjectPrefs
+from django.contrib.auth.models import AbstractUser
 
-User = get_user_model()
+
+UserModel = get_user_model()
 
 # ------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------
-
-_AXIS_TO_PROFILE_FIELD = {
-    "cognitive": "cognitive_avatar",
-    "interaction": "interaction_avatar",
-    "presentation": "presentation_avatar",
-    "epistemic": "epistemic_avatar",
-    "performance": "performance_avatar",
-    "checkpointing": "checkpointing_avatar",
-}
-
-_CATEGORY_KEY_TO_AXIS = {
-    "COGNITIVE": "cognitive",
-    "INTERACTION": "interaction",
-    "PRESENTATION": "presentation",
-    "EPISTEMIC": "epistemic",
-    "PERFORMANCE": "performance",
-    "CHECKPOINTING": "checkpointing",
-}
-
 
 def _latest_version_for(config: ConfigRecord) -> Optional[ConfigVersion]:
     return (
@@ -64,98 +47,90 @@ def _config_payload(config: Optional[ConfigRecord]) -> Dict[str, Any]:
     }
 
 
-def _avatar_name_from_profile(profile: Any, axis: str) -> str:
-    av = getattr(profile, _AXIS_TO_PROFILE_FIELD[axis], None)
-    return av.name if av else "Default"
-
-
-def _avatar_name_from_prefs(prefs: Any, axis: str) -> Optional[str]:
-    av = getattr(prefs, f"{axis}_avatar", None)
-    return av.name if av else None
-
-
-def _apply_session_overrides_to_names(
-    base_names: Dict[str, str],
-    overrides: Dict[str, Any],
-) -> Dict[str, str]:
-    if not overrides:
-        return base_names
-
-    axis_overrides: Dict[str, Any] = {}
-
-    for k, v in overrides.items():
-        if k in _CATEGORY_KEY_TO_AXIS:
-            axis_overrides[_CATEGORY_KEY_TO_AXIS[k]] = v
-        elif k in _AXIS_TO_PROFILE_FIELD:
-            axis_overrides[k] = v
-
-    if not axis_overrides:
-        return base_names
-
-    out = dict(base_names)
-
-    for axis, raw in axis_overrides.items():
-        if raw in (None, "", "inherit", "INHERIT"):
-            continue
-
-        av_name = None
-        try:
-            av = Avatar.objects.filter(id=raw).only("name").first()
-            if av:
-                av_name = av.name
-        except Exception:
-            pass
-
-        if av_name is None and isinstance(raw, str):
-            av_name = raw.strip() or None
-
-        if av_name:
-            out[axis] = av_name
-
-    return out
-
-
 # ------------------------------------------------------------
-# L4 builder (FIXED)
+# L4 builder (v2 only)
 # ------------------------------------------------------------
 
 def _build_level4_dict(
     *,
-    user: User,
+    user: AbstractUser,
     project: Project,
     prefs: Optional[UserProjectPrefs],
+    l4_cfg: Dict[str, Any],
     session_overrides: Dict[str, Any],
     chat_overrides: Dict[str, Any],
 ) -> Dict[str, Any]:
+    """
+    Build Level 4 effective context.
+    v2 avatar axes only: tone, reasoning, approach, control.
+    Precedence (low -> high):
+      system/admin (l4_cfg) -> profile -> project prefs -> session -> chat
+    """
 
     profile = getattr(user, "profile", None)
 
-    base_names: Dict[str, str] = {}
-    for axis in _AXIS_TO_PROFILE_FIELD:
-        base_names[axis] = (
-            _avatar_name_from_profile(profile, axis)
-            if profile else "Default"
-        )
+    level4: Dict[str, Any] = {}
 
+    # 0) system/admin defaults (seeded config)
+    if isinstance(l4_cfg, dict):
+        level4.update(l4_cfg)
+
+    # Always ensure language code exists
+    level4.setdefault("active_language_code", "en-GB")
+
+    # 1) user profile defaults
+    if profile:
+        if getattr(profile, "tone_avatar", None):
+            level4["tone"] = profile.tone_avatar.name
+        if getattr(profile, "reasoning_avatar", None):
+            level4["reasoning"] = profile.reasoning_avatar.name
+        if getattr(profile, "approach_avatar", None):
+            level4["approach"] = profile.approach_avatar.name
+        if getattr(profile, "control_avatar", None):
+            level4["control"] = profile.control_avatar.name
+
+    # 2) project prefs (UserProjectPrefs)
     if prefs:
-        for axis in _AXIS_TO_PROFILE_FIELD:
-            n = _avatar_name_from_prefs(prefs, axis)
-            if n:
-                base_names[axis] = n
+        if getattr(prefs, "tone_avatar", None):
+            level4["tone"] = prefs.tone_avatar.name
+        if getattr(prefs, "reasoning_avatar", None):
+            level4["reasoning"] = prefs.reasoning_avatar.name
+        if getattr(prefs, "approach_avatar", None):
+            level4["approach"] = prefs.approach_avatar.name
+        if getattr(prefs, "control_avatar", None):
+            level4["control"] = prefs.control_avatar.name
 
-    # IMPORTANT ORDER
-    names = _apply_session_overrides_to_names(base_names, session_overrides)
-    names = _apply_session_overrides_to_names(names, chat_overrides)
+    def _apply_override(axis: str, raw: Any) -> None:
+        if raw is None:
+            return
 
-    return {
-        "active_language_code": "en-GB",
-        "cognitive_avatar": names["cognitive"],
-        "interaction_avatar": names["interaction"],
-        "presentation_avatar": names["presentation"],
-        "epistemic_avatar": names["epistemic"],
-        "performance_avatar": names["performance"],
-        "checkpointing_avatar": names["checkpointing"],
-    }
+        av_name = None
+
+        if isinstance(raw, int):
+            av = Avatar.objects.filter(id=raw).only("name").first()
+            if av:
+                av_name = av.name
+        elif isinstance(raw, str):
+            s = raw.strip()
+            if s.isdigit():
+                av = Avatar.objects.filter(id=int(s)).only("name").first()
+                if av:
+                    av_name = av.name
+            elif s:
+                av_name = s
+
+        if av_name:
+            level4[axis] = av_name
+
+    # 3) session overrides (all chats this browser session)
+    for axis in ("tone", "reasoning", "approach", "control"):
+        _apply_override(axis, session_overrides.get(axis))
+
+    # 4) chat overrides (highest precedence)
+    for axis in ("tone", "reasoning", "approach", "control"):
+        _apply_override(axis, chat_overrides.get(axis))
+
+    return level4
 
 
 # ------------------------------------------------------------
@@ -174,7 +149,7 @@ def resolve_effective_context(
     chat_overrides = chat_overrides or {}
 
     project = Project.objects.get(id=project_id)
-    user = User.objects.get(id=user_id)
+    user = UserModel.objects.get(id=user_id)
 
     prefs = (
         UserProjectPrefs.objects
@@ -186,12 +161,13 @@ def resolve_effective_context(
         pointers = SystemConfigPointers.objects.get(pk=1)
 
         l2 = _config_payload(pointers.active_l2_config)
-        l4 = _config_payload(pointers.active_l4_config)
+        l4_cfg = _config_payload(pointers.active_l4_config)
 
         level4 = _build_level4_dict(
             user=user,
             project=project,
             prefs=prefs,
+            l4_cfg=l4_cfg,
             session_overrides=session_overrides,
             chat_overrides=chat_overrides,
         )
@@ -203,6 +179,7 @@ def resolve_effective_context(
             "level4": level4,
             "provenance": {
                 "project_kind": project.kind,
+                "system_l4_config_id": getattr(pointers.active_l4_config, "id", None),
                 "session_overrides_keys": sorted(session_overrides.keys()),
                 "chat_overrides_keys": sorted(chat_overrides.keys()),
             },

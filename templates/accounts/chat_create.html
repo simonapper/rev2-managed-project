@@ -25,6 +25,35 @@
       </select>
     </div>
 
+    <hr>
+
+    <div class="mb-2">
+      <label class="form-label small text-secondary">Chat definition mode</label><br>
+      <label><input type="radio" name="cde_mode" value="SKIP" checked> Skip</label><br>
+      <label><input type="radio" name="cde_mode" value="LOOSE"> Loose</label><br>
+      <label><input type="radio" name="cde_mode" value="CONTROLLED"> Controlled</label>
+    </div>
+
+    <div class="mb-2">
+      <label class="form-label small text-secondary">Chat goal</label>
+      <textarea name="chat_goal" class="form-control form-control-sm" rows="2"></textarea>
+    </div>
+
+    <div class="mb-2">
+      <label class="form-label small text-secondary">Success criteria</label>
+      <textarea name="chat_success" class="form-control form-control-sm" rows="2"></textarea>
+    </div>
+
+    <div class="mb-2">
+      <label class="form-label small text-secondary">Constraints</label>
+      <textarea name="chat_constraints" class="form-control form-control-sm" rows="2"></textarea>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label small text-secondary">Non-goals (out of scope)</label>
+      <textarea name="chat_non_goals" class="form-control form-control-sm" rows="2"></textarea>
+    </div>
+
     <button class="btn btn-sm btn-primary">Create</button>
     <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:dashboard' %}">Cancel</a>
   </form>

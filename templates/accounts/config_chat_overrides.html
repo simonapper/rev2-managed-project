@@ -36,107 +36,63 @@
       </div>
     </div>
     <!-- Avatars -->
-    <div class="card mb-3">
+   <div class="card mb-3">
       <div class="card-body">
+        <h5 class="card-title">Avatars</h5>
 
-        <h5 class="card-title mb-2">Avatars</h5>
-
-        <div class="row g-2">
-
-          <div class="col-12 col-md-6">
-            <div class="rw-field">
-              <label>Cognitive</label>
-              <select name="cognitive_id" class="form-select form-select-sm">
-                <option value="">(no override)</option>
-                {% for a in cognitive_choices %}
-                  <option value="{{ a.id }}"
-                    {% if chat_override_current.COGNITIVE == a.id|stringformat:"s" %}selected{% endif %}>
-                    {{ a.name }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">Tone</label>
+            <select class="form-select" name="tone_id">
+              <option value="" {% if not chat_override_current.tone %}selected{% endif %}>(no override)</option>
+              {% for a in tone_choices %}
+                <option value="{{ a.id }}" {% if chat_override_current.tone|stringformat:"s" == a.id|stringformat:"s" %}selected{% endif %}>
+                  {{ a.name }}
+                </option>
+              {% endfor %}
+            </select>
           </div>
 
-          <div class="col-12 col-md-6">
-            <div class="rw-field">
-              <label>Interaction</label>
-              <select name="interaction_id" class="form-select form-select-sm">
-                <option value="">(no override)</option>
-                {% for a in interaction_choices %}
-                  <option value="{{ a.id }}"
-                    {% if chat_override_current.INTERACTION == a.id|stringformat:"s" %}selected{% endif %}>
-                    {{ a.name }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
+          <div class="col-md-6">
+            <label class="form-label">Reasoning</label>
+            <select class="form-select" name="reasoning_id">
+              <option value="" {% if not chat_override_current.reasoning %}selected{% endif %}>(no override)</option>
+              {% for a in reasoning_choices %}
+                <option value="{{ a.id }}" {% if chat_override_current.reasoning|stringformat:"s" == a.id|stringformat:"s" %}selected{% endif %}>
+                  {{ a.name }}
+                </option>
+              {% endfor %}
+            </select>
           </div>
 
-          <div class="col-12 col-md-6">
-            <div class="rw-field">
-              <label>Presentation</label>
-              <select name="presentation_id" class="form-select form-select-sm">
-                <option value="">(no override)</option>
-                {% for a in presentation_choices %}
-                  <option value="{{ a.id }}"
-                    {% if chat_override_current.PRESENTATION == a.id|stringformat:"s" %}selected{% endif %}>
-                    {{ a.name }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
+          <div class="col-md-6">
+            <label class="form-label">Approach</label>
+            <select class="form-select" name="approach_id">
+              <option value="" {% if not chat_override_current.approach %}selected{% endif %}>(no override)</option>
+              {% for a in approach_choices %}
+                <option value="{{ a.id }}" {% if chat_override_current.approach|stringformat:"s" == a.id|stringformat:"s" %}selected{% endif %}>
+                  {{ a.name }}
+                </option>
+              {% endfor %}
+            </select>
           </div>
 
-          <div class="col-12 col-md-6">
-            <div class="rw-field">
-              <label>Epistemic</label>
-              <select name="epistemic_id" class="form-select form-select-sm">
-                <option value="">(no override)</option>
-                {% for a in epistemic_choices %}
-                  <option value="{{ a.id }}"
-                    {% if chat_override_current.EPISTEMIC == a.id|stringformat:"s" %}selected{% endif %}>
-                    {{ a.name }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
+          <div class="col-md-6">
+            <label class="form-label">Control</label>
+            <select class="form-select" name="control_id">
+              <option value="" {% if not chat_override_current.control %}selected{% endif %}>(no override)</option>
+              {% for a in control_choices %}
+                <option value="{{ a.id }}" {% if chat_override_current.control|stringformat:"s" == a.id|stringformat:"s" %}selected{% endif %}>
+                  {{ a.name }}
+                </option>
+              {% endfor %}
+            </select>
           </div>
-
-          <div class="col-12 col-md-6">
-            <div class="rw-field">
-              <label>Performance</label>
-              <select name="performance_id" class="form-select form-select-sm">
-                <option value="">(no override)</option>
-                {% for a in performance_choices %}
-                  <option value="{{ a.id }}"
-                    {% if chat_override_current.PERFORMANCE == a.id|stringformat:"s" %}selected{% endif %}>
-                    {{ a.name }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-          </div>
-
-          <div class="col-12 col-md-6">
-            <div class="rw-field">
-              <label>Checkpointing</label>
-              <select name="checkpointing_id" class="form-select form-select-sm">
-                <option value="">(no override)</option>
-                {% for a in checkpointing_choices %}
-                  <option value="{{ a.id }}"
-                    {% if chat_override_current.CHECKPOINTING == a.id|stringformat:"s" %}selected{% endif %}>
-                    {{ a.name }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-          </div>
-
         </div>
 
       </div>
     </div>
+
 
     <!-- Actions -->
     <div class="rw-actionbar mt-2">

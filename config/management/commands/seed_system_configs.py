@@ -20,9 +20,11 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from config.models import ConfigRecord, ConfigScope, ConfigVersion, SystemConfigPointers
+from django.contrib.auth.models import AbstractUser
 
 
-User = get_user_model()
+
+UserModel = get_user_model()
 
 
 # FINAL APPROVED TEXTS (verbatim)
@@ -398,17 +400,17 @@ def _get_or_create_org_scope() -> ConfigScope:
     return scope
 
 
-def _get_seed_actor() -> User | None:
+def _get_seed_actor() -> AbstractUser | None:
     """
     Choose a sensible created_by actor.
     - Prefer first superuser.
     - Else any user.
     - Else None.
     """
-    su = User.objects.filter(is_superuser=True).order_by("id").first()
+    su = UserModel.objects.filter(is_superuser=True).order_by("id").first()
     if su:
         return su
-    return User.objects.order_by("id").first()
+    return UserModel.objects.order_by("id").first()
 
 
 class Command(BaseCommand):

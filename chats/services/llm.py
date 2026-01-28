@@ -7,6 +7,8 @@ import json
 import base64
 from typing import Dict, List, Optional
 from openai import OpenAI
+from config.models import SystemConfigPointers
+
 
 client = OpenAI()
 
@@ -37,6 +39,10 @@ def _attachment_to_data_url(att) -> str:
 
     b64 = base64.b64encode(data).decode("ascii")
     return "data:%s;base64,%s" % (mime, b64)
+
+def _get_default_model_key() -> str:
+    p = SystemConfigPointers.objects.first()
+    return (getattr(p, "openai_model_default", "") or "gpt-5.1").strip()
 
 
 def build_image_parts_from_attachments(attachments) -> List[Dict[str, str]]:
@@ -75,6 +81,13 @@ def generate_panes(
         "- reasoning: reasoning summary\n"
         "- output: extractable artefact text\n"
     )
+    ALLOWED_MODELS = [
+        "gpt-5.1", "gpt-5-mini", "gpt-5-nano",
+        "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
+        "o3", "o4-mini", "gpt-4o",
+    ]
+
+    model = _get_default_model_key()
 
     # Multiple system messages are fine.
     input_msgs = [{"role": "system", "content": system_contract}]
@@ -90,7 +103,7 @@ def generate_panes(
     )
 
     response = client.responses.create(
-        model="gpt-4.1-mini",
+        model="gpt-5.1",
         input=input_msgs,
         text={
             "format": {

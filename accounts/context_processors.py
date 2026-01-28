@@ -13,6 +13,7 @@ from projects.models import Project, UserProjectPrefs
 from projects.services_project_membership import accessible_projects_qs
 from chats.models import ChatMessage
 from chats.models import ChatWorkspace
+from projects.services.context_resolution import resolve_effective_context
 
 
 def topbar_context(request):
@@ -55,7 +56,7 @@ def topbar_context(request):
 def session_overrides_bar(request) -> Dict[str, Any]:
     user = getattr(request, "user", None)
     if not user or isinstance(user, AnonymousUser) or not user.is_authenticated:
-        return {"rw_overrides": None}
+        return {"rw_overrides": None, "rw_v2": None}
 
     profile = getattr(user, "profile", None)
 
@@ -85,17 +86,17 @@ def session_overrides_bar(request) -> Dict[str, Any]:
     if active_chat_id:
         chat_current = chat_overrides.get(str(active_chat_id), {}) or {}
 
-    # Session overrides stored as str(Avatar.id) or None (chat-scoped)
+    # Chat-scoped overrides stored as str(Avatar.id) or None
     current: Dict[str, Optional[str]] = {}
     for key, _label, _pf in categories:
         current[key] = chat_current.get(key)
 
-    # NEW: flag if ANY override is active for this chat (including language name override)
+    # Flag if ANY override is active for this chat (including language name override)
     language_override_active = bool((chat_current.get("LANGUAGE_NAME") or "").strip())
     avatar_override_active = any(bool(current.get(k)) for (k, _lbl, _pf) in categories)
     chat_overrides_active = bool(active_chat_id and (language_override_active or avatar_override_active))
 
-    # NEW: per-category override flags (for colouring individual boxes)
+    # Per-category override flags (for colouring individual boxes)
     overridden: Dict[str, bool] = {}
     for key, _label, _pf in categories:
         overridden[key] = bool(current.get(key))
@@ -123,13 +124,16 @@ def session_overrides_bar(request) -> Dict[str, Any]:
                 .first()
             )
 
-    # Effective values shown in topbar (chat-session > project > profile > Default)
+    # ------------------------------------------------------------
+    # Effective legacy values (for legacy UI/debug only):
+    # Chat > Session > Project > Profile > Default
+    # ------------------------------------------------------------
     defaults: Dict[str, str] = {}
-    for key, _label, profile_field in categories:
-        # 1) chat-scoped session override
-        override_id = current.get(key)
+    session_overrides = request.session.get("rw_session_overrides", {}) or {}
 
-        # Guard: ignore legacy/invalid override values (must look like an integer id)
+    for key, _label, profile_field in categories:
+        # 1) chat-scoped override (this chat only)
+        override_id = current.get(key)
         if override_id:
             override_id_str = str(override_id)
             if override_id_str.isdigit():
@@ -137,18 +141,25 @@ def session_overrides_bar(request) -> Dict[str, Any]:
                 if av:
                     defaults[key] = av.name
                     continue
-            else:
-                # invalid value in session; ignore it
-                pass
 
-        # 2) project override
+        # 2) session-scoped override (all chats in this browser session)
+        session_override_id = session_overrides.get(key)
+        if session_override_id:
+            so_str = str(session_override_id)
+            if so_str.isdigit():
+                av = Avatar.objects.filter(id=int(so_str)).only("name").first()
+                if av:
+                    defaults[key] = av.name
+                    continue
+
+        # 3) project override
         if prefs is not None:
             pav = getattr(prefs, profile_field, None)
             if pav is not None:
                 defaults[key] = pav.name
                 continue
 
-        # 3) profile default
+        # 4) profile default
         default_name = "Default"
         if profile is not None:
             av = getattr(profile, profile_field, None)
@@ -156,63 +167,51 @@ def session_overrides_bar(request) -> Dict[str, Any]:
                 default_name = av.name
         defaults[key] = default_name
 
+    # ------------------------------------------------------------
+    # v2 tiles (authoritative, always safe)
+    # ------------------------------------------------------------
+    rw_v2 = {
+        "tone": "Brief",
+        "reasoning": "Careful",
+        "approach": "Step-by-step",
+        "control": "User",
+    }
+
+    try:
+        active_project_id = request.session.get("rw_active_project_id")
+        pid = int(active_project_id) if str(active_project_id).isdigit() else None
+
+        chat_overrides_for_active = {}
+        if active_chat_id:
+            chat_overrides_for_active = chat_overrides.get(str(active_chat_id), {}) or {}
+
+        if pid is not None:
+            effective = resolve_effective_context(
+                project_id=pid,
+                user_id=user.id,
+                session_overrides=session_overrides,
+                chat_overrides=chat_overrides_for_active,
+            )
+            l4 = effective.get("level4") or {}
+            rw_v2 = {
+                "tone": l4.get("tone") or rw_v2["tone"],
+                "reasoning": l4.get("reasoning") or rw_v2["reasoning"],
+                "approach": l4.get("approach") or rw_v2["approach"],
+                "control": l4.get("control") or rw_v2["control"],
+            }
+    except Exception:
+        pass
+
     return {
         "rw_overrides": {
             "categories": [(k, lbl) for (k, lbl, _pf) in categories],
             "choices": choices,
             "current": current,             # chat-scoped override ids (if any)
-            "defaults": defaults,           # resolved names shown in topbar
-            # NEW:
+            "defaults": defaults,           # resolved legacy names (legacy UI/debug)
             "overridden": overridden,       # per-axis override booleans
-            "chat_overrides_active": chat_overrides_active,  # any override active for this chat
-        }
-    }
-
-
-def active_project_bar(request) -> Dict[str, Any]:
-    """
-    Provides:
-      - rw_projects.choices: accessible projects for selector
-      - rw_projects.active: active Project object or None
-    Active project is stored in session as rw_active_project_id.
-    """
-    user = getattr(request, "user", None)
-    if not user or isinstance(user, AnonymousUser) or not user.is_authenticated:
-        return {"rw_projects": None}
-
-    if user.is_superuser or user.is_staff:
-        qs = accessible_projects_qs(request.user)
-    else:
-        qs = accessible_projects_qs(request.user).filter(Q(owner=user) | Q(scoped_roles__user=user)).distinct()
-
-    projects = list(qs.order_by("name").only("id", "name", "kind"))
-
-    active_id = request.session.get("rw_active_project_id")
-    active: Optional[Project] = None
-    if active_id is not None:
-        try:
-            active_id_int = int(active_id)
-        except (TypeError, ValueError):
-            active_id_int = None
-
-        if active_id_int is not None:
-            for p in projects:
-                if p.id == active_id_int:
-                    active = p
-                    break
-
-    # If no active selected, default to first sandbox if present, else first project, else None.
-    if active is None and projects:
-        sandbox = next((p for p in projects if getattr(p, "kind", None) == Project.Kind.SANDBOX), None)
-        active = sandbox or projects[0]
-        request.session["rw_active_project_id"] = active.id
-        request.session.modified = True
-
-    return {
-        "rw_projects": {
-            "choices": projects,
-            "active": active,
-        }
+            "chat_overrides_active": chat_overrides_active,
+        },
+        "rw_v2": rw_v2,
     }
 
 
@@ -276,3 +275,5 @@ def active_chat_bar(request) -> Dict[str, Any]:
             "turn_count": turn_count,
         }
     }
+def active_project_bar(request):
+    return {}

@@ -369,6 +369,67 @@ class AuditLog(models.Model):
     def __str__(self) -> str:
         return f"{self.project_id}:{self.event_type}@{self.created_at.isoformat()}"
 
+class ProjectDefinitionField(models.Model):
+    """
+    One PDE field under a Project.
+    Stores draft value + last_validation JSON from PDE verify calls.
+    """
+
+    class Tier(models.TextChoices):
+        L1_MUST = "L1-MUST", "L1-MUST"
+        L1_GOOD = "L1-GOOD", "L1-GOOD"
+        L1_NICE = "L1-NICE", "L1-NICE"
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "DRAFT"
+        PROPOSED = "PROPOSED", "PROPOSED"
+        PASS_LOCKED = "PASS_LOCKED", "PASS_LOCKED"
+
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="pde_fields",
+    )
+
+    field_key = models.CharField(max_length=200)
+
+    tier = models.CharField(
+        max_length=20,
+        choices=Tier.choices,
+        default=Tier.L1_MUST,
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+
+    value_text = models.TextField(blank=True, default="")
+
+    last_validation = models.JSONField(blank=True, default=dict)
+
+    locked_at = models.DateTimeField(null=True, blank=True)
+    locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="pde_fields_locked",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = (("project", "field_key"),)
+        indexes = [
+            models.Index(fields=["project", "status"]),
+            models.Index(fields=["project", "field_key"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.field_key}"
 
 class Folder(models.Model):
     """
