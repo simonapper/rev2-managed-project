@@ -11,48 +11,75 @@ from django.db.models import Q
 from accounts.models_avatars import Avatar
 from projects.models import Project, UserProjectPrefs
 from projects.services_project_membership import accessible_projects_qs
-from chats.models import ChatMessage
-from chats.models import ChatWorkspace
+from chats.models import ChatMessage, ChatWorkspace
 from projects.services.context_resolution import resolve_effective_context
 
 
-def topbar_context(request):
-    ctx = {}
+def topbar_context(request) -> Dict[str, Any]:
+    ctx: Dict[str, Any] = {}
 
+    user = getattr(request, "user", None)
+    if not user or isinstance(user, AnonymousUser) or not user.is_authenticated:
+        return ctx
+
+    # ------------------------------------------------------------
+    # Active project (from session), even if no active chat
+    # ------------------------------------------------------------
+    active_project = None
+    pid = request.session.get("rw_active_project_id")
+    if pid is not None:
+        try:
+            pid_int = int(pid)
+        except (TypeError, ValueError):
+            pid_int = None
+        if pid_int is not None:
+            active_project = Project.objects.filter(id=pid_int).only("id", "name").first()
+
+    if active_project is not None:
+        ctx["rw_projects"] = {"active": active_project}
+
+    # ------------------------------------------------------------
+    # Active chat (optional)
+    # ------------------------------------------------------------
     chat_id = request.session.get("rw_active_chat_id")
     if not chat_id:
         return ctx
 
     try:
-        chat = ChatWorkspace.objects.get(pk=chat_id)
-    except ChatWorkspace.DoesNotExist:
+        chat_id_int = int(chat_id)
+    except (TypeError, ValueError):
+        return ctx
+
+    chat = ChatWorkspace.objects.filter(pk=chat_id_int).select_related("project").first()
+    if chat is None:
         return ctx
 
     ctx["active_chat"] = chat
+
+    # If project not already set (or session missing), fall back to chat.project
+    if "rw_projects" not in ctx:
+        ctx["rw_projects"] = {"active": chat.project}
+
     ctx["turn_count"] = ChatMessage.objects.filter(
         chat=chat,
         role=ChatMessage.Role.ASSISTANT,
     ).count()
 
-    # ---- Language: ONLY show override if this chat explicitly set one ----
+    # ---- Language override: ONLY show if this chat explicitly set one ----
     rw_chat_overrides = request.session.get("rw_chat_overrides", {}) or {}
     per_chat = rw_chat_overrides.get(str(chat.id), {}) or {}
 
     lang_name = (per_chat.get("LANGUAGE_NAME") or "").strip()
     if lang_name:
-        # Override present: show it (variant/code optional)
         ctx["rw_language"] = {
             "name": lang_name,
             "variant": (per_chat.get("LANGUAGE_VARIANT") or "").strip(),
             "code": (per_chat.get("LANGUAGE_CODE") or "").strip(),
         }
     else:
-        # No override: let template fall back to profile defaults
         ctx["rw_language"] = None
 
     return ctx
-
-
 def session_overrides_bar(request) -> Dict[str, Any]:
     user = getattr(request, "user", None)
     if not user or isinstance(user, AnonymousUser) or not user.is_authenticated:

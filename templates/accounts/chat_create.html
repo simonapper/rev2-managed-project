@@ -1,61 +1,413 @@
-﻿{# -*- coding: utf-8 -*- #}
-{# templates/accounts/chat_create.html #}
+﻿{# templates/accounts/chat_create.html #}
 {% extends "base.html" %}
+
 {% block content %}
-<div class="container-sm py-4">
-  <h5 class="mb-3">New chat</h5>
+<div class="rw-main rw-browse">
 
-  <form method="post">
+  <div class="d-flex align-items-center justify-content-between mb-2">
+    <div>
+      <h5 class="mb-0">Create chat</h5>
+      <div class="text-secondary small">Sandbox only (for now). Controlled mode uses LLM validation.</div>
+    </div>
+  </div>
+
+  {# Controlled-mode feedback from LLM validator #}
+  {% if cde_feedback %}
+    <div class="alert alert-warning rw-compact-card">
+      <div class="d-flex align-items-center justify-content-between">
+        <div><strong>CDE needs revision</strong></div>
+        <button type="button" class="btn btn-outline-secondary rw-btn-xs" id="btnToggleSystem">
+          Show system
+        </button>
+      </div>
+
+      <div class="mt-2">
+        <div><strong>Field:</strong> {{ cde_feedback.field_key }}</div>
+        <div><strong>Verdict:</strong> {{ cde_feedback.verdict }}</div>
+      </div>
+
+      {% if cde_feedback.issues %}
+        <div class="mt-2"><strong>Issues</strong></div>
+        <ul class="mb-2">
+          {% for it in cde_feedback.issues %}
+            <li>{{ it }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+
+      {% if cde_feedback.questions %}
+        <div class="mt-2"><strong>Questions</strong></div>
+        <ul class="mb-2">
+          {% for q in cde_feedback.questions %}
+            <li>{{ q }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+
+      {% if cde_feedback.suggested_revision %}
+        <div class="mt-2"><strong>Suggested revision</strong></div>
+        <div class="rw-cde-suggestion">{{ cde_feedback.suggested_revision }}</div>
+      {% endif %}
+
+      {# Show system payload used for the failing validator call #}
+      <div class="mt-2" id="systemPanel" style="display:none;">
+        <div class="small text-secondary mb-1"><strong>LLM payload (debug)</strong></div>
+
+        <div class="card">
+          <div class="card-body rw-system-body">
+            <div class="small text-secondary"><strong>SYSTEM blocks</strong></div>
+            {% if cde_feedback.debug_system_blocks %}
+              <ol class="mb-3">
+                {% for b in cde_feedback.debug_system_blocks %}
+                  <li><div style="white-space: pre-wrap;">{{ b }}</div></li>
+                {% endfor %}
+              </ol>
+            {% else %}
+              <div class="text-secondary small">(No debug system blocks available.)</div>
+            {% endif %}
+
+            <div class="small text-secondary"><strong>User text</strong></div>
+            <div style="white-space: pre-wrap;">{{ cde_feedback.debug_user_text }}</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  {% endif %}
+
+  <form method="post" action="">
     {% csrf_token %}
+    <!-- Hidden AI-native CDE payload (filled by JS Draft step) -->
+    <input type="hidden" name="cde_json" id="id_cde_json" value="">
 
-    <div class="mb-2">
-      <label class="form-label small text-secondary">Title</label>
-      <input name="title" class="form-control form-control-sm" required>
+    <div class="card rw-compact-card mb-3">
+      <div class="card-body p-0">
+
+        <div class="row g-3">
+          <div class="col-12 col-lg-8">
+            <label class="form-label" for="id_title">Title</label>
+            <input
+              id="id_title"
+              name="title"
+              type="text"
+              class="form-control"
+              value="{{ sticky_title|default:'' }}"
+              required
+            >
+            <div class="form-text">Short, specific title for the chat.</div>
+          </div>
+
+          <div class="col-12 col-lg-4">
+            <label class="form-label" for="id_project">Project</label>
+            <select id="id_project" name="project" class="form-select" required>
+              <option value="">Select...</option>
+              {% for p in projects %}
+                {% if selected_project_id %}
+                  <option value="{{ p.id }}" {% if p.id == selected_project_id %}selected{% endif %}>{{ p.name }}</option>
+                {% else %}
+                  <option value="{{ p.id }}">{{ p.name }}</option>
+                {% endif %}
+              {% endfor %}
+            </select>
+            <div class="form-text">Only Sandbox projects allow chat creation right now.</div>
+          </div>
+        </div>
+
+      </div>
     </div>
 
-    <div class="mb-3">
-      <label class="form-label small text-secondary">Project</label>
-      <select name="project" class="form-select form-select-sm" required>
-        {% for p in projects %}
-          <option value="{{ p.id }}"
-             {% if selected_project_id == p.id %}selected{% endif %}>
-             {{ p.name }}
-          </option>
-        {% endfor %}
-      </select>
+    <div class="card rw-compact-card mb-3">
+      <div class="card-body p-0">
+
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <h6 class="mb-1">Chat Definition (CDE)</h6>
+            <div class="text-secondary small">
+              Controlled mode validates with the LLM and locks when it passes.
+            </div>
+          </div>
+        </div>
+
+        <hr class="my-3">
+
+        {% with cm=sticky_cde_mode|default:'SKIP' %}
+          <div class="mb-3">
+            <label class="form-label">CDE mode</label>
+            <div class="d-flex flex-wrap gap-3">
+
+              <label class="form-check mb-0">
+                <input class="form-check-input" type="radio" name="cde_mode" value="SKIP"
+                       {% if cm == 'SKIP' %}checked{% endif %}>
+                <span class="form-check-label">Skip</span>
+              </label>
+
+              <label class="form-check mb-0">
+                <input class="form-check-input" type="radio" name="cde_mode" value="LOOSE"
+                       {% if cm == 'LOOSE' %}checked{% endif %}>
+                <span class="form-check-label">Loose</span>
+              </label>
+
+              <label class="form-check mb-0">
+                <input class="form-check-input" type="radio" name="cde_mode" value="CONTROLLED"
+                       {% if cm == 'CONTROLLED' %}checked{% endif %}>
+                <span class="form-check-label">Controlled</span>
+              </label>
+
+            </div>
+            <div class="form-text">
+              Skip: no CDE. Loose: save partial notes. Controlled: validate and lock.
+            </div>
+          </div>
+        {% endwith %}
+
+        <div class="row g-3">
+          <div class="col-12">
+            <div class="d-flex align-items-center justify-content-between">
+              <label class="form-label mb-1" for="id_chat_goal">Chat goal</label>
+              <button type="button" class="btn btn-outline-primary rw-btn-xs" id="btnSuggestGoals">
+                Suggest goals
+              </button>
+              <button type="button" class="btn btn-outline-secondary rw-btn-xs" id="btnDraftCDE">
+                 Draft CDE
+              </button>
+
+            </div>
+            <textarea
+              id="id_chat_goal"
+              name="chat_goal"
+              class="form-control"
+              rows="2"
+              placeholder="One sentence: what are we trying to achieve?"
+            >{{ sticky_chat_goal|default:'' }}</textarea>
+            <div class="form-text">Tip: Discovery goals are allowed, but include a stopping condition.</div>
+
+            <div id="goalSuggestionsWrap" class="mt-2" style="display:none;">
+              <div class="small text-secondary mb-1"><strong>Suggestions</strong></div>
+              <div class="list-group" id="goalSuggestions"></div>
+            </div>
+
+            <div id="goalSuggestError" class="text-danger small mt-2" style="display:none;"></div>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label" for="id_chat_success">Success criteria</label>
+            <textarea
+              id="id_chat_success"
+              name="chat_success"
+              class="form-control"
+              rows="2"
+              placeholder="How will we know we succeeded? (deliverable or check)"
+            >{{ sticky_chat_success|default:'' }}</textarea>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label" for="id_chat_constraints">Constraints</label>
+            <textarea
+              id="id_chat_constraints"
+              name="chat_constraints"
+              class="form-control"
+              rows="2"
+              placeholder="Up to 3 hard constraints, or 'none'. Separate with newlines or semicolons."
+            >{{ sticky_chat_constraints|default:'' }}</textarea>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label" for="id_chat_non_goals">Out of scope (non-goals)</label>
+            <textarea
+              id="id_chat_non_goals"
+              name="chat_non_goals"
+              class="form-control"
+              rows="2"
+              placeholder="Up to 3 explicit exclusions, or 'none'. Separate with newlines or semicolons."
+            >{{ sticky_chat_non_goals|default:'' }}</textarea>
+          </div>
+        </div>
+
+      </div>
     </div>
 
-    <hr>
-
-    <div class="mb-2">
-      <label class="form-label small text-secondary">Chat definition mode</label><br>
-      <label><input type="radio" name="cde_mode" value="SKIP" checked> Skip</label><br>
-      <label><input type="radio" name="cde_mode" value="LOOSE"> Loose</label><br>
-      <label><input type="radio" name="cde_mode" value="CONTROLLED"> Controlled</label>
+    <div class="rw-compact-card d-flex align-items-center justify-content-end gap-2">
+      <button type="submit" class="btn btn-primary rw-btn-xs">Create chat</button>
     </div>
 
-    <div class="mb-2">
-      <label class="form-label small text-secondary">Chat goal</label>
-      <textarea name="chat_goal" class="form-control form-control-sm" rows="2"></textarea>
-    </div>
-
-    <div class="mb-2">
-      <label class="form-label small text-secondary">Success criteria</label>
-      <textarea name="chat_success" class="form-control form-control-sm" rows="2"></textarea>
-    </div>
-
-    <div class="mb-2">
-      <label class="form-label small text-secondary">Constraints</label>
-      <textarea name="chat_constraints" class="form-control form-control-sm" rows="2"></textarea>
-    </div>
-
-    <div class="mb-3">
-      <label class="form-label small text-secondary">Non-goals (out of scope)</label>
-      <textarea name="chat_non_goals" class="form-control form-control-sm" rows="2"></textarea>
-    </div>
-
-    <button class="btn btn-sm btn-primary">Create</button>
-    <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:dashboard' %}">Cancel</a>
   </form>
 </div>
+
+<script>
+(function() {
+  // ------------------------------------------------------------
+  // Helpers
+  // ------------------------------------------------------------
+  function getCookie(name) {
+    var v = document.cookie.match("(^|;)\\s*" + name + "\\s*=\\s*([^;]+)");
+    return v ? v.pop() : "";
+  }
+
+  function showError(msg) {
+    if (!err) return;
+    err.textContent = msg;
+    err.style.display = "block";
+  }
+
+  function clearSuggestions() {
+    if (list) list.innerHTML = "";
+    if (wrap) wrap.style.display = "none";
+    if (err) err.style.display = "none";
+  }
+
+  // ------------------------------------------------------------
+  // System debug toggle
+  // ------------------------------------------------------------
+  var btnSys = document.getElementById("btnToggleSystem");
+  var sysPanel = document.getElementById("systemPanel");
+  if (btnSys && sysPanel) {
+    btnSys.addEventListener("click", function() {
+      var show = (sysPanel.style.display === "none");
+      sysPanel.style.display = show ? "block" : "none";
+      btnSys.textContent = show ? "Hide system" : "Show system";
+    });
+  }
+
+  // ------------------------------------------------------------
+  // Suggest goals wiring
+  // ------------------------------------------------------------
+  var btnSuggest = document.getElementById("btnSuggestGoals");
+  var goalBox = document.getElementById("id_chat_goal");
+  var wrap = document.getElementById("goalSuggestionsWrap");
+  var list = document.getElementById("goalSuggestions");
+  var err = document.getElementById("goalSuggestError");
+
+  if (btnSuggest) {
+    btnSuggest.addEventListener("click", function() {
+      clearSuggestions();
+
+      var goalText = (goalBox && goalBox.value) ? goalBox.value.trim() : "";
+      if (!goalText) {
+        showError("Enter a draft goal first.");
+        return;
+      }
+
+      btnSuggest.disabled = true;
+      btnSuggest.textContent = "Suggesting...";
+
+      var formData = new FormData();
+      formData.append("goal_text", goalText);
+
+      fetch("{% url 'accounts:chat_suggest_goals' %}", {
+        method: "POST",
+        headers: { "X-CSRFToken": getCookie("csrftoken") },
+        body: formData
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data || !data.ok) {
+          showError((data && data.error) ? data.error : "Suggest goals failed.");
+          return;
+        }
+
+        var alts = data.alternatives || [];
+        if (!alts.length) {
+          showError("No suggestions returned.");
+          return;
+        }
+
+        alts.forEach(function(a) {
+          var item = document.createElement("div");
+          item.className = "list-group-item";
+
+          var row = document.createElement("div");
+          row.className = "d-flex align-items-start justify-content-between gap-2";
+
+          var t = document.createElement("div");
+          t.textContent = a;
+          t.style.whiteSpace = "pre-wrap";
+
+          var useBtn = document.createElement("button");
+          useBtn.type = "button";
+          useBtn.className = "btn btn-outline-secondary rw-btn-xs";
+          useBtn.textContent = "Use";
+          useBtn.addEventListener("click", function() {
+            if (goalBox) goalBox.value = a;
+          });
+
+          row.appendChild(t);
+          row.appendChild(useBtn);
+          item.appendChild(row);
+          list.appendChild(item);
+        });
+
+        if (wrap) wrap.style.display = "block";
+      })
+      .catch(function() {
+        showError("Suggest goals failed.");
+      })
+      .finally(function() {
+        btnSuggest.disabled = false;
+        btnSuggest.textContent = "Suggest goals";
+      });
+    });
+  }
+
+  // ------------------------------------------------------------
+  // Draft CDE wiring
+  // ------------------------------------------------------------
+  var btnDraft = document.getElementById("btnDraftCDE");
+  var cdeHidden = document.getElementById("id_cde_json");
+
+  if (btnDraft) {
+    btnDraft.addEventListener("click", function() {
+      clearSuggestions();
+
+      var seed = (goalBox && goalBox.value) ? goalBox.value.trim() : "";
+      if (!seed) {
+        showError("Enter a draft goal first.");
+        return;
+      }
+
+      btnDraft.disabled = true;
+      btnDraft.textContent = "Drafting...";
+
+      var formData = new FormData();
+      formData.append("seed_text", seed);
+
+      fetch("{% url 'accounts:chat_draft_cde' %}", {
+        method: "POST",
+        headers: { "X-CSRFToken": getCookie("csrftoken") },
+        body: formData
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data || !data.ok) {
+          showError((data && data.error) ? data.error : "Draft failed.");
+          return;
+        }
+
+        var h = (data.draft || {}).hypotheses || {};
+
+        var elSuccess = document.getElementById("id_chat_success");
+        var elConstraints = document.getElementById("id_chat_constraints");
+        var elNonGoals = document.getElementById("id_chat_non_goals");
+
+        if (h.goal && goalBox) goalBox.value = h.goal;
+        if (h.success && elSuccess) elSuccess.value = h.success;
+        if (elConstraints) elConstraints.value = (h.constraints || []).join("\n");
+        if (elNonGoals) elNonGoals.value = (h.non_goals || []).join("\n");
+
+        // Store full AI-native payload
+        if (cdeHidden) {
+          cdeHidden.value = JSON.stringify({ hypotheses: h });
+        }
+      })
+      .catch(function() {
+        showError("Draft failed.");
+      })
+      .finally(function() {
+        btnDraft.disabled = false;
+        btnDraft.textContent = "Draft CDE";
+      });
+    });
+  }
+
+})();
+</script>
 {% endblock %}

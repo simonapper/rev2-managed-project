@@ -1,0 +1,22 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/partials/pde_sidebar.html #}
+
+<div class="rw-sidebar-inner p-3"
+     style="border-right:1px solid rgba(0,0,0,0.08); background:#fcfcfc;">
+  <div class="fw-semibold mb-2">Definition Progress</div>
+
+  {% if pde_nav and pde_nav.items %}
+    <div class="text-secondary mb-2" style="font-size:0.8rem;">Jump to section</div>
+    <ul class="list-unstyled mb-0">
+      {% for it in pde_nav.items %}
+        <li class="mb-2 d-flex align-items-start">
+          <span style="flex:0 0 auto; display:inline-block;width:10px;height:10px;border-radius:50%;
+                       background:{{ it.dot }}; margin-right:8px; margin-top:4px;"></span>
+          <a class="rw-pde-navlink" href="#{{ it.anchor }}">{{ it.label }}</a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="small text-secondary">No fields loaded.</div>
+  {% endif %}
+</div>

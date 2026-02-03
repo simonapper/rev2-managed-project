@@ -52,15 +52,24 @@ def is_project_manager(project: Project, user: AbstractUser) -> bool:
 def accessible_projects_qs(user: AbstractUser):
     """
     Canonical rule:
-    A user may see a project if they own it or have any scoped role in it.
+    A user may see a project if they own it or have an ACTIVE membership.
+    No automatic privilege for staff/superuser.
     """
     if not getattr(user, "is_authenticated", False):
         return Project.objects.none()
 
-    if user.is_superuser or user.is_staff:
-        return Project.objects.all()
-
-    return Project.objects.filter(Q(owner=user) | Q(scoped_roles__user=user)).distinct()
+    return (
+        Project.objects
+        .filter(
+            Q(owner=user)
+            | Q(
+                memberships__user=user,
+                memberships__status=ProjectMembership.Status.ACTIVE,
+                memberships__effective_to__isnull=True,
+            )
+        )
+        .distinct()
+    )
 
 
 def can_view_project(project: Project, user: AbstractUser) -> bool:

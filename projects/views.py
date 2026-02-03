@@ -8,10 +8,11 @@ from django.contrib.auth.decorators import login_required
 from projects.services_project_membership import is_project_manager
 from typing import Dict, List, Tuple
 from django.contrib import messages
-from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
+from django.http import HttpRequest, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.urls import reverse
 from accounts.models_avatars import Avatar
 from projects.models import Project, UserProjectPrefs
+
 
 @login_required
 def rename_project(request, project_id):
@@ -148,3 +149,14 @@ def project_preferences(request: HttpRequest, project_id: int) -> HttpResponse:
         "profile_defaults": profile_defaults,
     }
     return render(request, "projects/project_preferences.html", ctx)
+
+
+# @login_required
+# def project_mark_sandbox(request, project_id):
+#     project = get_object_or_404(Project, id=project_id, owner=request.user)
+
+#     project.definition_status = Project.DefinitionStatus.SANDBOX
+#     project.save(update_fields=["definition_status"])
+
+#     return JsonResponse({"status": "OK", "definition_status": project.definition_status})
+

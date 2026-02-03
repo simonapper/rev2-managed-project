@@ -23,52 +23,64 @@
 
 <body class="rw-shell{% if fullscreen %} rw-fullscreen{% endif %}">
 
-    {% include "partials/topbar.html" %}
+    {% if ui_is_pde %}
+      {% include "partials/pde_topbar.html" %}
+    {% else %}
+      {% include "partials/topbar.html" %}
+    {% endif %}
 
-<div class="rw-body">
+    <div class="rw-body">
 
-    <!-- Desktop sidebar -->
-    <aside class="rw-sidebar border-end bg-light d-none d-lg-block">
-        {% include "partials/sidebar.html" %}
-    </aside>
-
-    <!-- Mobile offcanvas sidebar -->
-    <div class="offcanvas offcanvas-start d-lg-none rw-offcanvas-sidebar"
-         tabindex="-1"
-         id="rwSidebarOffcanvas"
-         aria-labelledby="rwSidebarOffcanvasLabel">
-        <div class="offcanvas-header">
-            <h5 class="offcanvas-title" id="rwSidebarOffcanvasLabel">Menu</h5>
-            <button type="button" class="btn-close"
-                    data-bs-dismiss="offcanvas"
-                    aria-label="Close"></button>
-        </div>
-        <div class="offcanvas-body">
+        <!-- Desktop sidebar -->
+        <aside class="rw-sidebar border-end bg-light d-none d-lg-block {% if ui_is_pde %}rw-sidebar-pde{% endif %}">
+          {% if ui_is_pde %}
+            {% include "partials/pde_sidebar.html" %}
+          {% else %}
             {% include "partials/sidebar.html" %}
+          {% endif %}
+        </aside>
+
+        <!-- Mobile offcanvas sidebar -->
+        <div class="offcanvas offcanvas-start d-lg-none rw-offcanvas-sidebar"
+             tabindex="-1"
+             id="rwSidebarOffcanvas"
+             aria-labelledby="rwSidebarOffcanvasLabel">
+            <div class="offcanvas-header">
+                <h5 class="offcanvas-title" id="rwSidebarOffcanvasLabel">Menu</h5>
+                <button type="button" class="btn-close"
+                        data-bs-dismiss="offcanvas"
+                        aria-label="Close"></button>
+            </div>
+            <div class="offcanvas-body">
+              {% if ui_is_pde %}
+                {% include "partials/pde_sidebar.html" %}
+              {% else %}
+                {% include "partials/sidebar.html" %}
+              {% endif %}
+            </div>
         </div>
+
+        <main class="rw-main" role="main">
+
+            {# GLOBAL FLASH MESSAGES #}
+            {% if messages %}
+              <div class="container-fluid px-0 mb-3">
+                {% for message in messages %}
+                  <div class="alert alert-{{ message.tags|default:'info' }} py-2 mb-2" role="alert">
+                    {{ message }}
+                  </div>
+                {% endfor %}
+              </div>
+            {% endif %}
+
+            {% block content %}{% endblock %}
+        </main>
+
     </div>
 
-    <main class="rw-main" role="main">
-
-        {# GLOBAL FLASH MESSAGES #}
-        {% if messages %}
-          <div class="container-fluid px-0 mb-3">
-            {% for message in messages %}
-              <div class="alert alert-{{ message.tags|default:'info' }} py-2 mb-2" role="alert">
-                {{ message }}
-              </div>
-            {% endfor %}
-          </div>
-        {% endif %}
-
-        {% block content %}{% endblock %}
-    </main>
-
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
-        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
-        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+            crossorigin="anonymous"></script>
 
 </body>
 </html>

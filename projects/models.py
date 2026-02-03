@@ -6,6 +6,7 @@ from __future__ import annotations
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+
 from .enums import ChatReadScope
 from accounts.models_avatars import Avatar
 
@@ -91,6 +92,30 @@ class Project(models.Model):
         related_name="projects_using_as_active_l4",
     )
 
+    # Commit latch: DEFINED iff an accepted CKO exists
+    defined_cko = models.ForeignKey(
+        "projects.ProjectCKO",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="projects_where_defined",
+        help_text="Points to the accepted (current) CKO for this project. Non-null iff DEFINED.",
+    )
+    defined_at = models.DateTimeField(null=True, blank=True)
+    defined_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="projects_defined",
+    )
+
+    # Revision counter for PDE cycles (optional but useful)
+    pde_revision = models.IntegerField(
+        default=0,
+        help_text="Increments whenever a new PDE revision cycle begins.",
+    )
+
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -99,12 +124,11 @@ class Project(models.Model):
         return self.name
 
 
-
 class ProjectPolicy(models.Model):
     """
     Project-wide constraints / defaults ("rails").
     This is the project half of Level 4 (project-wide constraints),
-    plus pointers to inherited Level 1–3 configs.
+    plus pointers to inherited Level 1-3 configs.
 
     Keep this 1:1 with Project.
     """
@@ -117,9 +141,7 @@ class ProjectPolicy(models.Model):
         default=ChatReadScope.PROJECT_MANAGERS,
     )
 
-
-    # Pointers to active project-scoped config records (Levels 1–3)
-    # If you later create a dedicated ConfigScope, enforce that there.
+    # Pointers to active project-scoped config records (Levels 1-3)
     active_l1_config = models.ForeignKey(
         "config.ConfigRecord",
         on_delete=models.PROTECT,
@@ -165,6 +187,7 @@ class ProjectPolicy(models.Model):
     def __str__(self) -> str:
         return f"Policy:{self.project_id}"
 
+
 class UserProjectPrefs(models.Model):
     """
     Per-user preferences within a project ("driving position").
@@ -177,6 +200,7 @@ class UserProjectPrefs(models.Model):
         on_delete=models.CASCADE,
         related_name="project_prefs",
     )
+
     cognitive_avatar = models.ForeignKey(
         "accounts.Avatar",
         null=True,
@@ -228,9 +252,9 @@ class UserProjectPrefs(models.Model):
 
     # Blank means "inherit"
     active_language = models.CharField(max_length=20, blank=True, default="")
-    verbosity = models.CharField(max_length=20, blank=True, default="")   # terse/standard/detailed
-    tone = models.CharField(max_length=20, blank=True, default="")        # neutral/direct/coaching
-    formatting = models.CharField(max_length=20, blank=True, default="")  # bullets/tables/mixed
+    verbosity = models.CharField(max_length=20, blank=True, default="")  # terse/standard/detailed
+    tone = models.CharField(max_length=20, blank=True, default="")       # neutral/direct/coaching
+    formatting = models.CharField(max_length=20, blank=True, default="") # bullets/tables/mixed
 
     checkpointing_override = models.CharField(max_length=20, blank=True, default="")  # inherit/strict/standard/light
     preferred_outputs = models.JSONField(default=list, blank=True)  # e.g. ["checklist", "decision_log"]
@@ -258,7 +282,7 @@ class ProjectMembership(models.Model):
         max_length=30,
         choices=ChatReadScope.choices,
         blank=True,
-        default="",   # empty = inherit project default
+        default="",  # empty = inherit project default
     )
 
     class Role(models.TextChoices):
@@ -304,18 +328,15 @@ class ProjectMembership(models.Model):
             models.Index(fields=["project", "role"]),
         ]
         constraints = [
-            # One active membership record for the same role/scope combination
             models.UniqueConstraint(
                 fields=["project", "user", "role", "scope_type", "scope_ref"],
                 condition=Q(effective_to__isnull=True),
                 name="uniq_active_membership_per_scope",
             ),
-            # If scope_type is PROJECT, scope_ref must be blank
-           models.CheckConstraint(
+            models.CheckConstraint(
                 condition=Q(scope_type="PROJECT", scope_ref="") | Q(scope_type__in=["MODULE", "ARTEFACT", "TAG"]),
                 name="chk_project_scope_ref_blank",
             ),
-
         ]
 
     def __str__(self) -> str:
@@ -341,7 +362,7 @@ class AuditLog(models.Model):
         related_name="audit_events",
     )
 
-    event_type = models.CharField(max_length=50)  # keep flexible; enforce via constants later if desired
+    event_type = models.CharField(max_length=50)
     entity_type = models.CharField(max_length=50)
     entity_id = models.CharField(max_length=64)
 
@@ -361,13 +382,13 @@ class AuditLog(models.Model):
         ]
 
     def save(self, *args, **kwargs):
-        # append-only behaviour (basic guard)
         if self.pk is not None:
             raise ValueError("AuditLog is append-only.")
         return super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.project_id}:{self.event_type}@{self.created_at.isoformat()}"
+
 
 class ProjectDefinitionField(models.Model):
     """
@@ -406,7 +427,6 @@ class ProjectDefinitionField(models.Model):
     )
 
     value_text = models.TextField(blank=True, default="")
-
     last_validation = models.JSONField(blank=True, default=dict)
 
     locked_at = models.DateTimeField(null=True, blank=True)
@@ -430,6 +450,130 @@ class ProjectDefinitionField(models.Model):
 
     def __str__(self) -> str:
         return f"{self.project_id}:{self.field_key}"
+
+
+class ProjectCKO(models.Model):
+    """
+    Versioned Canonical Knowledge Object for a Project.
+    There can be many versions, but only one is the current accepted CKO
+    (Project.defined_cko).
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        SUPERSEDED = "SUPERSEDED", "Superseded"
+
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="cko_versions",
+    )
+
+    version = models.IntegerField(default=1)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+
+    # File mirror under MEDIA_ROOT (optional but useful)
+    rel_path = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Relative path under project artefact root.",
+    )
+
+    # Canonical content (DB authoritative)
+    content_text = models.TextField(
+        blank=True,
+        default="",
+        help_text="Full rendered CKO content at time of commit.",
+    )
+
+    field_snapshot = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="JSON snapshot of PDE fields at commit time.",
+    )
+
+    # Governance metadata
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="project_ckos_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    accepted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="project_ckos_accepted",
+    )
+    accepted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "version"]),
+            models.Index(fields=["project", "status"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "version"],
+                name="uniq_project_cko_version",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"CKO:{self.project_id}:v{self.version}:{self.status}"
+        return f"CKO:{self.project_id}:v{self.version}:{self.status}"
+
+
+class ProjectPDESnapshot(models.Model):
+    """
+    Captures PDE field values at commit time, so the CKO is reproducible.
+    Optional but recommended for revisions.
+    """
+
+    class State(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        COMMITTED = "COMMITTED", "Committed"
+
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="pde_snapshots",
+    )
+
+    revision = models.IntegerField(default=0)
+    state = models.CharField(
+        max_length=20,
+        choices=State.choices,
+        default=State.OPEN,
+    )
+
+    data_json = models.JSONField(default=dict, blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="pde_snapshots_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "revision"]),
+            models.Index(fields=["project", "state"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"PDE:{self.project_id}:r{self.revision}:{self.state}"
+
 
 class Folder(models.Model):
     """

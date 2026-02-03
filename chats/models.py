@@ -53,6 +53,9 @@ class ChatWorkspace(models.Model):
     last_output_snippet = models.CharField(max_length=280, blank=True, default="")
     last_output_at = models.DateTimeField(null=True, blank=True)
 
+    last_answer_snippet = models.CharField(max_length=280, blank=True, default="")
+    last_answer_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -63,6 +66,7 @@ class ChatWorkspace(models.Model):
     constraints_text = models.TextField(blank=True, default="")
     non_goals_text = models.TextField(blank=True, default="")
     cde_is_locked = models.BooleanField(default=False)
+    cde_json = models.JSONField(default=dict, blank=True)
 
 
     def __str__(self) -> str:

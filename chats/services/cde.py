@@ -158,12 +158,21 @@ def validate_field(
         llm_input,
         image_parts=None,
         system_blocks=system_blocks,
+        force_model="gpt-5.1",
     )
 
-    return _parse_output_json(
+
+    out = _parse_output_json(
         raw_output=str(panes.get("output") or ""),
         field_key=field_key,
     )
+
+    # Debug payload for "Show system" in UI.
+    # Keep keys private-ish (underscore) so they do not collide with schema.
+    out["debug_system_blocks"] = system_blocks
+    out["debug_user_text"] = llm_input
+
+    return out
 
 
 def format_chat_goal_system_block(
@@ -224,3 +233,46 @@ def format_chat_goal_system_block(
             lines.append("  - " + ng)
 
     return "\n".join(lines) + "\n"
+
+# Version 2 that uses the LLM to explore what the user doesn't know about
+# the chat and where it should go.
+
+CDE_DRAFT_BOILERPLATE = (
+    "You turn free-form user intent into a draft chat definition.\n"
+    "Return JSON only, matching this schema:\n"
+    "{\n"
+    '  "hypotheses": {\n'
+    '    "goal": "string",\n'
+    '    "success": "string",\n'
+    '    "constraints": ["string"],\n'
+    '    "non_goals": ["string"],\n'
+    '    "assumptions": ["string"],\n'
+    '    "open_questions": ["string"]\n'
+    "  }\n"
+    "}\n"
+    "Rules:\n"
+    "- Keep goal/success to one sentence each.\n"
+    "- constraints/non_goals max 3 each.\n"
+    "- assumptions max 5.\n"
+    "- open_questions max 3, only if needed.\n"
+    "- Do not invent facts; reflect uncertainty.\n"
+)
+
+def draft_cde_from_seed(*, generate_panes_func, seed_text: str) -> Dict[str, Any]:
+    seed_text = (seed_text or "").strip()
+    system_blocks = [CDE_DRAFT_BOILERPLATE]
+    panes = generate_panes_func(
+        "Seed intent:\n" + seed_text,
+        image_parts=None,
+        system_blocks=system_blocks,
+        force_model="gpt-5.1",
+    )
+    raw = (panes.get("output") or "").strip()
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {"ok": False, "error": "Draft OUTPUT was not valid JSON.", "raw": raw}
+    hyp = data.get("hypotheses") if isinstance(data, dict) else None
+    if not isinstance(hyp, dict):
+        return {"ok": False, "error": "Draft JSON missing hypotheses.", "raw": raw}
+    return {"ok": True, "draft": {"hypotheses": hyp}, "raw": raw}

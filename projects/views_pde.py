@@ -13,7 +13,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404, redirect
 
 from projects.models import Project
 from projects.models import ProjectDefinitionField
@@ -21,6 +21,10 @@ from projects.models import ProjectDefinitionField
 # NOTE: this import is used only by verify
 from projects.services.pde import validate_field
 from chats.services.llm import generate_panes
+
+from django.contrib import messages
+from projects.services.pde_commit import commit_project_definition
+from projects.services.pde_required_keys import pde_required_keys_for_defined
 
 
 BASELINE_L1_MUST_KEYS = (
@@ -277,6 +281,11 @@ def pde_create_project_cko(request):
     canonical_summary = _canonical_summary_10_words(locked.get("intent.primary_goal", ""))
 
     ko_id = _store_project_cko_if_possible(project, request.user, doc_text, canonical_summary)
+    project.defined_cko = cko
+    project.defined_at = timezone.now()
+    project.defined_by = actor_user
+    project.save(update_fields=["defined_cko", "defined_at", "defined_by", "updated_at"])
+
 
     return JsonResponse(
         {
@@ -323,3 +332,24 @@ def pde_home(request, project_id: int):
                 "labels": LABELS,
             },
     )
+@login_required
+@require_POST
+def pde_commit(request, project_id: int):
+    project = get_object_or_404(Project, id=project_id)
+
+    # Owner-only (match pde_detail)
+    if project.owner_id != request.user.id:
+        messages.error(request, "You do not have permission to commit this project.")
+        return redirect("projects:pde_detail", project_id=project.id)
+
+    try:
+        result = commit_project_definition(
+            project=project,
+            required_keys=pde_required_keys_for_defined(),
+        )
+    except Exception as e:
+        messages.error(request, "Commit failed: " + str(e))
+        return redirect("projects:pde_detail", project_id=project.id)
+
+    # Commit now creates a DRAFT CKO. Route to preview for iterative accept/revise loop.
+    return redirect("projects:cko_preview", project_id=project.id)

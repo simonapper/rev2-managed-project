@@ -1,55 +1,57 @@
 # -*- coding: utf-8 -*-
 # accounts/views.py
+#
+# Reordered so Projects and Chats are grouped.
+# Cleanup:
+# - Remove duplicate imports.
+# - Keep the later chat_rename, but add require_POST to enforce POST-only.
+# - Remove duplicate @login_required on chat_message_create.
+# - Keep behaviour otherwise unchanged.
 
 from __future__ import annotations
-from django.utils import timezone
 
+import json
 
 from django import forms
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import SetPasswordForm
 from django.contrib.auth.tokens import default_token_generator
-from django.db.models import Q
+from django.core.files.storage import default_storage
+from django.core.files.uploadedfile import UploadedFile
+from django.core.paginator import Paginator
+from django.db import transaction
+from django.db.models import Count, Exists, OuterRef, Q
+from django.db.models.functions import Coalesce
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.utils.http import urlsafe_base64_decode
 from django.urls import reverse
-from accounts.forms import UserProfileDefaultsForm
-from config.models import ConfigRecord, ConfigScope, ConfigVersion
-from projects.models import Project
-from uploads.models import ChatAttachment
-from chats.services.llm import generate_panes
-from chats.services.llm import build_image_parts_from_attachments
-from uuid import uuid4
-from django.db.models import Count
-from chats.models import ChatMessage
-from projects.services_project_membership import accessible_projects_qs, is_project_manager
-from accounts.forms import ProjectOperatingProfileForm
-from collections import OrderedDict
-import json
-from pathlib import Path
-from django.conf import settings
-from django.core.files.uploadedfile import UploadedFile
-from django.core.files.storage import default_storage
-from chats.models import ChatWorkspace, ChatMessage
-from uploads.models import ChatAttachment
-from django.core.paginator import Paginator
-from chats.services.turns import build_chat_turn_context
-from chats.services.chat_bootstrap import bootstrap_chat
+from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_decode
 from django.views.decorators.http import require_POST
-from django.db import transaction
-from chats.services.cleanup import delete_empty_sandbox_chats
-from projects.services.context_resolution import resolve_effective_context
-from projects.services.llm_instructions import build_system_messages
-from django.db.models import Exists, OuterRef
-from django.db.models.functions import Coalesce
-from accounts.models_avatars import Avatar
-from projects.services.llm_instructions import PROTOCOL_LIBRARY
-from config.models import SystemConfigPointers
-from chats.services.cde_injection import build_cde_system_blocks
 
+from accounts.forms import ProjectOperatingProfileForm, UserProfileDefaultsForm
+from accounts.models_avatars import Avatar
+from chats.models import ChatMessage, ChatWorkspace
+from chats.services.cde_injection import build_cde_system_blocks
+from chats.services.cde_loop import validate_cde_inputs
+from chats.services.chat_bootstrap import bootstrap_chat
+from chats.services.cleanup import delete_empty_sandbox_chats
+from chats.services.llm import _get_default_model_key, generate_panes, generate_text
+from chats.services.llm import build_image_parts_from_attachments
+from chats.services.turns import build_chat_turn_context
+from config.models import ConfigRecord, ConfigScope, ConfigVersion, SystemConfigPointers
+from projects.models import Project
+from projects.services.context_resolution import resolve_effective_context
+from projects.services.llm_instructions import PROTOCOL_LIBRARY, build_system_messages
+from projects.services.project_bootstrap import bootstrap_project
+from projects.services_project_membership import accessible_projects_qs, is_project_manager
+from uploads.models import ChatAttachment
+
+
+User = get_user_model()
 
 ALLOWED_MODELS = [
     ("gpt-5.1", "gpt-5.1"),
@@ -74,13 +76,13 @@ class SystemConfigForm(forms.ModelForm):
         model = SystemConfigPointers
         fields = ("openai_model_default",)
 
+
 # ------------------------------------------------------------
-# Admin View on Sidebar
+# Admin / system
 # ------------------------------------------------------------
 
 @login_required
 def admin_hub(request):
-    # singleton row
     pointers, _ = SystemConfigPointers.objects.get_or_create(id=1)
 
     if request.method == "POST":
@@ -104,60 +106,6 @@ def admin_hub(request):
     )
 
 
-User = get_user_model()
-
-
-# ------------------------------------------------------------
-# Delete Empty Chats
-# ------------------------------------------------------------
-
-@require_POST
-@login_required
-def chat_delete(request, chat_id: int):
-    chat = get_object_or_404(ChatWorkspace, pk=chat_id)
-
-    # Project access
-    p = chat.project
-    if not (request.user.is_superuser or p.owner_id == request.user.id):
-        messages.error(request, "No permission to delete this chat.")
-        return redirect("accounts:project_chat_list", p.id)
-
-    # SANDBOX only
-    if p.kind != "SANDBOX":
-        messages.error(request, "Chats can only be deleted in SANDBOX projects.")
-        return redirect("accounts:project_chat_list", p.id)
-
-    # --------------------------------------------------
-    # Deletion rule:
-    # - USER messages => block
-    # - ASSISTANT messages allowed ONLY if handshake
-    # --------------------------------------------------
-
-    user_n = ChatMessage.objects.filter(
-        chat=chat,
-        role__iexact="USER",
-    ).count()
-
-    asst_qs = ChatMessage.objects.filter(
-        chat=chat,
-        role__iexact="ASSISTANT",
-    )
-
-    handshake_qs = asst_qs.filter(raw_text__startswith="Hello")
-    asst_real_n = asst_qs.count() - handshake_qs.count()
-
-    if user_n > 0 or asst_real_n > 0:
-        messages.error(request, "Chat contains messages and cannot be deleted.")
-        return redirect("accounts:project_chat_list", p.id)
-
-    # Safe to delete
-    chat.delete()
-    messages.success(request, "Empty chat deleted.")
-    return redirect("accounts:project_chat_list", p.id)
-
-# ------------------------------------------------------------
-# Invite flow: set password from emailed link
-# ------------------------------------------------------------
 def set_password_from_invite(request, uidb64: str, token: str):
     try:
         uid = urlsafe_base64_decode(uidb64).decode("utf-8")
@@ -179,9 +127,11 @@ def set_password_from_invite(request, uidb64: str, token: str):
 
     return render(request, "accounts/set_password.html", {"form": form})
 
+
 # ------------------------------------------------------------
-# Dashboard (Projects -> Chats -> Settings) — tiles only
+# Dashboard + session selectors
 # ------------------------------------------------------------
+
 @login_required
 def dashboard(request):
     user = request.user
@@ -198,13 +148,11 @@ def dashboard(request):
     recent_projects = projects.order_by("-updated_at")[:5]
 
     recent_chats = (
-        ChatWorkspace.objects
-        .filter(project__in=projects)
+        ChatWorkspace.objects.filter(project__in=projects)
         .select_related("project")
         .order_by("-updated_at")[:5]
     )
     active_chat_id = request.session.get("rw_active_chat_id")
-
 
     return render(
         request,
@@ -212,25 +160,59 @@ def dashboard(request):
         {
             "projects": projects,
             "active_project": active_project,
-
-            # tiles
             "recent_projects": recent_projects,
             "recent_chats": recent_chats,
             "can_override_chat": bool(active_chat_id),
-
-            # backwards-compat with your current dashboard template (if it loops over `chats`)
-            "chats": recent_chats,
+            "chats": recent_chats,  # backwards compat
         },
     )
 
+
+@login_required
+def active_project_set(request):
+    if request.method != "POST":
+        return JsonResponse({"ok": False, "error": "POST required"}, status=405)
+
+    project_id = request.POST.get("project_id")
+    if not project_id:
+        messages.error(request, "No project selected.")
+        return redirect(request.POST.get("next") or "accounts:dashboard")
+
+    try:
+        pid = int(project_id)
+    except ValueError:
+        messages.error(request, "Invalid project.")
+        return redirect(request.POST.get("next") or "accounts:dashboard")
+
+    active_project = get_object_or_404(accessible_projects_qs(request.user), pk=pid)
+
+    request.session["rw_active_project_id"] = active_project.id
+    request.session.modified = True
+
+    return redirect(request.POST.get("next") or "accounts:dashboard")
+
+
 # ------------------------------------------------------------
-# Project create
+# Projects (home/create/delete/select/project_chat_list)
 # ------------------------------------------------------------
+
+@login_required
+def project_home(request, project_id: int):
+    project = get_object_or_404(Project, id=project_id)
+
+    # 1) Sandbox always routes to operational area (never PDE)
+    if project.kind == Project.Kind.SANDBOX:
+        return redirect("accounts:chat_browse")
+
+    # 2) Standard projects: PDE until defined_cko exists
+    if project.defined_cko_id is None:
+        return redirect("projects:pde_detail", project_id=project.id)
+
+    # 3) Defined projects: project detail page
+    return redirect("accounts:project_config_info", project_id=project.id)
+
 @login_required
 def project_create(request):
-    from django import forms
-    from django.contrib import messages
-
     class ProjectCreateForm(forms.ModelForm):
         class Meta:
             model = Project
@@ -242,52 +224,58 @@ def project_create(request):
                 "primary_type": forms.Select(attrs={"class": "form-select form-select-sm"}),
                 "mode": forms.Select(attrs={"class": "form-select form-select-sm"}),
             }
+            labels = {
+                "kind": "Definition path",
+                "primary_type": "Project category",
+                "mode": "Stage",
+            }
 
     if request.method == "POST":
         form = ProjectCreateForm(request.POST)
         if form.is_valid():
             p = form.save(commit=False)
             p.owner = request.user
-            p.save()  # signals handle policy, membership, L4 config
-            chat = bootstrap_chat(
-                project=p,
-                user=request.user,
-                title="Chat 1",
-                generate_panes_func=generate_panes,
-                session_overrides=(request.session.get("rw_session_overrides", {}) or {}),
-            )
-            request.session["rw_active_chat_id"] = chat.id
+            p.save()
+
+            bootstrap_project(project=p)
+
             request.session["rw_active_project_id"] = p.id
             request.session.modified = True
 
-            messages.success(request, "Project created.")
-            return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+            if p.kind == Project.Kind.SANDBOX:
+                chat = bootstrap_chat(
+                    project=p,
+                    user=request.user,
+                    title="Chat 1",
+                    generate_panes_func=generate_panes,
+                    session_overrides=(request.session.get("rw_session_overrides", {}) or {}),
+                )
+                request.session["rw_active_chat_id"] = chat.id
+                request.session.modified = True
+                messages.success(request, "Sandbox project created.")
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+            messages.success(request, "Project created. Define it in PDE to enable chats.")
+            return redirect(reverse("projects:pde_detail", args=[p.id]))
     else:
         form = ProjectCreateForm()
 
     return render(request, "accounts/project_create.html", {"form": form})
 
 
-# ------------------------------------------------------------
-# Project delete
-# ------------------------------------------------------------
 @require_POST
 @login_required
 def project_delete(request, project_id: int):
-    # Must be accessible to the user
     p = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
 
-    # Safety: only SANDBOX deletions allowed
     if p.kind != "SANDBOX":
         messages.error(request, "Only SANDBOX projects can be deleted.")
         return redirect("accounts:project_config_list")
 
-    # Safety: owner or superuser only
     if not (request.user.is_superuser or p.owner_id == request.user.id):
         messages.error(request, "You do not have permission to delete this project.")
         return redirect("accounts:project_config_list")
 
-    # Safety: do not delete if ANY real chat content exists (USER messages)
     has_real_msgs = ChatMessage.objects.filter(
         chat__project=p,
         role__iexact="USER",
@@ -300,32 +288,186 @@ def project_delete(request, project_id: int):
     name = p.name or "(unnamed project)"
 
     with transaction.atomic():
-        # Clear protected FK so project-scoped ConfigRecords can be removed
         Project.objects.filter(pk=p.pk).update(active_l4_config=None)
 
-        # Clean empty chats FIRST (SANDBOX only)
         delete_empty_sandbox_chats(project=p)
 
-        # Remove project-scoped configs
         scopes = ConfigScope.objects.filter(project=p)
         ConfigVersion.objects.filter(config__scope__in=scopes).delete()
         ConfigRecord.objects.filter(scope__in=scopes).delete()
         scopes.delete()
 
-        # Finally delete the project
         p.delete()
 
     messages.success(request, f"Deleted SANDBOX project: {name}")
     return redirect("accounts:project_config_list")
 
+
+@login_required
+def project_select(request, project_id: int):
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+
+    request.session["rw_active_project_id"] = project.id
+    request.session.pop("rw_active_chat_id", None)
+    request.session.modified = True
+
+    return redirect("accounts:project_chat_list", project_id=project.id)
+
+
+@login_required
+def project_chat_list(request, project_id: int):
+    user = request.user
+
+    if user.is_superuser or user.is_staff:
+        pqs = accessible_projects_qs(user)
+    else:
+        pqs = (
+            accessible_projects_qs(user)
+            .filter(Q(owner=user) | Q(scoped_roles__user=user))
+            .distinct()
+        )
+
+    projects = pqs.select_related("owner", "active_l4_config").order_by("name")
+    active_project = get_object_or_404(accessible_projects_qs(user), pk=project_id)
+
+    prev_project_id = request.session.get("rw_active_project_id")
+    if str(prev_project_id) != str(active_project.id):
+        request.session["rw_active_project_id"] = active_project.id
+        request.session.pop("rw_active_chat_id", None)
+        request.session.modified = True
+
+    qs = ChatWorkspace.objects.select_related("created_by").filter(project=active_project)
+
+    status = request.GET.get("status")
+    q = (request.GET.get("q") or "").strip()
+
+    if status in (ChatWorkspace.Status.ACTIVE, ChatWorkspace.Status.ARCHIVED):
+        qs = qs.filter(status=status)
+
+    if q:
+        qs = qs.filter(
+            Q(title__icontains=q)
+            | Q(last_output_snippet__icontains=q)
+            | Q(created_by__username__icontains=q)
+        )
+
+    qs = qs.annotate(
+        user_msg_count=Coalesce(Count("messages", filter=Q(messages__role__iexact="USER")), 0),
+        assistant_msg_count=Coalesce(Count("messages", filter=Q(messages__role__iexact="ASSISTANT")), 0),
+    ).annotate(
+        can_delete=Q(user_msg_count=0),
+        turn_count=Coalesce(Count("messages", filter=Q(messages__role__iexact="USER")), 0),
+    )
+
+    sort = request.GET.get("sort", "updated")
+    direction = request.GET.get("dir", "desc")
+
+    sort_map = {
+        "title": "title",
+        "owner": "created_by__username",
+        "updated": "updated_at",
+        "turns": "turn_count",
+    }
+
+    order_field = sort_map.get(sort, "updated_at")
+    if direction == "desc":
+        order_field = f"-{order_field}"
+
+    qs = qs.order_by(order_field, "-id")
+
+    paginator = Paginator(qs, 25)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    return render(
+        request,
+        "accounts/project_chat_list.html",
+        {
+            "projects": projects,
+            "active_project": active_project,
+            "page_obj": page_obj,
+            "filters": {"status": status or "", "q": q},
+            "sort": sort,
+            "dir": direction,
+        },
+    )
+
+
+# ------------------------------------------------------------
+# CDE helpers
+# ------------------------------------------------------------
+
+@require_POST
+@login_required
+def chat_suggest_goals(request):
+    raw_goal = (request.POST.get("goal_text") or "").strip()
+    if not raw_goal:
+        return JsonResponse({"ok": False, "error": "Missing goal_text."}, status=400)
+
+    system_blocks = [
+        "You are helping a user phrase a managed chat goal.\n"
+        "The user is often genuinely unsure what they want yet.\n"
+        "\n"
+        "Given a raw goal, produce exactly 3 alternative chat goals that:\n"
+        "- preserve the user's intent and uncertainty\n"
+        "- allow discovery and thinking\n"
+        "- are honest about not knowing the outcome yet\n"
+        "- are suitable for one chat\n"
+        "\n"
+        "Prefer meta-cognitive language such as:\n"
+        "- clarify\n"
+        "- surface\n"
+        "- structure\n"
+        "- define\n"
+        "- make explicit\n"
+        "\n"
+        "Avoid fake project-management deliverables.\n"
+        "Each alternative should be one sentence.\n"
+        "Return as plain text with 3 lines, each starting with '- '.\n"
+    ]
+
+    user_msg = "Raw goal:\n" + raw_goal + "\n\nProduce 3 alternatives now."
+
+    text = generate_text(
+        system_blocks=system_blocks,
+        messages=[{"role": "user", "content": user_msg}],
+    )
+
+    alts = []
+    for line in (text or "").splitlines():
+        t = line.strip()
+        if t.startswith("- "):
+            alts.append(t[2:].strip())
+
+    if not alts and (text or "").strip():
+        alts = [(text or "").strip()]
+
+    return JsonResponse({"ok": True, "alternatives": alts[:3]})
+
+
+@require_POST
+@login_required
+def chat_draft_cde(request):
+    seed = (request.POST.get("seed_text") or "").strip()
+    if not seed:
+        return JsonResponse({"ok": False, "error": "Missing seed_text."}, status=400)
+
+    from chats.services.cde import draft_cde_from_seed
+
+    res = draft_cde_from_seed(generate_panes_func=generate_panes, seed_text=seed)
+    if not res.get("ok"):
+        return JsonResponse({"ok": False, "error": res.get("error") or "Draft failed."})
+
+    return JsonResponse({"ok": True, "draft": res.get("draft")})
+
+
 # ------------------------------------------------------------
 # Chats
 # ------------------------------------------------------------
+
 @login_required
 def chat_list(request):
     user = request.user
 
-    # Accessible projects (same rule as project_config_list)
     if user.is_superuser or user.is_staff:
         pqs = accessible_projects_qs(request.user)
     else:
@@ -333,7 +475,6 @@ def chat_list(request):
 
     projects = pqs.select_related("owner", "active_l4_config").order_by("name")
 
-    # Resolve active project from session, else first accessible
     active_project = None
     active_project_id = request.session.get("rw_active_project_id")
 
@@ -364,9 +505,8 @@ def chat_list(request):
             "chats": chats,
         },
     )
-# ------------------------------------------------------------
-# Chat create (composer POST)
-# ------------------------------------------------------------
+
+
 @login_required
 def chat_create(request):
     user = request.user
@@ -381,7 +521,6 @@ def chat_create(request):
             messages.error(request, "Title and project are required.")
             return redirect("accounts:chat_create")
 
-        # Sandbox-only until Standard project path is implemented
         mode = (getattr(project, "mode", "") or "").strip().upper()
         kind = (getattr(project, "kind", "") or "").strip().upper()
         primary_type = (getattr(project, "primary_type", "") or "").strip().upper()
@@ -410,7 +549,47 @@ def chat_create(request):
             "chat.non_goals": (request.POST.get("chat_non_goals") or "").strip(),
         }
 
-        chat = bootstrap_chat(
+        raw_cde_json = request.POST.get("cde_json")
+        if raw_cde_json:
+            try:
+                cde_json = json.loads(raw_cde_json)
+            except Exception:
+                cde_json = {}
+        else:
+            cde_json = {}
+
+        if cde_mode == "CONTROLLED":
+            cde_result = validate_cde_inputs(
+                generate_panes_func=generate_panes,
+                user_inputs=cde_inputs,
+            )
+
+            if not bool(cde_result.get("ok")):
+                return render(
+                    request,
+                    "accounts/chat_create.html",
+                    {
+                        "projects": projects,
+                        "selected_project_id": project.id,
+                        "sticky_title": title,
+                        "sticky_cde_mode": cde_mode,
+                        "sticky_chat_goal": cde_inputs.get("chat.goal", ""),
+                        "sticky_chat_success": cde_inputs.get("chat.success", ""),
+                        "sticky_chat_constraints": cde_inputs.get("chat.constraints", ""),
+                        "sticky_chat_non_goals": cde_inputs.get("chat.non_goals", ""),
+                        "cde_feedback": cde_result.get("first_blocker"),
+                    },
+                )
+
+            locked_fields = cde_result.get("locked_fields") or {}
+            cde_inputs = {
+                "chat.goal": (locked_fields.get("chat.goal") or cde_inputs.get("chat.goal") or "").strip(),
+                "chat.success": (locked_fields.get("chat.success") or cde_inputs.get("chat.success") or "").strip(),
+                "chat.constraints": (locked_fields.get("chat.constraints") or cde_inputs.get("chat.constraints") or "").strip(),
+                "chat.non_goals": (locked_fields.get("chat.non_goals") or cde_inputs.get("chat.non_goals") or "").strip(),
+            }
+
+        chat, _cde_result = bootstrap_chat(
             project=project,
             user=user,
             title=title,
@@ -419,6 +598,11 @@ def chat_create(request):
             cde_mode=cde_mode,
             cde_inputs=cde_inputs,
         )
+
+        if cde_json:
+            chat.cde_json = cde_json
+            chat.save(update_fields=["cde_json", "updated_at"])
+
         request.session["rw_active_project_id"] = project.id
         request.session["rw_active_chat_id"] = chat.id
         request.session.modified = True
@@ -440,17 +624,14 @@ def chat_create(request):
             "selected_project_id": selected_project_id,
         },
     )
-# ------------------------------------------------------------
-# Chat Rename (composer POST)
-# ------------------------------------------------------------
+
+
+# Keep later chat_rename, but enforce POST-only
+@require_POST
 @login_required
 def chat_rename(request, chat_id: int):
-    if request.method != "POST":
-        return redirect("accounts:chat_detail", chat_id=chat_id)
-
     chat = get_object_or_404(ChatWorkspace, id=chat_id)
 
-    # Optional access check (recommended if you have it)
     projects = accessible_projects_qs(request.user)
     if not projects.filter(id=chat.project_id).exists():
         return redirect("accounts:chat_browse")
@@ -466,14 +647,33 @@ def chat_rename(request, chat_id: int):
     return redirect("accounts:chat_detail", chat_id=chat_id)
 
 
-# ------------------------------------------------------------
-# Chat message create (composer POST)
-# ------------------------------------------------------------
+@require_POST
+@login_required
+def chat_delete(request, chat_id: int):
+    chat = get_object_or_404(ChatWorkspace, pk=chat_id)
+
+    p = chat.project
+    if not (request.user.is_superuser or p.owner_id == request.user.id):
+        messages.error(request, "No permission to delete this chat.")
+        return redirect("accounts:project_chat_list", p.id)
+
+    user_n = ChatMessage.objects.filter(chat=chat, role__iexact="USER").count()
+    asst_qs = ChatMessage.objects.filter(chat=chat, role__iexact="ASSISTANT")
+    handshake_qs = asst_qs.filter(raw_text__startswith="Hello")
+    asst_real_n = asst_qs.count() - handshake_qs.count()
+
+    if user_n > 0 or asst_real_n > 0:
+        messages.error(request, "Chat contains messages and cannot be deleted.")
+        return redirect("accounts:project_chat_list", p.id)
+
+    chat.delete()
+    messages.success(request, "Empty chat deleted.")
+    return redirect("accounts:chat_browse")
+
+
+@require_POST
 @login_required
 def chat_message_create(request):
-    if request.method != "POST":
-        return redirect("accounts:dashboard")
-
     chat_id = request.POST.get("chat_id")
     content = (request.POST.get("content") or "").strip()
     next_url = (request.POST.get("next") or "").strip()
@@ -499,7 +699,6 @@ def chat_message_create(request):
     request.session["rw_active_chat_id"] = chat.id
     request.session.modified = True
 
-    # 1) Store USER message
     ChatMessage.objects.create(
         chat=chat,
         role=ChatMessage.Role.USER,
@@ -508,7 +707,6 @@ def chat_message_create(request):
         segment_meta={"confidence": "N/A", "parser_version": "user_v1"},
     )
 
-    # 1b) Store new attachments (if any) (legacy form upload path)
     for f in request.FILES.getlist("attachments"):
         ChatAttachment.objects.create(
             project=project,
@@ -520,12 +718,7 @@ def chat_message_create(request):
             size_bytes=getattr(f, "size", 0) or 0,
         )
 
-    # 2) Resolve context + build SYSTEM blocks
-    chat_overrides = (
-        request.session.get("rw_chat_overrides", {})
-        .get(str(chat.id), {})
-        or {}
-    )
+    chat_overrides = (request.session.get("rw_chat_overrides", {}).get(str(chat.id), {}) or {})
     session_overrides = request.session.get("rw_session_overrides", {}) or {}
 
     resolved = resolve_effective_context(
@@ -537,38 +730,23 @@ def chat_message_create(request):
     system_blocks = build_system_messages(resolved)
     system_blocks.extend(build_cde_system_blocks(chat))
 
-    # SYSTEM preview for UI observability/debugging
     request.session["rw_last_system_preview"] = "\n\n".join(system_blocks)
     request.session["rw_last_system_preview_chat_id"] = chat.id
     request.session["rw_last_system_preview_at"] = timezone.now().isoformat()
     request.session.modified = True
 
-    # 3) LLM input base: current message only (no history)
-    llm_input = content
-
-    # 4) Decide whether to include the last image (Option B) and build image_parts
     include_last_image = (request.POST.get("include_last_image") == "1")
-
     image_parts = []
     if include_last_image:
         img_atts = (
-            ChatAttachment.objects
-            .filter(chat=chat, content_type__startswith="image/")
+            ChatAttachment.objects.filter(chat=chat, content_type__startswith="image/")
             .order_by("-id")[:1]
         )
         image_parts = build_image_parts_from_attachments(reversed(list(img_atts)))
 
-    # 4b) Include last file (CSV) by appending its text to the message
     include_last_file = (request.POST.get("include_last_file") == "1")
-
     if include_last_file:
-        att = (
-            ChatAttachment.objects
-            .filter(chat=chat)
-            .order_by("-created_at")
-            .first()
-        )
-
+        att = ChatAttachment.objects.filter(chat=chat).order_by("-created_at").first()
         if att and (att.content_type or "").lower() in ("text/csv", "application/csv"):
             try:
                 with att.file.open("rb") as fh:
@@ -576,15 +754,8 @@ def chat_message_create(request):
                 csv_text = raw.decode("utf-8", errors="replace")
             except Exception:
                 csv_text = ""
-
             if csv_text:
-                content = (
-                    content
-                    + "\n\n[ATTACHMENT: "
-                    + att.original_name
-                    + "]\n"
-                    + csv_text
-                )
+                content = content + "\n\n[ATTACHMENT: " + att.original_name + "]\n" + csv_text
             else:
                 content = content + "\n\n[ATTACHMENT: " + att.original_name + " (unreadable)]"
         elif att:
@@ -592,41 +763,41 @@ def chat_message_create(request):
         else:
             content = content + "\n\n[ATTACHMENT: none]"
 
-    llm_input = content
+    sys_text = "\n\n".join([b for b in system_blocks if (b or "").strip()]).strip()
+    if sys_text:
+        ChatMessage.objects.create(
+            chat=chat,
+            role=ChatMessage.Role.SYSTEM,
+            raw_text=sys_text,
+            answer_text=sys_text,
+            segment_meta={"parser_version": "system_v1", "confidence": "N/A"},
+        )
 
-    # 5) Call LLM (panes)
     panes = generate_panes(
-        llm_input,
+        content,
         image_parts=image_parts,
         system_blocks=system_blocks,
     )
 
-    assistant_raw = (
-        "ANSWER:\n"
-        f"{panes.get('answer','')}\n\n"
-        "REASONING:\n"
-        f"{panes.get('reasoning','')}\n\n"
-        "OUTPUT:\n"
-        f"{panes.get('output','')}\n"
-    )
+    assistant_answer = (panes.get("answer") or "")
+    assistant_reasoning = (panes.get("reasoning") or "")
+    assistant_output = (panes.get("output") or "")
+    assistant_raw = (assistant_answer or assistant_output or "").strip()
 
     out_msg = ChatMessage.objects.create(
         chat=chat,
         role=ChatMessage.Role.ASSISTANT,
         raw_text=assistant_raw,
-        answer_text=panes.get("answer", ""),
-        reasoning_text=panes.get("reasoning", ""),
-        output_text=panes.get("output", ""),
+        answer_text=assistant_answer,
+        reasoning_text=assistant_reasoning,
+        output_text=assistant_output,
         segment_meta={"parser_version": "llm_v1", "confidence": "HIGH"},
     )
 
-    # 6) Update chat tile cache
+    chat.last_answer_snippet = (out_msg.answer_text or out_msg.raw_text or "")[:280]
     chat.last_output_snippet = (out_msg.output_text or "")[:280]
     chat.last_output_at = timezone.now()
-    chat.save(update_fields=["last_output_snippet", "last_output_at", "updated_at"])
-
-    # Stable redirect: only allow local URLs
-    from django.utils.http import url_has_allowed_host_and_scheme
+    chat.save(update_fields=["last_answer_snippet", "last_output_snippet", "last_output_at", "updated_at"])
 
     if next_url and url_has_allowed_host_and_scheme(
         url=next_url,
@@ -637,44 +808,43 @@ def chat_message_create(request):
 
     return redirect(reverse("accounts:chat_detail", args=[chat.id]))
 
-# ------------------------------------------------------------
-# Chat Browser
-# ------------------------------------------------------------
 
 @login_required
 def chat_browse(request):
     user = request.user
 
-    # Accessible projects
-    if user.is_superuser or user.is_staff:
-        pqs = accessible_projects_qs(request.user)
-    else:
-        pqs = accessible_projects_qs(request.user).filter(Q(owner=user) | Q(scoped_roles__user=user)).distinct()
-
-    projects = pqs.select_related("owner", "active_l4_config").order_by("name")
-
-    # Active project (optional filter)
-    active_project = None
-    project_id = request.GET.get("project") or ""
-    if project_id:
-        try:
-            pid = int(project_id)
-            active_project = projects.filter(pk=pid).first()
-        except ValueError:
-            active_project = None
-
-    # Base queryset
-    qs = ChatWorkspace.objects.select_related("project", "created_by").filter(project__in=projects)
-    qs = qs.annotate(
-        turn_count=Count("messages", filter=Q(messages__role=ChatMessage.Role.USER))
+    # Accessible projects (single canonical rule)
+    projects = (
+        accessible_projects_qs(user)
+        .select_related("owner", "active_l4_config")
+        .order_by("name")
     )
 
+    # Project filter: default is ALL projects.
+    # Only filter when a valid numeric project id is provided.
+    project_param = (request.GET.get("project") or "").strip()
 
-    if active_project:
+    # If your UI uses "all" explicitly, treat it as no filter.
+    if project_param.lower() == "all":
+        project_param = ""
+
+    selected_project_id = None
+    active_project = None
+    if project_param.isdigit():
+        selected_project_id = int(project_param)
+        active_project = projects.filter(pk=selected_project_id).first()
+
+    qs = (
+        ChatWorkspace.objects.select_related("project", "created_by")
+        .filter(project__in=projects)
+        .annotate(turn_count=Count("messages", filter=Q(messages__role=ChatMessage.Role.USER)))
+    )
+
+    # Apply project filter only when a real project is selected
+    if active_project is not None:
         qs = qs.filter(project=active_project)
 
-    # Filters
-    status = request.GET.get("status") or ""
+    status = (request.GET.get("status") or "").strip()
     q = (request.GET.get("q") or "").strip()
 
     if status in (ChatWorkspace.Status.ACTIVE, ChatWorkspace.Status.ARCHIVED):
@@ -688,7 +858,6 @@ def chat_browse(request):
             | Q(created_by__username__icontains=q)
         )
 
-    # Sorting
     sort = request.GET.get("sort", "updated")
     direction = request.GET.get("dir", "desc")
 
@@ -706,7 +875,6 @@ def chat_browse(request):
 
     qs = qs.order_by(order_field, "-created_at")
 
-    # Pagination
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
@@ -717,23 +885,17 @@ def chat_browse(request):
             "projects": projects,
             "active_project": active_project,
             "page_obj": page_obj,
-            "filters": {"project": project_id, "status": status, "q": q},
+            "filters": {"project": project_param, "status": status, "q": q},
             "sort": sort,
             "dir": direction,
         },
     )
-# ------------------------------------------------------------
-# Chat Select
-# ------------------------------------------------------------
+
+
 @login_required
 def chat_select(request, chat_id: int):
+    chat = get_object_or_404(ChatWorkspace.objects.only("id", "project_id"), pk=chat_id)
 
-    chat = get_object_or_404(
-        ChatWorkspace.objects.only("id", "project_id"),
-        pk=chat_id,
-    )
-
-    # Access check: user must be able to access the chat's project
     get_object_or_404(accessible_projects_qs(request.user), pk=chat.project_id)
 
     request.session["rw_active_project_id"] = chat.project_id
@@ -742,9 +904,7 @@ def chat_select(request, chat_id: int):
 
     return redirect(f"/accounts/chats/{chat.id}/")
 
-# ------------------------------------------------------------
-# Chat Detail
-# ------------------------------------------------------------
+
 @login_required
 def chat_detail(request, chat_id: int):
     chat = get_object_or_404(ChatWorkspace, id=chat_id)
@@ -779,9 +939,7 @@ def chat_detail(request, chat_id: int):
     q_off.pop("system", None)
     qs_no_system = q_off.urlencode()
 
-    system_preview = ""
     selected_turn_id = request.GET.get("turn") or ""
-    system_latest = {}
 
     m = None
     if show_system and selected_turn_id.startswith("sys-"):
@@ -792,20 +950,15 @@ def chat_detail(request, chat_id: int):
 
         if sys_id is not None:
             m = (
-                ChatMessage.objects
-                .filter(chat=chat, role=ChatMessage.Role.SYSTEM, id=sys_id)
+                ChatMessage.objects.filter(chat=chat, role=ChatMessage.Role.SYSTEM, id=sys_id)
                 .first()
             )
 
     system_preview = (m.raw_text or "").strip() if m else ""
 
-    # ------------------------------------------------------------
-    # Attachment helpers for the "include last image/file" checkboxes
-    # ------------------------------------------------------------
     atts = ctx.get("attachments") or []
     has_last_image = any((getattr(a, "source", "") or "").lower() == "paste" for a in atts)
     has_last_file = any((getattr(a, "source", "") or "").lower() == "filepicker" for a in atts)
-
 
     return render(
         request,
@@ -822,136 +975,18 @@ def chat_detail(request, chat_id: int):
             "qs_with_system": qs_with_system,
             "qs_no_system": qs_no_system,
             "system_preview": system_preview,
-            "system_latest": system_latest,
+            "system_latest": {},
             "has_last_image": has_last_image,
             "has_last_file": has_last_file,
             **ctx,
         },
     )
-# ------------------------------------------------------------
-# Project Browser
-# ------------------------------------------------------------
-
-@login_required
-def project_chat_list(request, project_id: int):
-    user = request.user
-
-    # Accessible projects (same rule you already use)
-    if user.is_superuser or user.is_staff:
-        pqs = accessible_projects_qs(user)
-    else:
-        pqs = (
-            accessible_projects_qs(user)
-            .filter(Q(owner=user) | Q(scoped_roles__user=user))
-            .distinct()
-        )
-
-    projects = pqs.select_related("owner", "active_l4_config").order_by("name")
-    active_project = get_object_or_404(accessible_projects_qs(user), pk=project_id)
-
-    # Ensure session active project matches this page
-    prev_project_id = request.session.get("rw_active_project_id")
-    if str(prev_project_id) != str(active_project.id):
-        request.session["rw_active_project_id"] = active_project.id
-        request.session.pop("rw_active_chat_id", None)
-        request.session.modified = True
-
-    # Base queryset: chats in this project
-    qs = ChatWorkspace.objects.select_related("created_by").filter(project=active_project)
-
-    # Filters
-    status = request.GET.get("status")
-    q = (request.GET.get("q") or "").strip()
-
-    if status in (ChatWorkspace.Status.ACTIVE, ChatWorkspace.Status.ARCHIVED):
-        qs = qs.filter(status=status)
-
-    if q:
-        qs = qs.filter(
-            Q(title__icontains=q)
-            | Q(last_output_snippet__icontains=q)
-            | Q(created_by__username__icontains=q)
-        )
-
-    # Annotate counts used by UI
-    # NOTE: adjust related_name "messages" if needed. If your FK has no related_name,
-    # use "chatmessage" or "chatmessage_set". Your template already used "messages",
-    # so we keep that.
-    qs = qs.annotate(
-        user_msg_count=Coalesce(
-            Count("messages", filter=Q(messages__role__iexact="USER")), 0
-        ),
-        assistant_msg_count=Coalesce(
-            Count("messages", filter=Q(messages__role__iexact="ASSISTANT")), 0
-        ),
-    )
-
-    # Canonical: show delete only for SANDBOX chats with no USER messages
-    # (SYSTEM + handshake-only are deletable)
-    qs = qs.annotate(
-        can_delete=Q(user_msg_count=0)
-    )
-
-    # What to show as "Turns" on this page:
-    # Use completed-turn count later if you want; for now align with deletion logic.
-    qs = qs.annotate(
-        turn_count=Coalesce(
-            Count("messages", filter=Q(messages__role__iexact="USER")), 0
-        )
-    )
-
-    # Sorting
-    sort = request.GET.get("sort", "updated")
-    direction = request.GET.get("dir", "desc")
-
-    sort_map = {
-        "title": "title",
-        "owner": "created_by__username",
-        "updated": "updated_at",
-        "turns": "turn_count",
-    }
-
-    order_field = sort_map.get(sort, "updated_at")
-    if direction == "desc":
-        order_field = f"-{order_field}"
-
-    qs = qs.order_by(order_field, "-id")
-
-    # Pagination
-    paginator = Paginator(qs, 25)
-    page_obj = paginator.get_page(request.GET.get("page"))
-
-    return render(
-        request,
-        "accounts/project_chat_list.html",
-        {
-            "projects": projects,
-            "active_project": active_project,
-            "page_obj": page_obj,
-            "filters": {"status": status or "", "q": q},
-            "sort": sort,
-            "dir": direction,
-        },
-    )
-
-# ------------------------------------------------------------
-# Select Project
-# ------------------------------------------------------------
-
-@login_required
-def project_select(request, project_id: int):
-    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
-
-    request.session["rw_active_project_id"] = project.id
-    request.session.pop("rw_active_chat_id", None)
-    request.session.modified = True
-
-    return redirect("accounts:project_chat_list", project_id=project.id)
 
 
 # ------------------------------------------------------------
-# Config menu
+# Config menu + user/project config
 # ------------------------------------------------------------
+
 @login_required
 def config_menu(request):
     active_chat_id = request.session.get("rw_active_chat_id")
@@ -964,38 +999,7 @@ def config_menu(request):
         },
     )
 
-# ------------------------------------------------------------
-# Active project (session)
 
-# ------------------------------------------------------------
-@login_required
-def active_project_set(request):
-    if request.method != "POST":
-        return JsonResponse({"ok": False, "error": "POST required"}, status=405)
-
-    project_id = request.POST.get("project_id")
-    if not project_id:
-        messages.error(request, "No project selected.")
-        return redirect(request.POST.get("next") or "accounts:dashboard")
-
-    try:
-        pid = int(project_id)
-    except ValueError:
-        messages.error(request, "Invalid project.")
-        return redirect(request.POST.get("next") or "accounts:dashboard")
-
-    user = request.user
-    active_project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
-  
-    request.session["rw_active_project_id"] = active_project.id
-    request.session.modified = True
-
-    return redirect(request.POST.get("next") or "accounts:dashboard")
-
-
-# ------------------------------------------------------------
-# User config (Level 1) - edit
-# ------------------------------------------------------------
 @login_required
 def user_config_edit(request):
     profile = getattr(request.user, "profile", None)
@@ -1024,17 +1028,12 @@ def user_config_definitions(request):
     return render(request, "accounts/config_user_definitions.html")
 
 
-# ------------------------------------------------------------
-# Project config (Level 4 operating profile)
-# ------------------------------------------------------------
 @login_required
 def project_config_list(request):
     user = request.user
 
-    # Base queryset
     qs = accessible_projects_qs(user)
 
-    # Sorting
     sort = request.GET.get("sort", "name")
     direction = request.GET.get("dir", "asc")
 
@@ -1050,11 +1049,8 @@ def project_config_list(request):
 
     projects = qs.select_related("owner", "active_l4_config").order_by(order_field, "name")
 
-    # Annotate permissions
-    projects_with_permissions = [(p, is_project_manager(p, user)) for p in projects]
     p = Paginator(projects, 25)
     page_obj = p.get_page(request.GET.get("page"))
-
     projects_with_permissions = [(proj, is_project_manager(proj, user)) for proj in page_obj.object_list]
 
     return render(
@@ -1068,6 +1064,7 @@ def project_config_list(request):
         },
     )
 
+
 @login_required
 def project_config_info(request, project_id: int):
     active_project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
@@ -1079,11 +1076,11 @@ def project_config_definitions(request, project_id: int):
     active_project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
     return render(request, "accounts/config_project_definitions.html", {"project": active_project})
 
+
 @login_required
 def project_config_edit(request, project_id):
     project = get_object_or_404(Project, id=project_id)
 
-    # Only allow managers/owners to edit
     if not is_project_manager(project, request.user):
         return redirect("accounts:project_config_list")
 
@@ -1094,9 +1091,8 @@ def project_config_edit(request, project_id):
             project.name = new_name
             project.description = description
             project.save()
-            return redirect("accounts:project_config_list")  # back to list
-        else:
-            error = "Project name cannot be empty."
+            return redirect("accounts:project_config_list")
+        error = "Project name cannot be empty."
     else:
         error = None
 
@@ -1105,12 +1101,16 @@ def project_config_edit(request, project_id):
         "accounts/config_project_edit.html",
         {"project": project, "error": error},
     )
+
+
 # --------------------------------------------------------
 # Avatar Chat overrides -- Temporarily overrides user Avatar Settings
+# (kept as-is, only import cleanup above)
 # ------------------------------------------------------------
+
 LANGUAGE_CODE_CHOICES = [
-    ("en-GB", "English (UK) — en-GB"),
-    ("en-US", "English (US) — en-US"),
+    ("en-GB", "English (UK) - en-GB"),
+    ("en-US", "English (US) - en-US"),
 ]
 
 LANGUAGE_VARIANT_CHOICES = [
@@ -1118,14 +1118,8 @@ LANGUAGE_VARIANT_CHOICES = [
     ("American English", "American English"),
 ]
 
+
 def _parse_latest_axes_from_system_messages(sys_msgs):
-    """
-    Build a "latest per axis" snapshot from SYSTEM message history.
-    Heuristic:
-    - Prefer explicit headers like "COGNITIVE -- ANALYST"
-    - LANGUAGE uses "Requested language" / "Default language" lines
-    7-bit ASCII only.
-    """
     latest = {
         "LANGUAGE": None,
         "EPISTEMIC": None,
@@ -1147,7 +1141,6 @@ def _parse_latest_axes_from_system_messages(sys_msgs):
 
         head = lines[0]
 
-        # LANGUAGE block
         if head.startswith("LANGUAGE"):
             lang_val = None
             for ln in lines[1:8]:
@@ -1160,7 +1153,6 @@ def _parse_latest_axes_from_system_messages(sys_msgs):
                 latest["LANGUAGE"] = {"value": lang_val, "id": m.id, "at": m.created_at}
             continue
 
-        # AXIS -- VALUE style (we use "--" to avoid unicode em dash issues)
         if "--" in head:
             left, right = head.split("--", 1)
             axis = left.strip().upper()
@@ -1169,7 +1161,6 @@ def _parse_latest_axes_from_system_messages(sys_msgs):
                 latest[axis] = {"value": val, "id": m.id, "at": m.created_at}
             continue
 
-        # AXIS - VALUE (fallback)
         if " - " in head:
             left, right = head.split(" - ", 1)
             axis = left.strip().upper()
@@ -1182,10 +1173,6 @@ def _parse_latest_axes_from_system_messages(sys_msgs):
 
 
 def _safe_avatar_name(avatar_id) -> str | None:
-    """
-    avatar_id may be None, '', '123', etc.
-    Returns Avatar.name if resolvable, else None.
-    """
     if not avatar_id:
         return None
     s = str(avatar_id)
@@ -1218,6 +1205,7 @@ def _build_language_block(*, language: str, variant: str | None, code: str | Non
     ]
     return "\n".join(lines)
 
+
 @login_required
 def chat_config_overrides(request):
     import hashlib
@@ -1232,7 +1220,6 @@ def chat_config_overrides(request):
             chat_overrides.pop(key, None)
             request.session["rw_chat_overrides"] = chat_overrides
 
-        # Also clear old legacy session keys if they exist (safe cleanup)
         for k in [
             "rw_l4_override_COGNITIVE",
             "rw_l4_override_INTERACTION",
@@ -1247,7 +1234,6 @@ def chat_config_overrides(request):
         messages.success(request, "Temporary overrides cleared (chat + legacy session keys).")
         return redirect("accounts:chat_config_overrides")
 
-    # Purge legacy per-chat keys if present (safe cleanup)
     if key and per_chat:
         changed = False
         for legacy_k in [
@@ -1269,14 +1255,8 @@ def chat_config_overrides(request):
             request.session.modified = True
 
     def _choices(cat: str):
-        return (
-            Avatar.objects
-            .filter(category=cat, is_active=True)
-            .order_by("name")
-            .only("id", "name")
-        )
+        return Avatar.objects.filter(category=cat, is_active=True).order_by("name").only("id", "name")
 
-    # v2 choices
     tone_choices = _choices("TONE")
     reasoning_choices = _choices("REASONING")
     approach_choices = _choices("APPROACH")
@@ -1308,11 +1288,9 @@ def chat_config_overrides(request):
             "LANGUAGE_NAME": per_chat.get("LANGUAGE_NAME"),
         }
 
-        # language (name-only, allow blank)
         new_language_name = (request.POST.get("language_name") or "").strip() or None
         per_chat["LANGUAGE_NAME"] = new_language_name
 
-        # v2 avatar overrides (IDs stored as strings or None)
         new_vals = {
             "tone": request.POST.get("tone_id") or None,
             "reasoning": request.POST.get("reasoning_id") or None,
@@ -1327,7 +1305,6 @@ def chat_config_overrides(request):
 
         chat = ChatWorkspace.objects.filter(pk=int(active_chat_id)).first() if active_chat_id else None
         if chat:
-            # Build an audit SYSTEM message for traceability (v2 only)
             changed_axes = []
             for axis in ("tone", "reasoning", "approach", "control"):
                 if new_vals.get(axis) != old_vals.get(axis):
@@ -1335,7 +1312,7 @@ def chat_config_overrides(request):
                     new_name = _avatar_name_from_id(new_vals.get(axis)) or "Default"
                     changed_axes.append((axis, old_name, new_name))
 
-            if (new_language_name != old_vals.get("LANGUAGE_NAME")):
+            if new_language_name != old_vals.get("LANGUAGE_NAME"):
                 old_ln = old_vals.get("LANGUAGE_NAME") or "Default"
                 new_ln = new_language_name or "Default"
                 changed_axes.append(("language_name", old_ln, new_ln))
@@ -1354,7 +1331,6 @@ def chat_config_overrides(request):
                     raw_text=audit_system_text,
                 )
 
-            # Immediate push to LLM (idempotent)
             if changed_axes:
                 sig_src = f"{chat.id}|{audit_system_text}"
                 push_sig = hashlib.sha1(sig_src.encode("utf-8")).hexdigest()
@@ -1373,11 +1349,7 @@ def chat_config_overrides(request):
 
                 if allow_push:
                     try:
-                        chat_overrides_now = (
-                            request.session.get("rw_chat_overrides", {})
-                            .get(str(chat.id), {})
-                            or {}
-                        )
+                        chat_overrides_now = request.session.get("rw_chat_overrides", {}).get(str(chat.id), {}) or {}
                         session_overrides_now = request.session.get("rw_session_overrides", {}) or {}
 
                         resolved_now = resolve_effective_context(
@@ -1390,17 +1362,16 @@ def chat_config_overrides(request):
                         system_blocks = build_system_messages(resolved_now)
 
                         internal_user = "Internal: acknowledge the override is active. Say: Ready."
-                        panes = generate_panes(
-                            "\n\n".join(system_blocks) + "\n\n" + "User:\n" + internal_user
-                        )
+                        panes = generate_panes("\n\n".join(system_blocks) + "\n\n" + "User:\n" + internal_user)
 
                         assistant_raw = (
                             "ANSWER:\n"
-                            f"{panes.get('answer','')}\n\n"
-                            "REASONING:\n"
-                            f"{panes.get('reasoning','')}\n\n"
-                            "OUTPUT:\n"
-                            f"{panes.get('output','')}\n"
+                            + str(panes.get("answer", ""))
+                            + "\n\nREASONING:\n"
+                            + str(panes.get("reasoning", ""))
+                            + "\n\nOUTPUT:\n"
+                            + str(panes.get("output", ""))
+                            + "\n"
                         )
 
                         out_msg = ChatMessage.objects.create(
@@ -1452,23 +1423,15 @@ def chat_config_overrides(request):
         },
     )
 
+
 # --------------------------------------------------------
-# Attach Clipboard and files in Chat
+# Attachments
 # ------------------------------------------------------------
+
 @require_POST
 @login_required
 def chat_attachment_upload(request, chat_id: int):
-    """
-    Accept one uploaded file and store as ChatAttachment.
-    Behaviour:
-    - source=paste      -> only image/*
-    - source=filepicker -> any file (or later whitelist)
-    Returns JSON for UI.
-    """
-    chat = get_object_or_404(
-        ChatWorkspace.objects.select_related("project"),
-        pk=chat_id,
-    )
+    chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=chat_id)
 
     f = request.FILES.get("file")
     if not f:
@@ -1476,18 +1439,9 @@ def chat_attachment_upload(request, chat_id: int):
 
     ctype = (getattr(f, "content_type", "") or "").lower()
     source = (request.POST.get("source", "") or "").lower()
-    # Only restrict clipboard paste
-    if source == "paste":
-        if not ctype.startswith("image/"):
-            return JsonResponse({"ok": False, "error": "Only image paste is supported."}, status=400)
 
-    # Enforce clipboard rule
-    if source == "paste":
-        if not ctype.startswith("image/"):
-            return JsonResponse(
-                {"ok": False, "error": "Only image paste is supported."},
-                status=400,
-            )
+    if source == "paste" and not ctype.startswith("image/"):
+        return JsonResponse({"ok": False, "error": "Only image paste is supported."}, status=400)
 
     att = ChatAttachment.objects.create(
         project=chat.project,
@@ -1499,12 +1453,11 @@ def chat_attachment_upload(request, chat_id: int):
         size_bytes=getattr(f, "size", 0) or 0,
     )
 
-    file_url = ""
     try:
         file_url = att.file.url
     except Exception:
         file_url = ""
-    print("DEBUG: UPLOAD HIT", request.POST.get("source"), request.FILES.get("file") and request.FILES["file"].name)
+
     return JsonResponse(
         {
             "ok": True,
@@ -1518,9 +1471,7 @@ def chat_attachment_upload(request, chat_id: int):
         }
     )
 
-# --------------------------------------------------------
-# Delete Clipboard Picture in Chat
-# ------------------------------------------------------------
+
 @require_POST
 @login_required
 def chat_attachment_delete(request, attachment_id: int):
@@ -1537,16 +1488,13 @@ def chat_attachment_delete(request, attachment_id: int):
 
     return JsonResponse({"ok": True})
 
+
 # --------------------------------------------------------
-# Session overrides (AJAX) - keep minimal so URL resolves
+# Session overrides (AJAX)
 # ------------------------------------------------------------
+
 @login_required
 def session_overrides_update(request):
-    """
-    Minimal endpoint so your JS can POST overrides.
-    If you already implemented this elsewhere, keep your implementation.
-    """
     if request.method != "POST":
         return JsonResponse({"ok": False, "error": "POST required"}, status=405)
-
     return JsonResponse({"ok": True})

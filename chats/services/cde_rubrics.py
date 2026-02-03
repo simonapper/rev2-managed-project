@@ -10,15 +10,39 @@ from typing import Dict
 
 
 CDE_FIELD_RUBRICS: Dict[str, str] = {
+    # ------------------------------------------------------------------
+    # OLD VERSION (kept for history / comparison)
+    #
+    # "chat.goal": (
+    #     "Aim: one sentence describing the single primary outcome of this chat.\n"
+    #     "PASS if:\n"
+    #     "- States a concrete objective (not just a topic).\n"
+    #     "- Is narrow enough to complete in this chat.\n"
+    #     "- Avoids vague verbs like 'discuss', 'explore' unless paired with a deliverable.\n"
+    #     "WEAK if:\n"
+    #     "- Too broad (multiple goals) or only a general topic.\n"
+    #     "- No deliverable implied.\n"
+    #     "CONFLICT if:\n"
+    #     "- Contradicts another locked chat field (constraints/non-goals/success).\n"
+    # ),
+    # ------------------------------------------------------------------
+
     "chat.goal": (
         "Aim: one sentence describing the single primary outcome of this chat.\n"
+        "\n"
+        "Two acceptable goal types:\n"
+        "- Delivery: produce a concrete artefact (plan, checklist, draft, etc).\n"
+        "- Discovery: reach a clear decision or clarified specification for the next step.\n"
+        "\n"
         "PASS if:\n"
-        "- States a concrete objective (not just a topic).\n"
+        "- States ONE primary outcome (artefact OR decision/spec).\n"
         "- Is narrow enough to complete in this chat.\n"
-        "- Avoids vague verbs like 'discuss', 'explore' unless paired with a deliverable.\n"
+        "- Uses a clear verb (produce, decide, clarify, select, define, scope at high level).\n"
+        "\n"
         "WEAK if:\n"
-        "- Too broad (multiple goals) or only a general topic.\n"
-        "- No deliverable implied.\n"
+        "- Bundles multiple primary outcomes.\n"
+        "- Is so open-ended that there is no clear stopping point.\n"
+        "\n"
         "CONFLICT if:\n"
         "- Contradicts another locked chat field (constraints/non-goals/success).\n"
     ),

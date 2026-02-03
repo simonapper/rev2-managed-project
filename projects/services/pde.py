@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 # projects/services/pde.py
 #
-# PDE v1 - L1 field validation loop helpers.
+# PDE v1 - Field validation and draft helpers (LLM only).
 # NOTE: Keep all output JSON-only (handled by the LLM via the PDE boilerplate).
+# NOTE: Keep code comments 7-bit ASCII only.
 
 from __future__ import annotations
 
@@ -35,39 +36,62 @@ PDE_VALIDATOR_BOILERPLATE = (
     "- suggested_revision: provide a best improved rewrite even if WEAK/CONFLICT.\n"
 )
 
+PDE_DRAFT_BOILERPLATE = (
+    "You turn free-form user intent into a draft Project CKO field set.\n"
+    "Return JSON only, matching this schema:\n"
+    "{\n"
+    '  "hypotheses": {\n'
+    '    "fields": {\n'
+    '      "canonical.summary": "string",\n'
+    '      "identity.project_type": "string",\n'
+    '      "identity.project_status": "string",\n'
+    '      "intent.primary_goal": "string",\n'
+    '      "intent.success_criteria": "string",\n'
+    '      "scope.in_scope": "string",\n'
+    '      "scope.out_of_scope": "string",\n'
+    '      "scope.hard_constraints": "string",\n'
+    '      "authority.primary": "string",\n'
+    '      "authority.secondary": "string",\n'
+    '      "authority.deviation_rules": "string",\n'
+    '      "posture.interpretive_rules": "string",\n'
+    '      "posture.epistemic_constraints": "string",\n'
+    '      "posture.novelty_rules": "string",\n'
+    '      "storage.artefact_root_ref": "string",\n'
+    '      "storage.canonical_artefact_types": "string",\n'
+    '      "storage.non_authoritative": "string",\n'
+    '      "context.narrative": "string"\n'
+    "    }\n"
+    "  }\n"
+    "}\n"
+    "\n"
+    "Rules:\n"
+    "- Keep canonical.summary to <=10 words.\n"
+    "- Use enum values where possible:\n"
+    "  - identity.project_type: META|KNOWLEDGE|DELIVERY|RESEARCH|OPERATIONS\n"
+    "  - identity.project_status: ACTIVE|PAUSED|ARCHIVED\n"
+    "- scope fields may be bullet lists in a single string.\n"
+    "- Do not invent facts; reflect uncertainty.\n"
+    "- If unknown, use an explicit placeholder like 'DEFERRED'.\n"
+)
+
 
 def _locked_fields_block(locked_fields: Dict[str, str]) -> str:
-    """
-    Provide context for CONFLICT detection.
-    Keep it simple and explicit; this is SYSTEM content.
-    """
     if not locked_fields:
         return "Locked fields context: (none)\n"
-
-    # Stable ordering for determinism.
     keys = sorted(locked_fields.keys())
     lines = ["Locked fields context:"]
     for k in keys:
         v = (locked_fields.get(k) or "").strip()
         if not v:
             continue
-        # Avoid accidental JSON or markdown; plain text only.
         lines.append("- " + k + ": " + v)
     if len(lines) == 1:
         lines.append("(none)")
     return "\n".join(lines) + "\n"
 
 
-def _parse_output_json(
-    raw_output: str,
-    field_key: str,
-) -> Dict[str, Any]:
-    """
-    Parse the LLM OUTPUT pane as JSON and do minimal sanity checks.
-    If anything is wrong, return a WEAK verdict with a safe suggested revision.
-    """
+def _parse_output_json(raw_output: str, field_key: str) -> Dict[str, Any]:
     raw_output = (raw_output or "").strip()
-
     try:
         data = json.loads(raw_output)
     except Exception:
@@ -90,7 +114,6 @@ def _parse_output_json(
             "confidence": "LOW",
         }
 
-    # Minimal normalisation + required keys.
     out: Dict[str, Any] = {}
     out["field_key"] = str(data.get("field_key") or field_key)
 
@@ -119,7 +142,6 @@ def _parse_output_json(
         confidence = "LOW"
     out["confidence"] = confidence
 
-    # Enforce rule: issues empty if PASS.
     if out["verdict"] == "PASS":
         out["issues"] = []
 
@@ -134,42 +156,64 @@ def validate_field(
     locked_fields: Optional[Dict[str, str]] = None,
     rubric: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    PDE v1: Validate one field value for PASS/WEAK/CONFLICT and return
-    the structured validation object (dict).
-
-    Notes:
-    - generate_panes_func is injected to avoid circular imports.
-      Pass your generate_panes function.
-    - The LLM must emit the PDE JSON object in panes["output"].
-    """
     locked_fields = locked_fields or {}
     value_text = (value_text or "").strip()
 
     system_blocks = [PDE_VALIDATOR_BOILERPLATE]
 
-    if rubric:
-        rubric = (rubric or "").strip()
-        if rubric:
-            system_blocks.append("Field rubric (apply lightly):\n" + rubric + "\n")
+    rr = (rubric or "").strip()
+    if rr:
+        system_blocks.append("Field rubric (apply lightly):\n" + rr + "\n")
 
     system_blocks.append(_locked_fields_block(locked_fields))
 
-    # Keep user_text minimal. We want the model to focus on the field value.
-    # Include field_key so it can echo it in OUTPUT.
-    llm_input = (
-        "Field key: " + field_key + "\n"
-        "Field value:\n"
-        + value_text
-    )
+    llm_input = "Field key: " + field_key + "\n" + "Field value:\n" + value_text
 
     panes = generate_panes_func(
         llm_input,
         image_parts=None,
         system_blocks=system_blocks,
+        force_model="gpt-5.1",
     )
 
-    return _parse_output_json(
+    out = _parse_output_json(
         raw_output=str(panes.get("output") or ""),
         field_key=field_key,
     )
+
+    out["debug_system_blocks"] = system_blocks
+    out["debug_user_text"] = llm_input
+    return out
+
+
+def draft_pde_from_seed(*, generate_panes_func, seed_text: str) -> Dict[str, Any]:
+    seed_text = (seed_text or "").strip()
+    system_blocks = [PDE_DRAFT_BOILERPLATE]
+    panes = generate_panes_func(
+        "Seed intent:\n" + seed_text,
+        image_parts=None,
+        system_blocks=system_blocks,
+        force_model="gpt-5.1",
+    )
+    raw = (panes.get("output") or "").strip()
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {"ok": False, "error": "Draft OUTPUT was not valid JSON.", "raw": raw}
+
+    hyp = data.get("hypotheses") if isinstance(data, dict) else None
+    if not isinstance(hyp, dict):
+        return {"ok": False, "error": "Draft JSON missing hypotheses.", "raw": raw}
+
+    fields = hyp.get("fields")
+    if not isinstance(fields, dict):
+        return {"ok": False, "error": "Draft JSON missing hypotheses.fields.", "raw": raw}
+
+    out_fields: Dict[str, str] = {}
+    for k, v in fields.items():
+        kk = str(k).strip()
+        if not kk:
+            continue
+        out_fields[kk] = ("" if v is None else str(v)).strip()
+
+    return {"ok": True, "draft": {"hypotheses": {"fields": out_fields}}, "raw": raw}

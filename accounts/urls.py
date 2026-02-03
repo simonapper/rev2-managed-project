@@ -25,6 +25,8 @@ urlpatterns = [
     # Project chats
     path("projects/<int:project_id>/chats/", views.project_chat_list, name="project_chat_list"),
     path("projects/<int:project_id>/delete/", views.project_delete, name="project_delete"),
+    path("projects/<int:project_id>/home/", views.project_home, name="project_home"),
+
 
 
     # Chat routes
@@ -43,6 +45,11 @@ urlpatterns = [
         views.chat_attachment_delete,
         name="chat_attachment_delete",
     ),
+    path("chats/suggest-goals/", views.chat_suggest_goals, name="chat_suggest_goals"),
+    path("chats/draft-cde/", views.chat_draft_cde, name="chat_draft_cde"),
+    # accounts/urls.py
+    path("chats/<int:chat_id>/rename/", views.chat_rename, name="chat_rename"),
+
 
 
 

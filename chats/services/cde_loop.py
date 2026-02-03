@@ -135,3 +135,41 @@ def run_cde(
         "results": results,
         "first_blocker": first_blocker,
     }
+def validate_cde_inputs(
+    *,
+    generate_panes_func,
+    user_inputs: Dict[str, str],
+) -> Dict[str, Any]:
+    results: List[Dict[str, Any]] = []
+    first_blocker: Optional[Dict[str, Any]] = None
+    locked_fields: Dict[str, str] = {}
+
+    for spec in CDE_REQUIRED_FIELDS:
+        field_key = spec.key
+        proposed = (user_inputs.get(field_key) or "").strip()
+
+        vobj = validate_field(
+            generate_panes_func=generate_panes_func,
+            field_key=field_key,
+            value_text=proposed,
+            locked_fields=locked_fields,
+            rubric=spec.rubric,
+        )
+        results.append(vobj)
+
+        if vobj.get("verdict") != "PASS":
+            first_blocker = vobj
+            break
+
+        locked_value = (vobj.get("suggested_revision") or proposed).strip()
+        locked_fields[field_key] = locked_value
+
+    ok = first_blocker is None and len(results) == len(CDE_REQUIRED_FIELDS)
+    return {
+        "ok": ok,
+        "mode": "CONTROLLED",
+        "locked": ok,
+        "results": results,
+        "first_blocker": first_blocker,
+        "locked_fields": locked_fields,
+    }

@@ -258,6 +258,81 @@
     white-space: nowrap;
     font-size: 0.65rem;
 }
+/* PDE mode: proportional */
+.rw-sidebar.rw-sidebar-pde {
+    flex: 0 0 22%;
+    min-width: 280px;
+    max-width: 420px;
+}
+/* PDE: more readable */
+.rw-sidebar-pde .rw-sidebar-nav .nav-link {
+    font-size: 0.92rem;
+    padding: 0.45rem 0.60rem;
+    line-height: 1.25;
+}
+
+.rw-sidebar-pde .rw-sidebar-nav .nav-link i {
+    font-size: 1.0rem;
+    margin-right: 0.5rem !important;
+}
+/* PDE sidebar text */
+.rw-pde-navlink {
+    display: inline-block;
+    font-size: 0.9rem;
+    line-height: 1.25;
+    text-decoration: none;
+}
+
+    .rw-pde-navlink:hover {
+        text-decoration: underline;
+    }
+
+.rw-pde-navlink {
+    white-space: normal;
+}
+/* PDE Help drawer sizing */
+.rw-pde-help {
+    width: 420px !important;
+    max-width: 92vw !important;
+}
+
+.rw-pde-help-log {
+    max-height: 55vh;
+    overflow: auto;
+}
+
+/* PDE suggested text button – compact inline style */
+.rw-suggest-btn {
+    padding: 0.25rem 0.6rem;
+    font-size: 0.7rem;
+    line-height: 1.1;
+    text-align: center;
+    border-radius: 4px;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+}
+
+.rw-suggest-title {
+    font-weight: 600;
+    font-size: 0.7rem;
+    line-height: 1.1;
+}
+
+.rw-suggest-sub {
+    font-size: 0.6rem;
+    line-height: 1.1;
+    color: #6c757d;
+}
+.rw-pde-current {
+    outline: 2px solid rgba(13,110,253,0.25);
+    border-radius: 8px;
+    padding: 0.25rem;
+}
+
+
 
 
 /* ============================================================
@@ -959,3 +1034,75 @@ This prevents SYSTEM blocks expanding rows.
     overflow: auto;
 }
 
+/* CDE suggested revision callout */
+.rw-cde-suggestion {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: #fff;
+    border-left: 3px solid #0d6efd;
+    border-radius: 6px;
+}
+/* Render suggested text with pre-wrap but no inherited margins */
+.rw-cde-suggest-text {
+    white-space: pre-wrap;
+    margin: 0;
+    padding: 0;
+    text-indent: 0;
+}
+    /* If the model output begins with whitespace/newline, this makes it look normal */
+    .rw-cde-suggest-text::first-line {
+        text-indent: 0;
+    }
+
+/* Suggested action row: keep button aligned, not floating in whitespace */
+.rw-suggest-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start; /* or flex-end if you prefer right */
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+/* Small, centred two-line button */
+.rw-suggest-btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    line-height: 1.1;
+    text-align: center;
+    min-width: 140px;
+}
+
+/* Second line smaller */
+.rw-suggest-sub {
+    font-size: 0.65rem;
+    opacity: 0.75;
+    margin-top: 0.15rem;
+}
+
+/* Dashboard header: keep actions inline and stable */
+.rw-dashboard-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+    .rw-dashboard-header .rw-dashboard-title {
+        font-weight: 600;
+        margin-right: 0.5rem;
+    }
+
+    .rw-dashboard-header .rw-dashboard-subtitle {
+        flex-basis: 100%;
+        font-size: 0.75rem;
+        color: #6c757d;
+    }
+/* CKO Display for project definitions */
+
+.rw-cko-text {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    white-space: normal;
+    word-break: break-word;
+}

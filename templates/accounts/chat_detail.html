@@ -11,40 +11,65 @@
 
         <!--<hr class="my-3">-->
 
-        <!-- CDE visual cue + controls -->
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <div class="d-flex gap-2 align-items-stretch">
-            <div class="rw-status">
-              <div class="rw-status-label">CDE</div>
-              <div class="rw-status-value">
-                {% if chat.is_managed %}Controlled{% else %}Loose{% endif %}
-              </div>
-            </div>
+        <!-- Top row: title + CDE status + controls -->
+<div class="d-flex justify-content-between align-items-center mb-2">
 
-            <div class="rw-status">
-              <div class="rw-status-label">Locked</div>
-              <div class="rw-status-value">
-                {% if chat.cde_is_locked %}Yes{% else %}No{% endif %}
-              </div>
-            </div>
-          </div>
+  <div class="d-flex gap-3 align-items-center flex-wrap">
 
-          <div class="d-flex gap-2">
-            {% if fullscreen %}
-              <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_normal }}">Exit full screen</a>
-            {% else %}
-              <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_fullscreen }}">Full screen</a>
-            {% endif %}
+    <!-- Chat title (view mode) -->
+    <div id="chatTitleView" class="fw-semibold" title="{{ chat.title }}">
+      {{ chat.title }}
+    </div>
 
-            {% if show_system %}
-              <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_no_system }}">Hide system</a>
-            {% else %}
-              <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_with_system }}">Show system</a>
-            {% endif %}
-          </div>
-        </div>
+    <!-- Chat title (edit mode) -->
+    <form id="chatTitleEdit" method="post"
+          action="{% url 'accounts:chat_rename' chat.id %}"
+          class="d-none align-items-center gap-2">
+      {% csrf_token %}
+      <input type="text" name="title" class="form-control form-control-sm"
+             style="max-width: 420px;"
+             value="{{ chat.title }}" required>
+      <button type="submit" class="btn btn-sm btn-primary">Save</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="btnRenameCancel">Cancel</button>
+    </form>
 
+    <!-- CDE status tiles -->
+    <div class="rw-status">
+      <div class="rw-status-label">CDE</div>
+      <div class="rw-status-value">
+        {% if chat.is_managed %}Controlled{% else %}Loose{% endif %}
+      </div>
+    </div>
 
+    <div class="rw-status">
+      <div class="rw-status-label">Locked</div>
+      <div class="rw-status-value">
+        {% if chat.cde_is_locked %}Yes{% else %}No{% endif %}
+      </div>
+    </div>
+
+  </div>
+
+  <div class="d-flex gap-2">
+
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="btnRename">
+      Rename
+    </button>
+
+    {% if fullscreen %}
+      <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_normal }}">Exit full screen</a>
+    {% else %}
+      <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_fullscreen }}">Full screen</a>
+    {% endif %}
+
+    {% if show_system %}
+      <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_no_system }}">Hide system</a>
+    {% else %}
+      <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_with_system }}">Show system</a>
+    {% endif %}
+
+  </div>
+</div>
         <form method="post" action="{% url 'accounts:chat_message_create' %}" enctype="multipart/form-data">
           {% csrf_token %}
           <input type="hidden" name="chat_id" value="{{ chat.id }}">
@@ -193,7 +218,6 @@
                         </div>
                       </details>
 
-                      {% if show_system %}
                         <details open class="rw-channel">
                           <summary class="fw-semibold">ANSWER</summary>
                           <div class="pt-2">
@@ -206,8 +230,6 @@
                             {% endif %}
                           </div>
                         </details>
-                      {% endif %}
-
                       <details class="rw-channel">
                         <summary class="fw-semibold">OUTPUT</summary>
                         <div class="pt-2">
@@ -524,7 +546,28 @@
           });
       });
     }
-  })();
+    })();
+    (function() {
+      // 7-bit ASCII: inline rename toggle
+      var btn = document.getElementById("btnRename");
+      var cancel = document.getElementById("btnRenameCancel");
+      var view = document.getElementById("chatTitleView");
+      var form = document.getElementById("chatTitleEdit");
+
+      function showEdit(on) {
+        if (!view || !form) return;
+        view.classList.toggle("d-none", on);
+        form.classList.toggle("d-none", !on);
+        if (on) {
+          var inp = form.querySelector("input[name='title']");
+          if (inp) inp.focus();
+        }
+      }
+
+      if (btn) btn.addEventListener("click", function() { showEdit(true); });
+      if (cancel) cancel.addEventListener("click", function() { showEdit(false); });
+    })();
+
 </script>
 
 {% endblock %}

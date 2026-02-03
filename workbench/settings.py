@@ -113,6 +113,7 @@ TEMPLATES = [
                 "notifications.context_processors.notifications_bar",
                 "accounts.context_processors.topbar_context",
                 "accounts.context_processors.active_chat_bar",
+                "projects.context_processors.ui_mode",
             ],
         },
     },

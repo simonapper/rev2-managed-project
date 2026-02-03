@@ -69,9 +69,13 @@ def generate_panes(
     user_text: str,
     image_parts: Optional[List[Dict[str, str]]] = None,
     system_blocks: Optional[List[str]] = None,
+    force_model: Optional[str] = None,
 ) -> Dict[str, str]:
     image_parts = image_parts or []
     system_blocks = system_blocks or []
+
+    model = (force_model or _get_default_model_key()).strip()
+
 
     system_contract = (
         "Return JSON with keys:\n"
@@ -87,7 +91,7 @@ def generate_panes(
         "o3", "o4-mini", "gpt-4o",
     ]
 
-    model = _get_default_model_key()
+   # model = _get_default_model_key()
 
     # Multiple system messages are fine.
     input_msgs = [{"role": "system", "content": system_contract}]
@@ -103,7 +107,7 @@ def generate_panes(
     )
 
     response = client.responses.create(
-        model="gpt-5.1",
+        model=model,
         input=input_msgs,
         text={
             "format": {
@@ -167,7 +171,7 @@ def generate_handshake(*, system_blocks: List[str], first_name: Optional[str]) -
     blocks.append(f'Your response should be exactly: "{greeting}"')
 
     response = client.responses.create(
-        model="gpt-4.1-mini",
+        model= _get_default_model_key(),
         input=[
             *[{"role": "system", "content": block} for block in blocks],
             {"role": "user", "content": "Bootstrap handshake. Respond now."},
@@ -183,7 +187,7 @@ def generate_text(*, system_blocks: list[str], messages: list[dict]) -> str:
     messages: [{'role': 'user'|'assistant', 'content': str}, ...]
     """
     response = client.responses.create(
-        model="gpt-4.1",
+        model= _get_default_model_key(),
         input=[
             *[{"role": "system", "content": b} for b in system_blocks],
             *messages,
