@@ -1,0 +1,13 @@
+{
+  "name": "workbench-tailwind",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i static/src/tailwind.css -o static/css/app.css --minify",
+    "watch:css": "tailwindcss -c tailwind.config.js -i static/src/tailwind.css -o static/css/app.css --watch"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13"
+  }
+}

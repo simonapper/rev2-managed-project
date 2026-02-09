@@ -1,0 +1,91 @@
+﻿{# templates/projects/cko_preview.html #}
+{# 7-bit ASCII only. #}
+{% extends "base.html" %}
+
+{% block title %}CKO Preview - {{ project.name }}{% endblock %}
+
+{% block content %}
+<div class="rw-main-inner">
+  <div class="rw-workarea">
+    <div class="row g-3">
+
+      <!-- Left: CKO document -->
+      <div class="col-12 col-lg-9">
+        <div class="card shadow-sm">
+          <div class="card-body">
+
+            <div class="d-flex align-items-start justify-content-between gap-3">
+              <div class="min-w-0">
+                <div class="fw-semibold">CKO Preview</div>
+                <div class="small text-secondary">
+                  Review the draft CKO. Accept to define the project, or revise in PDE.
+                </div>
+              </div>
+
+              <div class="text-end small text-muted">
+                <div>CKO ID: <span class="fw-semibold">{{ cko.cko_id }}</span></div>
+                <div>Version: <span class="fw-semibold">{{ cko.version }}</span></div>
+                <div>Status: <span class="fw-semibold">{{ cko.status }}</span></div>
+                {% if cko.created_at %}
+                  <div>Date: <span class="fw-semibold">{{ cko.created_at|date:"Y-m-d" }}</span></div>
+                {% endif %}
+              </div>
+            </div>
+
+            <hr class="my-3" />
+
+            {# Render canonical HTML document (do not use linebreaksbr) #}
+            <div class="rw-cko-doc">
+                {{ cko_body_html|safe }}
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: actions / status -->
+      <div class="col-12 col-lg-3">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <div class="fw-semibold">Actions</div>
+
+            {% if cko.status == "DRAFT" %}
+                <div class="small text-secondary mt-2">
+                  Accepting makes this project defined (via defined_cko).
+                </div>
+                {% if can_accept %}
+                  <form method="post"
+                      action="{% url 'projects:cko_accept' project.id cko.id %}"
+                      class="mt-3">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-primary w-100">
+                      Accept CKO
+                  </button>
+                  </form>
+                {% else %}
+                  <div class="small text-danger mt-2">Only the Project Committer can commit this project.</div>
+                  <button type="button" class="btn btn-primary w-100 mt-2" disabled>
+                    Accept CKO
+                  </button>
+                {% endif %}
+            {% endif %}
+
+            <a class="btn btn-outline-secondary w-100 mt-2"
+               href="{% url 'projects:pde_detail' project.id %}">
+              Revise in PDE
+            </a>
+
+            <hr class="my-3" />
+
+            <div class="fw-semibold">Project</div>
+            <div class="small text-secondary mt-1" style="word-break: break-word;">
+              {{ project.name }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Execution Board — {{ project.name }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex align-items-start justify-content-between mb-3">
+    <div>
+      <div class="h4 mb-1">Execution Board</div>
+      <div class="text-muted small">Project: {{ project.name }}</div>
+      {% if source_versions %}
+        <div class="text-muted small">Derived from Plan WKO v{{ source_versions|join:", v" }}</div>
+      {% endif %}
+    </div>
+    <div>
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'projects:ppde_detail' project.id %}">Back to PPDE</a>
+    </div>
+  </div>
+
+  {% if not grouped_tasks %}
+    <div class="text-muted">No tasks yet.</div>
+  {% endif %}
+
+  {% for stage_title, tasks in grouped_tasks.items %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="fw-semibold mb-2">Stage: {{ stage_title }}</div>
+        <ul class="list-group list-group-flush">
+          {% for t in tasks %}
+            <li class="list-group-item">
+              <div class="d-flex align-items-start justify-content-between">
+                <div class="me-3">
+                  <div class="fw-semibold">{{ t.title }}</div>
+                  <div class="small text-muted">Status: {{ t.status }} | Source WKO v{{ t.source_wko_version }}</div>
+                  {% if t.description %}
+                    <div class="small text-muted" style="white-space:pre-wrap;">{{ t.description }}</div>
+                  {% endif %}
+                </div>
+                {% if can_edit %}
+                  <form method="post" class="ms-auto" style="min-width:260px;">
+                    {% csrf_token %}
+                    <input type="hidden" name="task_id" value="{{ t.id }}" />
+                    <div class="mb-2">
+                      <label class="form-label small mb-1">Status</label>
+                      <select class="form-select form-select-sm" name="status">
+                        {% for s in "TODO,IN_PROGRESS,BLOCKED,DONE".split(",") %}
+                          <option value="{{ s }}" {% if t.status == s %}selected{% endif %}>{{ s }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small mb-1">Owner</label>
+                      <select class="form-select form-select-sm" name="owner_id">
+                        <option value="">Unassigned</option>
+                        {% for u in members %}
+                          <option value="{{ u.id }}" {% if t.owner_id == u.id %}selected{% endif %}>{{ u.username }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small mb-1">Due date</label>
+                      <input type="date" class="form-control form-control-sm" name="due_date" value="{{ t.due_date|date:'Y-m-d' }}">
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small mb-1">Notes</label>
+                      <textarea class="form-control form-control-sm" name="notes" rows="2">{{ t.notes }}</textarea>
+                    </div>
+                    <button class="btn btn-sm btn-primary" type="submit">Update</button>
+                  </form>
+                {% endif %}
+              </div>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

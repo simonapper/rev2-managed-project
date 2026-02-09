@@ -25,6 +25,7 @@ from chats.services.llm import generate_panes
 from django.contrib import messages
 from projects.services.pde_commit import commit_project_definition
 from projects.services.pde_required_keys import pde_required_keys_for_defined
+from projects.services_project_membership import can_edit_pde, is_project_committer
 
 
 BASELINE_L1_MUST_KEYS = (
@@ -166,7 +167,9 @@ def pde_field_verify(request):
 
     project = Project.objects.filter(id=project_id, owner=request.user).first()
     if not project:
-        return JsonResponse({"error": "Project not found."}, status=404)
+        project = Project.objects.filter(id=project_id).first()
+    if not project or not can_edit_pde(project, request.user):
+        return JsonResponse({"error": "Forbidden."}, status=403)
 
     field_obj, _created = ProjectDefinitionField.objects.get_or_create(
         project_id=project_id,
@@ -218,7 +221,7 @@ def pde_field_lock(request):
     except ProjectDefinitionField.DoesNotExist:
         return JsonResponse({"error": "Field not found."}, status=404)
 
-    if field.project.owner_id != request.user.id:
+    if not is_project_committer(field.project, request.user):
         return JsonResponse({"error": "Forbidden."}, status=403)
 
     last = field.last_validation or {}
@@ -264,9 +267,9 @@ def pde_create_project_cko(request):
     except ValueError:
         return JsonResponse({"error": "Invalid project_id."}, status=400)
 
-    project = Project.objects.filter(id=project_id, owner=request.user).first()
-    if not project:
-        return JsonResponse({"error": "Project not found."}, status=404)
+    project = Project.objects.filter(id=project_id).first()
+    if not project or not is_project_committer(project, request.user):
+        return JsonResponse({"error": "Forbidden."}, status=403)
 
     locked = _get_locked_fields_for_project(project_id)
 
@@ -298,8 +301,8 @@ def pde_create_project_cko(request):
 
 @login_required
 def pde_home(request, project_id: int):
-    project = Project.objects.filter(id=project_id, owner=request.user).first()
-    if not project:
+    project = Project.objects.filter(id=project_id).first()
+    if not project or not can_edit_pde(project, request.user):
         return render(request, "404.html", status=404)
 
     LABELS = {
@@ -337,8 +340,7 @@ def pde_home(request, project_id: int):
 def pde_commit(request, project_id: int):
     project = get_object_or_404(Project, id=project_id)
 
-    # Owner-only (match pde_detail)
-    if project.owner_id != request.user.id:
+    if not is_project_committer(project, request.user):
         messages.error(request, "You do not have permission to commit this project.")
         return redirect("projects:pde_detail", project_id=project.id)
 

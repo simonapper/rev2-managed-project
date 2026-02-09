@@ -5,7 +5,7 @@
 
 {% block content %}
 
-<div class="container-fluid px-4 py-4 rw-browse">
+<div class="container-fluid px-4 pt-1 pb-3 rw-browse">
     {% if active_project %}
       <div class="text-secondary small">Project: {{ active_project.name }}</div>
     {% endif %}
@@ -15,20 +15,6 @@
       <h5 class="mb-1">Browse Chats</h5>
       <div class="text-secondary small">Fast list view across accessible projects</div>
     </div>
-        <div class="d-flex gap-2">
-          {% if active_project %}
-            {% if active_project.kind == "SANDBOX" or active_project.defined_cko %}
-              <a href="{% url 'accounts:chat_create' %}" class="btn btn-sm btn-primary">New chat</a>
-            {% else %}
-              <button class="btn btn-sm btn-primary" disabled>New chat</button>
-            {% endif %}
-          {% else %}
-            <button class="btn btn-sm btn-primary" disabled>New chat</button>
-          {% endif %}
-          <a href="{% url 'accounts:dashboard' %}" class="btn btn-sm btn-outline-secondary">Back</a>
-        </div>
-
-
   </div>
 
   <form method="get" class="row g-2 align-items-end mb-3">
@@ -114,20 +100,21 @@
 
             <tbody>
               {% for c in page_obj.object_list %}
+                {% with row_color=c.row_color %}
                 <tr>
-                  <td class="fw-semibold">{{ c.title }}</td>
-                  <td class="text-secondary">{{ c.project.name }}</td>
-                  <td class="text-secondary">{{ c.created_by.username }}</td>
-                  <td class="text-center text-secondary small">{{ c.turn_count }}</td>
-                  <td class="text-secondary rw-updated-col">{{ c.updated_at }}</td>
-                 <td class="text-secondary small">
+                  <td class="fw-semibold" style="background-color: {{ row_color }};">{{ c.title }}</td>
+                  <td class="text-secondary" style="background-color: {{ row_color }};">{{ c.project.name }}</td>
+                  <td class="text-secondary" style="background-color: {{ row_color }};">{{ c.created_by.username }}</td>
+                  <td class="text-center text-secondary small" style="background-color: {{ row_color }};">{{ c.turn_count }}</td>
+                  <td class="text-secondary rw-updated-col" style="background-color: {{ row_color }};">{{ c.updated_at }}</td>
+                 <td class="text-secondary small" style="background-color: {{ row_color }};">
                    {% if c.last_output_snippet %}
                      {{ c.last_output_answer|truncatechars:150|default:"(empty)" }}
                    {% else %}
                      (empty)
                    {% endif %}
                 </td>         
-                  <td class="text-end">
+                  <td class="text-end" style="background-color: {{ row_color }};">
                     <div class="d-inline-flex gap-1">
 
                     <a class="btn btn-sm btn-outline-secondary rw-chat-action"
@@ -153,6 +140,7 @@
 
 
                 </tr>
+                {% endwith %}
               {% endfor %}
             </tbody>
           </table>

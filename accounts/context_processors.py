@@ -14,7 +14,6 @@ from projects.services_project_membership import accessible_projects_qs
 from chats.models import ChatMessage, ChatWorkspace
 from projects.services.context_resolution import resolve_effective_context
 
-
 def topbar_context(request) -> Dict[str, Any]:
     ctx: Dict[str, Any] = {}
 
@@ -23,9 +22,11 @@ def topbar_context(request) -> Dict[str, Any]:
         return ctx
 
     # ------------------------------------------------------------
-    # Active project (from session), even if no active chat
+    # Active project (session -> URL fallback)
     # ------------------------------------------------------------
     active_project = None
+
+    # 1) From session
     pid = request.session.get("rw_active_project_id")
     if pid is not None:
         try:
@@ -34,6 +35,20 @@ def topbar_context(request) -> Dict[str, Any]:
             pid_int = None
         if pid_int is not None:
             active_project = Project.objects.filter(id=pid_int).only("id", "name").first()
+
+    # 2) Fallback from URL (authoritative when switching projects)
+    if active_project is None and hasattr(request, "resolver_match"):
+        kwargs = request.resolver_match.kwargs or {}
+        project_id = kwargs.get("project_id")
+        if project_id:
+            try:
+                pid_int = int(project_id)
+                active_project = Project.objects.filter(id=pid_int).only("id", "name").first()
+                if active_project:
+                    request.session["rw_active_project_id"] = pid_int
+                    request.session.modified = True
+            except (TypeError, ValueError):
+                pass
 
     if active_project is not None:
         ctx["rw_projects"] = {"active": active_project}
@@ -56,9 +71,11 @@ def topbar_context(request) -> Dict[str, Any]:
 
     ctx["active_chat"] = chat
 
-    # If project not already set (or session missing), fall back to chat.project
-    if "rw_projects" not in ctx:
+    # Sync project to chat.project when viewing a chat
+    if "rw_projects" not in ctx or ctx.get("rw_projects", {}).get("active") != chat.project:
         ctx["rw_projects"] = {"active": chat.project}
+        request.session["rw_active_project_id"] = chat.project.id
+        request.session.modified = True
 
     ctx["turn_count"] = ChatMessage.objects.filter(
         chat=chat,
@@ -80,6 +97,9 @@ def topbar_context(request) -> Dict[str, Any]:
         ctx["rw_language"] = None
 
     return ctx
+
+
+
 def session_overrides_bar(request) -> Dict[str, Any]:
     user = getattr(request, "user", None)
     if not user or isinstance(user, AnonymousUser) or not user.is_authenticated:

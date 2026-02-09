@@ -19,12 +19,15 @@
 
     {% load static %}
     <link rel="stylesheet" href="{% static 'app.css' %}?v=5" />
+    <link rel="stylesheet" href="{% static 'css/app.css' %}?v=1" />
 </head>
 
-<body class="rw-shell{% if fullscreen %} rw-fullscreen{% endif %}">
+<body class="rw-shell{% if fullscreen %} rw-fullscreen{% endif %} bg-slate-50 text-slate-900 antialiased">
 
     {% if ui_is_pde %}
       {% include "partials/pde_topbar.html" %}
+    {% elif ui_is_ppde %}
+      {% include "partials/ppde_topbar.html" %}
     {% else %}
       {% include "partials/topbar.html" %}
     {% endif %}
@@ -32,33 +35,37 @@
     <div class="rw-body">
 
         <!-- Desktop sidebar -->
-        <aside class="rw-sidebar border-end bg-light d-none d-lg-block {% if ui_is_pde %}rw-sidebar-pde{% endif %}">
-          {% if ui_is_pde %}
-            {% include "partials/pde_sidebar.html" %}
-          {% else %}
-            {% include "partials/sidebar.html" %}
-          {% endif %}
-        </aside>
+        {% if not ui_hide_sidebar %}
+          <aside class="rw-sidebar border-end bg-light d-none d-lg-block {% if ui_is_pde %}rw-sidebar-pde{% endif %}">
+            {% if ui_is_pde %}
+              {% include "partials/pde_sidebar.html" %}
+            {% else %}
+              {% include "partials/sidebar.html" %}
+            {% endif %}
+          </aside>
+        {% endif %}
 
         <!-- Mobile offcanvas sidebar -->
-        <div class="offcanvas offcanvas-start d-lg-none rw-offcanvas-sidebar"
-             tabindex="-1"
-             id="rwSidebarOffcanvas"
-             aria-labelledby="rwSidebarOffcanvasLabel">
-            <div class="offcanvas-header">
-                <h5 class="offcanvas-title" id="rwSidebarOffcanvasLabel">Menu</h5>
-                <button type="button" class="btn-close"
-                        data-bs-dismiss="offcanvas"
-                        aria-label="Close"></button>
-            </div>
-            <div class="offcanvas-body">
-              {% if ui_is_pde %}
-                {% include "partials/pde_sidebar.html" %}
-              {% else %}
-                {% include "partials/sidebar.html" %}
-              {% endif %}
-            </div>
-        </div>
+        {% if not ui_hide_sidebar %}
+          <div class="offcanvas offcanvas-start d-lg-none rw-offcanvas-sidebar"
+               tabindex="-1"
+               id="rwSidebarOffcanvas"
+               aria-labelledby="rwSidebarOffcanvasLabel">
+              <div class="offcanvas-header">
+                  <h5 class="offcanvas-title" id="rwSidebarOffcanvasLabel">Menu</h5>
+                  <button type="button" class="btn-close"
+                          data-bs-dismiss="offcanvas"
+                          aria-label="Close"></button>
+              </div>
+              <div class="offcanvas-body">
+                {% if ui_is_pde %}
+                  {% include "partials/pde_sidebar.html" %}
+                {% else %}
+                  {% include "partials/sidebar.html" %}
+                {% endif %}
+              </div>
+          </div>
+        {% endif %}
 
         <main class="rw-main" role="main">
 

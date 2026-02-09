@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}WKO — {{ project.name }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex align-items-start justify-content-between mb-3">
+    <div>
+      <div class="h4 mb-1">Workflow Knowledge Object (WKO)</div>
+      <div class="text-muted small">Project: {{ project.name }}</div>
+      <div class="text-muted small">Version: {{ wko.version }} ({{ wko.status }})</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary"
+         href="{% url 'projects:ppde_detail' project.id %}">
+        Back to PPDE
+      </a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="small text-muted mb-2">Accepted WKO content (JSON)</div>
+      <pre class="mb-0" style="white-space:pre-wrap;">{{ content_text }}</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}

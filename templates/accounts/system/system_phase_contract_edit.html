@@ -1,0 +1,84 @@
+{# -*- coding: utf-8 -*- #}
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex align-items-start justify-content-between mb-3">
+    <div>
+      <h5 class="mb-1">{% if contract %}Edit Phase Contract{% else %}New Phase Contract{% endif %}</h5>
+      <div class="text-muted small">Admin-only editing for PPDE contracts.</div>
+    </div>
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:system_phase_contracts_home' %}">Back</a>
+  </div>
+
+  <form method="post">
+    {% csrf_token %}
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">Key</label>
+            <input type="text" name="key" class="form-control"
+                   value="{{ seed.key|default:'' }}" placeholder="STRUCTURE_PROJECT">
+          </div>
+          <div class="col-md-5">
+            <label class="form-label">Title</label>
+            <input type="text" name="title" class="form-control"
+                   value="{{ seed.title|default:'' }}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Version</label>
+            <input type="number" name="version" class="form-control"
+                   value="{{ initial_version|default:'' }}">
+          </div>
+          <div class="col-md-1 d-flex align-items-end">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="is_active"
+                     {% if is_active_checked %}checked{% endif %}>
+              <label class="form-check-label">Active</label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label">Purpose</label>
+          <textarea name="purpose_text" class="form-control" rows="3">{{ seed.purpose_text|default:'' }}</textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Inputs</label>
+          <textarea name="inputs_text" class="form-control" rows="3">{{ seed.inputs_text|default:'' }}</textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Outputs</label>
+          <textarea name="outputs_text" class="form-control" rows="3">{{ seed.outputs_text|default:'' }}</textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Method Guidance</label>
+          <textarea name="method_guidance_text" class="form-control" rows="4">{{ seed.method_guidance_text|default:'' }}</textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Acceptance Tests</label>
+          <textarea name="acceptance_test_text" class="form-control" rows="3">{{ seed.acceptance_test_text|default:'' }}</textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">LLM Review Prompt</label>
+          <textarea name="llm_review_prompt_text" class="form-control" rows="3">{{ seed.llm_review_prompt_text|default:'' }}</textarea>
+        </div>
+        <div class="mb-0">
+          <label class="form-label">Policy JSON</label>
+          <textarea name="policy_json" class="form-control font-monospace" rows="8">{{ initial_policy|default:"{}" }}</textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="d-flex justify-content-end gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'accounts:system_phase_contracts_home' %}">Cancel</a>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

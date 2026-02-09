@@ -48,6 +48,33 @@ def is_project_manager(project: Project, user: AbstractUser) -> bool:
         role__name=Role.Name.MANAGER,
     ).exists()
 
+def is_project_committer(project: Project, user: AbstractUser) -> bool:
+    if not getattr(user, "is_authenticated", False):
+        return False
+    return project.owner_id == user.id
+
+def is_project_contributor(project: Project, user: AbstractUser) -> bool:
+    if not getattr(user, "is_authenticated", False):
+        return False
+    if project.owner_id == user.id:
+        return True
+    return ProjectMembership.objects.filter(
+        project=project,
+        user=user,
+        status=ProjectMembership.Status.ACTIVE,
+        effective_to__isnull=True,
+        role__in=[ProjectMembership.Role.CONTRIBUTOR, ProjectMembership.Role.MANAGER],
+    ).exists()
+
+def can_edit_pde(project: Project, user: AbstractUser) -> bool:
+    return is_project_committer(project, user) or is_project_contributor(project, user)
+
+def can_edit_ppde(project: Project, user: AbstractUser) -> bool:
+    return is_project_committer(project, user) or is_project_contributor(project, user)
+
+def can_edit_committee(project: Project, user: AbstractUser) -> bool:
+    return is_project_committer(project, user)
+
 
 def accessible_projects_qs(user: AbstractUser):
     """

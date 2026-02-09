@@ -6,6 +6,7 @@ from django.contrib.auth import views as auth_views
 from django.urls import path
 
 from . import views, views_system
+from projects import views_project
 
 app_name = "accounts"
 
@@ -20,12 +21,12 @@ urlpatterns = [
 
     # Dashboard
     path("dashboard/", views.dashboard, name="dashboard"),
-    path("projects/create/", views.project_create, name="project_create"),
+    path("projects/create/", views_project.project_create, name="project_create"),
 
     # Project chats
-    path("projects/<int:project_id>/chats/", views.project_chat_list, name="project_chat_list"),
-    path("projects/<int:project_id>/delete/", views.project_delete, name="project_delete"),
-    path("projects/<int:project_id>/home/", views.project_home, name="project_home"),
+    path("projects/<int:project_id>/chats/", views_project.project_chat_list, name="project_chat_list"),
+    path("projects/<int:project_id>/delete/", views_project.project_delete, name="project_delete"),
+    path("projects/<int:project_id>/home/", views_project.project_home, name="project_home"),
 
 
 
@@ -64,13 +65,20 @@ urlpatterns = [
         views_system.system_config_version_new,
         name="system_config_version_new",
     ),
+    path("config/system/contracts/", views_system.system_phase_contracts_home, name="system_phase_contracts_home"),
+    path("config/system/contracts/new/", views_system.system_phase_contract_edit, name="system_phase_contract_new"),
+    path(
+        "config/system/contracts/<int:contract_id>/",
+        views_system.system_phase_contract_edit,
+        name="system_phase_contract_edit",
+    ),
 
 
 
 
 
     # Active project (session)
-    path("active-project/", views.active_project_set, name="active_project_set"),
+    path("active-project/", views_project.active_project_set, name="active_project_set"),
 
     # Settings menu
     path("config/", views.config_menu, name="config_menu"),
@@ -81,15 +89,15 @@ urlpatterns = [
     path("config/user/info/", views.user_config_info, name="user_config_info"),
 
     # Project (L4)
-    path("config/projects/", views.project_config_list, name="project_config_list"),
-    path("config/projects/<int:project_id>/", views.project_config_edit, name="project_config_edit"),
-    path("projects/<int:project_id>/select/", views.project_select, name="project_select"),
+    path("config/projects/", views_project.project_config_list, name="project_config_list"),
+    path("config/projects/<int:project_id>/", views_project.project_config_edit, name="project_config_edit"),
+    path("projects/<int:project_id>/select/", views_project.project_select, name="project_select"),
     path(
         "config/projects/<int:project_id>/definitions/",
-        views.project_config_definitions,
+        views_project.project_config_definitions,
         name="project_config_definitions",
     ),
-    path("config/projects/<int:project_id>/info/", views.project_config_info, name="project_config_info"),
+    path("config/projects/<int:project_id>/info/", views_project.project_config_info, name="project_config_info"),
 
     # # Imports
     # path("imports/preview/", views.import_preview, name="import_preview"),

@@ -1099,10 +1099,136 @@ This prevents SYSTEM blocks expanding rows.
     }
 /* CKO Display for project definitions */
 
-.rw-cko-text {
+/* CKO document styling */
+.rw-cko-doc {
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-    font-size: 0.9rem;
-    line-height: 1.4;
-    white-space: normal;
-    word-break: break-word;
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+    .rw-cko-doc .cko-header {
+        padding-bottom: 0.75rem;
+        border-bottom: 1px solid rgba(0,0,0,0.08);
+        margin-bottom: 1rem;
+    }
+
+        .rw-cko-doc .cko-header h1 {
+            font-size: 1.25rem;
+            margin: 0 0 0.25rem 0;
+            font-weight: 700;
+        }
+
+    .rw-cko-doc .cko-meta {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.15rem;
+        color: rgba(0,0,0,0.65);
+        font-size: 0.85rem;
+    }
+
+    .rw-cko-doc section {
+        margin: 0 0 1rem 0;
+        padding: 0;
+    }
+
+        .rw-cko-doc section h2 {
+            font-size: 1.05rem;
+            margin: 0 0 0.4rem 0;
+            font-weight: 700;
+        }
+
+        .rw-cko-doc section h3 {
+            font-size: 0.95rem;
+            margin: 0.7rem 0 0.25rem 0;
+            font-weight: 600;
+            color: rgba(0,0,0,0.75);
+        }
+
+    .rw-cko-doc p {
+        margin: 0.25rem 0 0.5rem 0;
+    }
+
+    .rw-cko-doc ul {
+        margin: 0.25rem 0 0.5rem 0;
+        padding-left: 1.2rem;
+    }
+
+    .rw-cko-doc li {
+        margin: 0.15rem 0;
+    }
+
+
+
+.rw-btn-same {
+    height: 32px !important;
+    line-height: 32px !important;
+    padding: 0 12px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+}
+
+
+.rw-btn-file {
+    background-color: #3b82f6 !important;
+    border-color: #3b82f6 !important;
+    color: #fff !important;
+}
+
+
+.rw-status-project {
+    height: auto !important;
+    min-height: 0 !important;
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
+    justify-content: flex-start !important;
+}
+.rw-status-project .rw-status-label {
+    display: none !important;
+}
+.rw-status-project .rw-status-value {
+    margin: 0 !important;
+}
+
+
+.rw-row-controlled {
+    background-color: rgba(25, 135, 84, 0.12) !important;
+}
+.rw-row-sandbox {
+    background-color: rgba(255, 193, 7, 0.16) !important;
+}
+
+
+.rw-row-controlled > td {
+    background-color: rgba(25, 135, 84, 0.12) !important;
+}
+.rw-row-sandbox > td {
+    background-color: rgba(255, 193, 7, 0.16) !important;
+}
+
+
+.rw-row-active-chat > td {
+    background-color: rgba(59, 130, 246, 0.18) !important;
+}
+
+
+.rw-topbar-btn {
+    }
+
+
+.rw-topbar-btn {
+    font-size: 0.85rem !important;
+    padding: 0.2rem 0.5rem !important;
+    line-height: 1.1 !important;
+}
+
+
+.rw-btn-blue {
+    background-color: #3b82f6 !important;
+    border-color: #3b82f6 !important;
+    color: #fff !important;
+}
+.rw-btn-outline-blue {
+    background-color: transparent !important;
+    border-color: #3b82f6 !important;
+    color: #3b82f6 !important;
 }

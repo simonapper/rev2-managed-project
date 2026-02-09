@@ -5,17 +5,47 @@ from __future__ import annotations
 
 from django import forms
 from django.contrib import admin
+from django.contrib import messages
+from django.db import transaction
 from django.utils.html import format_html
 
 from config.models import ConfigRecord, ConfigScope
 from .models import (
     AuditLog,
     Folder,
+    PhaseContract,
     Project,
     ProjectMembership,
     ProjectPolicy,
     UserProjectPrefs,
 )
+
+
+@admin.register(PhaseContract)
+class PhaseContractAdmin(admin.ModelAdmin):
+    list_display = ("key", "title", "version", "is_active", "created_at", "created_by")
+    list_filter = ("key", "is_active")
+    search_fields = ("key", "title")
+    readonly_fields = ("created_at", "created_by")
+    actions = ["activate_contract_version"]
+
+    def save_model(self, request, obj, form, change):
+        if not obj.created_by:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+    @admin.action(description="Activate selected contract version")
+    def activate_contract_version(self, request, queryset):
+        if queryset.count() != 1:
+            self.message_user(request, "Select exactly one contract version to activate.", level=messages.ERROR)
+            return
+        contract = queryset.first()
+        if not contract:
+            return
+        with transaction.atomic():
+            PhaseContract.objects.filter(key=contract.key).update(is_active=False)
+            PhaseContract.objects.filter(pk=contract.pk).update(is_active=True)
+        self.message_user(request, f"Activated {contract.key} v{contract.version}.", level=messages.SUCCESS)
 
 
 # ------------------------------------------------------------

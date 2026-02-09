@@ -1,0 +1,88 @@
+﻿{# templates/projects/cko/project_cko.html #}
+{# 7-bit ASCII only. #}
+{# Body-only template. Header/meta is rendered by cko_preview.html (authoritative). #}
+
+<div class="cko-doc">
+
+  <section>
+    <h2>Canonical summary</h2>
+    <p>{{ fields.canonical_summary|default:"(not set)" }}</p>
+  </section>
+
+  <section>
+    <h2>Identity</h2>
+    <ul>
+      <li><strong>Project type:</strong> {{ fields.identity_project_type|default:"(not set)" }}</li>
+      <li><strong>Project status:</strong> {{ fields.identity_project_status|default:"(not set)" }}</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Intent</h2>
+
+    <h3>Primary goal</h3>
+    <p>{{ fields.intent_primary_goal|default:"(not set)" }}</p>
+
+    <h3>Success criteria</h3>
+    <p>{{ fields.intent_success_criteria|default:"(not set)" }}</p>
+  </section>
+
+  <section>
+    <h2>Scope</h2>
+
+    <h3>In-scope</h3>
+    <p>{{ fields.scope_in_scope|default:"(not set)" }}</p>
+
+    <h3>Out-of-scope</h3>
+    <p>{{ fields.scope_out_of_scope|default:"(not set)" }}</p>
+
+    <h3>Hard constraints</h3>
+    <p>{{ fields.scope_hard_constraints|default:"(not set)" }}</p>
+  </section>
+
+  <section>
+    <h2>Authority model</h2>
+
+    <h3>Primary authorities</h3>
+    <p>{{ fields.authority_primary|default:"(not set)" }}</p>
+
+    <h3>Secondary authorities</h3>
+    <p>{{ fields.authority_secondary|default:"(not set)" }}</p>
+
+    <h3>Deviation rules</h3>
+    <p>{{ fields.authority_deviation_rules|default:"(not set)" }}</p>
+  </section>
+
+  <section>
+    <h2>Interpretive posture</h2>
+
+    <h3>Assumptions and uncertainties</h3>
+    <p>{{ fields.posture_epistemic_constraints|default:"(not set)" }}</p>
+
+    <h3>Innovation rules</h3>
+    <p>{{ fields.posture_novelty_rules|default:"(not set)" }}</p>
+  </section>
+
+  <section>
+    <h2>Storage and durability</h2>
+    <p><strong>Artefact root:</strong> {{ fields.storage_artefact_root_ref|default:"(not set)" }}</p>
+  </section>
+
+  <section>
+    <h2>Canonical context</h2>
+    <p>{{ fields.context_narrative|default:"(not set)" }}</p>
+  </section>
+
+  <section>
+    <h2>Stability declaration</h2>
+    <ul>
+      <li>Internally consistent</li>
+      <li>Governed by the stated authority model</li>
+      <li>Safe to use as canonical project truth</li>
+    </ul>
+    <p>
+      Any deviation must be deliberate, versioned, and documented.
+    </p>
+  </section>
+
+</div>

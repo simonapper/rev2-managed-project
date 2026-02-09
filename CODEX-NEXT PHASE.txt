@@ -1,0 +1,263 @@
+# ============================================================
+# CODEX INSTRUCTION SET — Topic Chats for PDE + PPDE (One chat per user per topic)
+# This file governs the creation, approval, dispute, and retirement of organisational anchor points.
+# ============================================================
+# Title: Add per-section "Topic Chat" for PDE + PPDE with DB binding
+# Date: 2026-02-09 (Europe/London)
+# Owner: Simon Napper
+# Scope: PDE + PPDE section-level chats; minimal UI + durable binding
+# ============================================================
+
+# Canonical Summary (<=10 words)
+Bind one topic chat per user per section.
+
+# ------------------------------------------------------------
+# 1) Goal
+# ------------------------------------------------------------
+- Replace the single general Help chat concept with per-section Topic Chats.
+- If user can edit a section, they can open a dedicated chat for that topic.
+- One chat per user per topic per project. Re-open existing if already created.
+- Works for:
+  - PDE field sections (spec.key)
+  - PPDE planning purpose section
+  - PPDE each stage section
+- Topic chats persist and can be returned to later.
+
+# ------------------------------------------------------------
+# Add: 2) Control invariant (replacement)
+# ------------------------------------------------------------
+Replace section 2 with:
+
+# 2) Control invariant (authoritative)
+- All topic chats launched from PDE/PPDE sections are CONTROLLED.
+- The chat goal is to produce an improved draft for that specific section only.
+- If the user wants open-ended exploration, they must use a Sandbox chat instead.
+- Topic chat seeding must include:
+  - section identity (scope + topic_key + label)
+  - current draft content
+  - explicit output expectation (e.g., JSON-only for PPDE stage schema)
+  - explicit success criteria: "ready to paste into the section"
+# ------------------------------------------------------------
+# 3) Database change: add binding model
+# ------------------------------------------------------------
+Add model in projects/models.py (or appropriate app if chats are separate; choose the app that already depends on both project + chat models without circular import).
+Name: ProjectTopicChat
+
+Fields (minimum):
+- project: FK to Project, on_delete=CASCADE
+- user: FK to AUTH_USER_MODEL, on_delete=CASCADE
+- scope: CharField(max_length=16)  # "PDE" or "PPDE"
+- topic_key: CharField(max_length=200)  # deterministic stable key
+- chat: OneToOneField to ChatWorkspace, on_delete=CASCADE
+  (must be one-to-one so a chat cannot be bound to multiple topics)
+- created_at: DateTimeField(auto_now_add=True)
+- updated_at: DateTimeField(auto_now=True)
+
+Constraint:
+- UniqueConstraint(fields=["project","user","scope","topic_key"], name="uq_project_topic_chat")
+
+Index:
+- add db_index=True on scope and topic_key (optional)
+
+Migration:
+- Create migration for ProjectTopicChat.
+
+Admin (optional but quick):
+- register ProjectTopicChat in admin read-only (list display project/user/scope/topic_key/chat/updated_at).
+
+# ------------------------------------------------------------
+# 4) Deterministic topic_key rules
+# ------------------------------------------------------------
+PDE:
+- scope="PDE"
+- topic_key = "FIELD:" + <spec.key>
+  Example: "FIELD:intent.primary_goal"
+
+PPDE:
+- scope="PPDE"
+- planning purpose: topic_key="PURPOSE"
+- stage: topic_key="STAGE:" + <stage_id>  (use DB id, stable enough for working draft)
+  Example: "STAGE:17"
+
+Do NOT use titles for keys.
+
+# ------------------------------------------------------------
+# 5) Chat seeding contract (dynamic; no new PhaseContract)
+# ------------------------------------------------------------
+When creating a new topic chat, seed it with:
+- Where you are (scope + topic_key + human label)
+- Current draft content of the section (field value / purpose text / stage JSON)
+- Goal statement:
+  - PDE: "Help produce a better draft for <field label> that satisfies acceptance criteria."
+  - PPDE purpose: "Help produce an execution-oriented Planning Purpose (3-6 sentences)."
+  - PPDE stage: "Help produce a revised Stage N draft matching the stage schema."
+- Output requirement:
+  - PDE: return "Suggested replacement text" (plain text) OR "JSON" if your PDE field expects JSON. Default: plain text.
+  - PPDE stage: return JSON only matching stage schema.
+  - PPDE purpose: return JSON only: {"planning_purpose": "..."}.
+
+Use existing LLM system blocks patterns already in your codebase:
+- Use project + chat context resolution (CONTROLLED/LOOSE as per Q1/default).
+- Keep messages short; no long preambles.
+
+# ------------------------------------------------------------
+# 6) Service function: get_or_create_topic_chat
+# ------------------------------------------------------------
+Create helper in a small service module (choose location consistent with your code layout):
+- projects/services_topic_chat.py (recommended)
+
+Function signature:
+- def get_or_create_topic_chat(*, project: Project, user: User, scope: str, topic_key: str,
+                               title: str, seed_user_text: str,
+                               mode: str) -> ChatWorkspace
+
+Behaviour:
+1) Look up ProjectTopicChat by (project,user,scope,topic_key).
+2) If exists:
+   - return bound chat.
+3) If not:
+   - create new ChatWorkspace with:
+     - project set (or project membership link as your schema uses)
+     - title = title
+     - any chat mode flags set (CONTROLLED/LOOSE)
+   - create initial messages:
+     - system blocks already handled by your normal chat pipeline
+     - create a first USER message containing seed_user_text
+   - create ProjectTopicChat binding pointing to chat
+   - return chat
+
+Note:
+- If your ChatWorkspace creation requires more fields, follow existing create-chat code paths.
+- Do NOT duplicate chat creation logic in views; keep it in this helper.
+
+# ------------------------------------------------------------
+# 7) PDE UI: add "Topic chat" button per field section
+# ------------------------------------------------------------
+Where:
+- templates/projects/pde_detail.html (or the template that renders each PDE spec block)
+
+UI rule:
+- Only show if user can edit that field (same condition you use to enable propose/edit UI).
+
+Button:
+- Label: "Topic chat"
+- Action: POST to a new view endpoint:
+  - projects: pde_topic_chat_open (name example)
+  - includes hidden inputs:
+    - project_id
+    - spec_key
+
+Behaviour:
+- On POST, view calls get_or_create_topic_chat with:
+  scope="PDE"
+  topic_key="FIELD:" + spec_key
+  title = "PDE: " + <spec label>
+  seed_user_text = includes:
+    - field label
+    - current value text
+    - acceptance hints (use spec.summary / required / any known acceptance rule)
+    - explicit goal: "Produce improved draft text for this field."
+
+Redirect to chat_detail for the returned chat.
+
+# ------------------------------------------------------------
+# 8) PPDE UI: add "Topic chat" button for purpose + each stage
+# ------------------------------------------------------------
+Where:
+- templates/projects/ppde_detail.html
+
+Purpose block:
+- Show button if can edit PPDE purpose.
+- POST to ppde_topic_chat_open with:
+  - project_id
+  - topic_type="PURPOSE"
+
+Stage blocks:
+- Show button if can edit that stage (same condition as stage edit/propose).
+- POST includes:
+  - project_id
+  - topic_type="STAGE"
+  - stage_id
+
+Behaviour:
+- scope="PPDE"
+- topic_key:
+  - PURPOSE
+  - STAGE:<stage_id>
+- title:
+  - "PPDE Purpose"
+  - "PPDE Stage <order_index>: <stage_title>"
+- seed_user_text:
+  - include planning purpose (for stage chats)
+  - include full current stage JSON-like fields
+  - goal: "Return JSON only matching stage schema."
+
+Redirect to chat.
+
+# ------------------------------------------------------------
+# 9) New endpoints (views) required
+# ------------------------------------------------------------
+Add two minimal POST handlers:
+
+A) projects/views_pde_ui.py (or wherever PDE detail lives)
+- def pde_topic_chat_open(request, project_id):
+  - validate membership + edit permission for spec_key
+  - build seed
+  - call get_or_create_topic_chat
+  - redirect to chat
+
+B) projects/views_ppde_ui.py
+- def ppde_topic_chat_open(request, project_id):
+  - validate membership + edit permission for purpose or stage
+  - build seed
+  - call get_or_create_topic_chat
+  - redirect to chat
+
+Add URL routes:
+- path("projects/<int:project_id>/pde/topic-chat/", pde_topic_chat_open, name="pde_topic_chat_open")
+- path("projects/<int:project_id>/ppde/topic-chat/", ppde_topic_chat_open, name="ppde_topic_chat_open")
+
+Keep them POST-only; return 405 otherwise.
+
+# ------------------------------------------------------------
+# 10) Permission rules (must enforce server-side)
+# ------------------------------------------------------------
+- If user cannot edit the target section:
+  - messages.error("You do not have permission to open a topic chat for this section.")
+  - redirect back
+
+Do not rely on template gating alone.
+
+# ------------------------------------------------------------
+# 11) "Come back to it" navigation
+# ------------------------------------------------------------
+No new UI needed if the chat is reachable from the button.
+Optional small improvement:
+- On PDE/PPDE sections, if a topic chat exists, change label:
+  - "Open topic chat" (instead of "Topic chat")
+This is derived by checking ProjectTopicChat existence in view context.
+Implement only if easy; otherwise skip for phase 1.
+
+# ------------------------------------------------------------
+# 12) Acceptance checks
+# ------------------------------------------------------------
+PDE:
+1) For an editable field, click Topic chat:
+   - first time creates chat and seeds with context
+   - second time reopens the same chat (same chat_id)
+2) For non-editable field:
+   - no button; direct POST blocked with error.
+
+PPDE:
+1) Purpose Topic chat: create once, reopen thereafter.
+2) Stage Topic chat: per stage id, create once, reopen thereafter.
+3) Non-editable stage: no button; POST blocked.
+
+DB:
+- ProjectTopicChat rows created with unique constraint.
+- No duplicate chats created for same (project,user,scope,topic_key).
+
+# ============================================================
+# End CODEX INSTRUCTION SET
+# ============================================================
+

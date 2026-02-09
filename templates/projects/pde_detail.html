@@ -9,8 +9,7 @@
   <div class="rw-workarea">
     <div class="row g-3">
 
-      <!-- Left: seed + controls + fields -->
-      <div class="col-12 col-lg-9">
+      <div class="col-12">
         <div class="card shadow-sm">
           <div class="card-body">
 
@@ -18,20 +17,6 @@
               <div>
                 <div class="fw-semibold">Project Definition Environment</div>
                 <div class="small text-secondary">Draft -> validate -> lock -> commit (DEFINED).</div>
-              </div>
-
-              <div class="d-flex gap-2">
-                <form method="post" class="m-0">
-                  {% csrf_token %}
-                  <input type="hidden" name="action" value="save_exit" />
-                  <button class="btn btn-sm btn-outline-secondary" type="submit">Save and Exit</button>
-                </form>
-
-                <form method="post" class="m-0" id="pdeValidateTopForm">
-                  {% csrf_token %}
-                  <input type="hidden" name="action" value="validate_lock" />
-                  <button class="btn btn-sm btn-primary" type="submit">Validate and Lock</button>
-                </form>
               </div>
             </div>
 
@@ -56,7 +41,9 @@
 
                 <div class="d-flex align-items-center justify-content-between mt-2">
                   <div class="small text-secondary">Tip: keep it concrete. One or two paragraphs is enough.</div>
-                  <button class="btn btn-sm btn-outline-primary" type="submit">Draft PDE from Seed</button>
+                  {% if pde_can_commit %}
+                    <button class="btn btn-sm btn-outline-primary" type="submit">Draft PDE from Seed</button>
+                  {% endif %}
                 </div>
               </form>
             </div>
@@ -66,157 +53,161 @@
             <!-- 2) Field blocks (draft + refinement) -->
             <form method="post" class="m-0" id="pdeFieldsForm">
               {% csrf_token %}
-              <input type="hidden" name="action" value="validate_lock" />
+              <input type="hidden" name="action" id="pdeAction" value="" />
+              <input type="hidden" name="field_key" id="pdeFieldKey" value="" />
+              <input type="hidden" name="value_text" id="pdeValueText" value="" />
 
               {% for spec in specs %}
-                  {# Use 1-based index and force it to a string for safe concatenation #}
-                  {% with idx=forloop.counter|stringformat:"s" %}
-                  {% with ta_id="pde-field-"|add:idx %}
-                  <div id="{{ spec.key }}" class="mb-4">
+                {# Use 1-based index and force it to a string for safe concatenation #}
+                {% with idx=forloop.counter|stringformat:"s" %}
+                {% with ta_id="pde-field-"|add:idx %}
+                <div id="pde-field-{{ spec.key }}" class="mb-4">
 
-                    <div class="d-flex align-items-start justify-content-between gap-3">
-                      <div class="min-w-0">
-                        <div class="fw-semibold">{{ spec.label }}</div>
+                  <div class="d-flex align-items-start justify-content-between gap-3">
+                    <div class="min-w-0">
+                      <div class="fw-semibold">{{ spec.label }}</div>
 
-                        {% if spec.summary %}
-                          <div class="small text-secondary">{{ spec.summary }}</div>
-                        {% endif %}
+                      {% if spec.summary %}
+                        <div class="small text-secondary">{{ spec.summary }}</div>
+                      {% endif %}
 
-                        <div class="small text-muted mt-1">
-                          {{ spec.tier }}{% if spec.required %} — required{% endif %}
-                          {% if spec.status %} — <span class="fw-semibold">{{ spec.status }}</span>{% endif %}
-                        </div>
-                      </div>
-
-                      <div class="text-end">
-                        {% if spec.status == "PASS_LOCKED" %}
-                          <span class="badge bg-success">Locked</span>
-                        {% elif spec.status == "PROPOSED" %}
-                          <span class="badge bg-warning text-dark">Proposed</span>
-                        {% else %}
-                          <span class="badge bg-secondary">Draft</span>
+                      <div class="small text-muted mt-1">
+                        {{ spec.tier }}{% if spec.required %} — required{% endif %}
+                        {% if spec.status %}
+                          — <span class="fw-semibold">
+                            {% if spec.status == "PROPOSED" %}
+                              PROPOSED{% if spec.proposed_by %} ({{ spec.proposed_by }}){% endif %}
+                            {% elif spec.status == "PASS_LOCKED" %}
+                              LOCKED{% if spec.locked_by %} ({{ spec.locked_by }}){% endif %}
+                            {% else %}
+                              {{ spec.status }}
+                            {% endif %}
+                          </span>
                         {% endif %}
                       </div>
                     </div>
 
-                    {% if spec.help_text %}
-                      <details class="mt-2">
-                        <summary class="small text-primary" style="cursor:pointer;">What to write here</summary>
-                        <div class="small text-muted mt-2" style="white-space:pre-wrap;">{{ spec.help_text }}</div>
-                      </details>
-                    {% endif %}
-
-                    <div class="mt-2">
-                      <textarea class="form-control"
-                                id="{{ ta_id }}"
-                                name="{{ spec.key }}"
-                                rows="4"
-                                style="font-size:0.9rem;"
-                                {% if spec.status == "PASS_LOCKED" %}readonly{% endif %}>{{ spec.value_text }}</textarea>
+                    <div class="text-end">
+                      {% if spec.status == "PASS_LOCKED" %}
+                        <span class="badge bg-success">Locked</span>
+                      {% elif spec.status == "PROPOSED" %}
+                        <span class="badge bg-warning text-dark">Proposed</span>
+                      {% else %}
+                        <span class="badge bg-secondary">Draft</span>
+                      {% endif %}
                     </div>
-
-                    <!-- Validation output -->
-                    {% if spec.last_validation %}
-                      {% if spec.last_validation.issues %}
-                        <div class="mt-2 text-danger small">
-                          <div class="fw-semibold">Issues</div>
-                          <ul class="mb-0">
-                            {% for it in spec.last_validation.issues %}
-                              <li>{{ it }}</li>
-                            {% endfor %}
-                          </ul>
-                        </div>
-                      {% endif %}
-
-                      {% if spec.last_validation.questions %}
-                        <div class="mt-2 small">
-                          <div class="fw-semibold">Questions</div>
-                          <ul class="mb-0">
-                            {% for q in spec.last_validation.questions %}
-                              <li>{{ q }}</li>
-                            {% endfor %}
-                          </ul>
-                        </div>
-                      {% endif %}
-
-                      {% if spec.last_validation.suggested_revision %}
-                        <div class="rw-cde-suggestion mt-2">
-                          <div class="fw-semibold mb-1">Suggested revision</div>
-
-                          <div class="rw-cde-suggest-text" style="white-space:pre-wrap;">{{ spec.last_validation.suggested_revision|default:"" }}</div>
-
-                          {% if spec.status != "PASS_LOCKED" %}
-                            {% with suggest_id="pde-suggest-"|add:idx %}
-                              <textarea id="{{ suggest_id }}" class="d-none" aria-hidden="true">{{ spec.last_validation.suggested_revision|default:"" }}</textarea>
-
-                              <div class="rw-suggest-actions mt-2">
-                                <button type="button"
-                                        class="btn btn-sm btn-outline-primary rw-suggest-btn"
-                                        data-target="{{ ta_id }}"
-                                        data-suggest-id="{{ suggest_id }}">
-                                  <div class="rw-suggest-title">Use suggested text</div>
-                                  <div class="rw-suggest-sub">(fills box only)</div>
-                                </button>
-                              </div>
-                            {% endwith %}
-                          {% endif %}
-                        </div>
-                      {% endif %}
-                    {% endif %}
-
-                    <hr class="mt-3" />
                   </div>
-                  {% endwith %}
-                  {% endwith %}
-                {% endfor %}
 
-              <div class="d-flex gap-2">
-                <button class="btn btn-sm btn-primary" type="submit">Validate and Lock</button>
+                  {% if spec.help_text %}
+                    <details class="mt-2">
+                      <summary class="small text-primary" style="cursor:pointer;">What to write here</summary>
+                      <div class="small text-muted mt-2" style="white-space:pre-wrap;">{{ spec.help_text }}</div>
+                    </details>
+                  {% endif %}
 
-                <button class="btn btn-sm btn-outline-secondary"
-                        type="submit"
-                        name="action"
-                        value="save_exit">
-                  Save and Exit
-                </button>
-              </div>
+                  <div class="mt-2">
+                    <textarea class="form-control"
+                              id="{{ ta_id }}"
+                              name="{{ spec.key }}"
+                              rows="4"
+                              style="font-size:0.9rem;"
+                              {% if spec.status == "PASS_LOCKED" or spec.status == "PROPOSED" and not pde_can_commit %}readonly{% endif %}>{{ spec.value_text }}</textarea>
+                  </div>
+
+                  <div class="d-flex gap-2 mt-2">
+                    {% if spec.status == "DRAFT" %}
+                      <button class="btn btn-sm btn-outline-primary rw-field-action"
+                              type="button"
+                              data-action="propose_lock"
+                              data-field-key="{{ spec.key }}">
+                        {% if pde_can_commit %}Validate &amp; Lock{% else %}Propose Lock{% endif %}
+                      </button>
+                    {% endif %}
+
+                    {% if spec.status == "PROPOSED" and pde_can_commit %}
+                      <button class="btn btn-sm btn-success rw-field-action"
+                              type="button"
+                              data-action="approve_lock"
+                              data-field-key="{{ spec.key }}">
+                        Approve Lock
+                      </button>
+                    {% endif %}
+
+                    {% if spec.status == "PROPOSED" and pde_can_commit %}
+                      <button class="btn btn-sm btn-outline-secondary rw-field-action"
+                              type="button"
+                              data-action="reopen_field"
+                              data-field-key="{{ spec.key }}">
+                        Reopen
+                      </button>
+                    {% endif %}
+
+                    {% if spec.status == "PASS_LOCKED" and pde_can_commit %}
+                      <button class="btn btn-sm btn-outline-secondary rw-field-action"
+                              type="button"
+                              data-action="reopen_field"
+                              data-field-key="{{ spec.key }}">
+                        Reopen
+                      </button>
+                    {% endif %}
+                  </div>
+
+                  <!-- Validation output -->
+                  {% if spec.last_validation and show_validation_key and show_validation_key == spec.key %}
+                    {% if spec.last_validation.issues %}
+                      <div class="mt-2 text-danger small">
+                        <div class="fw-semibold">Issues</div>
+                        <ul class="mb-0">
+                          {% for it in spec.last_validation.issues %}
+                            <li>{{ it }}</li>
+                          {% endfor %}
+                        </ul>
+                      </div>
+                    {% endif %}
+
+                    {% if spec.last_validation.questions %}
+                      <div class="mt-2 small">
+                        <div class="fw-semibold">Questions</div>
+                        <ul class="mb-0">
+                          {% for q in spec.last_validation.questions %}
+                            <li>{{ q }}</li>
+                          {% endfor %}
+                        </ul>
+                      </div>
+                    {% endif %}
+
+                    {% if spec.last_validation.suggested_revision %}
+                      <div class="rw-cde-suggestion mt-2">
+                        <div class="fw-semibold mb-1">Suggested revision</div>
+
+                        <div class="rw-cde-suggest-text" style="white-space:pre-wrap;">{{ spec.last_validation.suggested_revision|default:"" }}</div>
+
+                        {% if spec.status != "PASS_LOCKED" %}
+                          {% with suggest_id="pde-suggest-"|add:idx %}
+                            <textarea id="{{ suggest_id }}" class="d-none" aria-hidden="true">{{ spec.last_validation.suggested_revision|default:"" }}</textarea>
+
+                            <div class="rw-suggest-actions mt-2">
+                              <button type="button"
+                                      class="btn btn-sm btn-outline-primary rw-suggest-btn"
+                                      data-target="{{ ta_id }}"
+                                      data-suggest-id="{{ suggest_id }}">
+                                <div class="rw-suggest-title">Use suggested text</div>
+                                <div class="rw-suggest-sub">(fills box only)</div>
+                              </button>
+                            </div>
+                          {% endwith %}
+                        {% endif %}
+                      </div>
+                    {% endif %}
+                  {% endif %}
+
+                  <hr class="mt-3" />
+                </div>
+                {% endwith %}
+                {% endwith %}
+              {% endfor %}
             </form>
 
-          </div>
-        </div>
-      </div>
-
-      <!-- Right: quick status / reminders -->
-      <div class="col-12 col-lg-3">
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <div class="fw-semibold">Status</div>
-
-            {% if pde_status_badge %}
-              <div class="mt-2">
-                <span class="badge {{ pde_status_badge.class }}">{{ pde_status_badge.text }}</span>
-              </div>
-            {% endif %}
-
-            <div class="small text-secondary mt-3">
-              Locked fields are read-only. Use "Validate and Lock" after edits.
-            </div>
-
-            {% if all_locked %}
-              <div class="small text-success mt-3 fw-semibold">All required fields locked. Ready to commit.</div>
-
-              <form method="post"
-                    action="{% url 'projects:pde_commit' project.id %}"
-                    class="mt-2">
-                {% csrf_token %}
-                <button type="submit" class="btn btn-success w-100">
-                  Commit and Make defined
-                </button>
-              </form>
-
-            {% else %}
-              <div class="small text-secondary mt-3">Lock the required fields to enable commit.</div>
-            {% endif %}
           </div>
         </div>
       </div>
@@ -244,6 +235,46 @@
 
     ta.value = (suggestEl.value || suggestEl.textContent || '');
     ta.focus();
+  });
+
+  function submitFieldAction(action, fieldKey) {
+    var form = document.getElementById('pdeFieldsForm');
+    if (!form) return;
+    var actionEl = document.getElementById('pdeAction');
+    var keyEl = document.getElementById('pdeFieldKey');
+    var valEl = document.getElementById('pdeValueText');
+    if (actionEl) actionEl.value = action || '';
+    if (keyEl) keyEl.value = fieldKey || '';
+    if (valEl) valEl.value = '';
+
+    if ((action === 'propose_lock' || action === 'approve_lock') && fieldKey) {
+      var ta = null;
+      try {
+        var list = document.getElementsByName(fieldKey);
+        if (list && list.length) ta = list[0];
+      } catch (e) {}
+      if (ta && valEl) valEl.value = ta.value || '';
+    }
+    form.submit();
+  }
+
+  document.addEventListener('click', function (ev) {
+    var btn = ev.target.closest('.rw-field-action');
+    if (!btn) return;
+    var action = btn.getAttribute('data-action') || '';
+    var fieldKey = btn.getAttribute('data-field-key') || '';
+    if (!action || !fieldKey) return;
+    submitFieldAction(action, fieldKey);
+  });
+
+  document.addEventListener('click', function (ev) {
+    var btn = ev.target.closest('.rw-pde-validate-btn');
+    if (!btn) return;
+    var form = document.getElementById('pdeFieldsForm');
+    if (!form) return;
+    var actionEl = document.getElementById('pdeAction');
+    if (actionEl) actionEl.value = 'validate_lock';
+    form.submit();
   });
 })();
 </script>

@@ -3,14 +3,14 @@
     "",
     "\\chats",
     "\\chats\\services",
-    "\\config",
-    "\\projects",
-    "\\projects\\services",
+    "\\navigator",
     "\\templates",
     "\\templates\\accounts",
-    "\\templates\\config_ui",
-    "\\templates\\config_ui\\system"
+    "\\templates\\partials",
+    "\\templates\\projects",
+    "\\templates\\projects\\cko",
+    "\\workbench"
   ],
-  "SelectedNode": "\\chats\\services\\llm.py",
+  "SelectedNode": "\\projects\\views_ppde_ui.py",
   "PreviewInSolutionExplorer": false
 }

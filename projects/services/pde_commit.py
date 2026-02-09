@@ -14,6 +14,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
+from django.utils.html import strip_tags
 
 from projects.models import Project, ProjectPolicy, ProjectDefinitionField, ProjectCKO
 
@@ -36,91 +37,37 @@ def _fmt_block(title: str, body: str) -> str:
     return "\n".join(lines)
 
 
-def _render_project_cko_text(project: Project, locked_fields: Dict[str, str]) -> str:
-    now = timezone.now().date().isoformat()
+from django.template.loader import render_to_string
 
+def _render_project_cko_html(project: Project, locked_fields: Dict[str, str]) -> str:
     def g(k: str) -> str:
         return (locked_fields.get(k) or "").strip()
 
-    lines = []
-    lines.append("# ============================================================")
-    lines.append("# PROJECT CKO - CANONICAL DEFINITION")
-    lines.append(
-        "# This file governs the creation, approval, dispute, and retirement of organisational anchor points."
-    )
-    lines.append("# ============================================================")
-    lines.append("# CKO ID: CKO-PROJECT-{0:06d}".format(project.id))
-    lines.append("# Project Name: " + (project.name or "").strip())
-    lines.append("# Owner: " + (getattr(project.owner, "username", "") or "").strip())
-    lines.append("# Date: " + now)
-    lines.append("# Status: DRAFT")
-    lines.append("")
+    ctx = {
+        "project": project,
+        "today": timezone.now().date().isoformat(),
+        "owner_username": (getattr(project.owner, "username", "") or "").strip(),
+        "fields": {
+            "canonical_summary": g("canonical.summary"),
+            "identity_project_type": g("identity.project_type"),
+            "identity_project_status": g("identity.project_status"),
+            "intent_primary_goal": g("intent.primary_goal"),
+            "intent_success_criteria": g("intent.success_criteria"),
+            "scope_in_scope": g("scope.in_scope"),
+            "scope_out_of_scope": g("scope.out_of_scope"),
+            "scope_hard_constraints": g("scope.hard_constraints"),
+            "authority_primary": g("authority.primary"),
+            "authority_secondary": g("authority.secondary"),
+            "authority_deviation_rules": g("authority.deviation_rules"),
+            "posture_epistemic_constraints": g("posture.epistemic_constraints"),
+            "posture_novelty_rules": g("posture.novelty_rules"),
+            "storage_artefact_root_ref": g("storage.artefact_root_ref"),
+            "context_narrative": g("context.narrative"),
+        },
+    }
 
-    lines.append(_fmt_block("CANONICAL SUMMARY (<=10 words)", g("canonical.summary")).rstrip())
-    lines.append(
-        _fmt_block(
-            "IDENTITY (WHAT)",
-            "Project Type: {0}\nProject Status: {1}".format(
-                g("identity.project_type"), g("identity.project_status")
-            ),
-        ).rstrip()
-    )
-    lines.append(
-        _fmt_block(
-            "INTENT (WHY)",
-            "Primary Goal:\n{0}\n\nSuccess / Acceptance Criteria:\n{1}".format(
-                g("intent.primary_goal"), g("intent.success_criteria")
-            ),
-        ).rstrip()
-    )
-    lines.append(
-        _fmt_block(
-            "SCOPE (BOUNDARIES)",
-            "In-Scope:\n{0}\n\nOut-of-Scope:\n{1}\n\nHard Constraints:\n{2}".format(
-                g("scope.in_scope"), g("scope.out_of_scope"), g("scope.hard_constraints")
-            ),
-        ).rstrip()
-    )
-    lines.append(
-        _fmt_block(
-            "AUTHORITY MODEL (TRUTH RESOLUTION)",
-            "Primary Authorities:\n{0}\n\nSecondary Authorities:\n{1}\n\nDeviation Rules:\n{2}".format(
-                g("authority.primary"), g("authority.secondary"), g("authority.deviation_rules")
-            ),
-        ).rstrip()
-    )
-    lines.append(
-        _fmt_block(
-            "INTERPRETIVE / OPERATING POSTURE (HOW)",
-            "Interpretive Rules:\n{0}\n\nEpistemic Constraints:\n{1}\n\nNovelty Rules:\n{2}".format(
-                g("posture.interpretive_rules"),
-                g("posture.epistemic_constraints"),
-                g("posture.novelty_rules"),
-            ),
-        ).rstrip()
-    )
-    lines.append(
-        _fmt_block(
-            "STORAGE & DURABILITY (WHERE TRUTH LIVES)",
-            "Artefact Root:\n{0}\n\nCanonical Artefact Types:\n{1}\n\nNon-Authoritative:\n{2}".format(
-                g("storage.artefact_root_ref"),
-                g("storage.canonical_artefact_types"),
-                g("storage.non_authoritative"),
-            ),
-        ).rstrip()
-    )
-    lines.append(_fmt_block("CANONICAL CONTEXT (REFERENCE NARRATIVE)", g("context.narrative")).rstrip())
-    lines.append(
-        _fmt_block(
-            "STABILITY DECLARATION",
-            "This CKO is:\n- Internally consistent\n- Governed by the stated authority model\n- Safe to use as canonical project truth\n\nAny deviation must be deliberate, versioned, and documented.",
-        ).rstrip()
-    )
-    lines.append("# ============================================================")
-    lines.append("# END PROJECT CKO")
-    lines.append("# ============================================================")
-    lines.append("")
-    return "\n".join(lines)
+    html = render_to_string("projects/cko/project_cko.html", ctx)
+    return (html or "").replace("\r\n", "\n").strip() + "\n"
 
 
 def _require_locked(project: Project, required_keys: list[str]) -> Dict[str, str]:
@@ -195,7 +142,9 @@ def commit_project_definition(
         rel_path = os.path.join(chosen_root, filename).replace("\\", "/")
         full_path = os.path.join(settings.MEDIA_ROOT, rel_path)
 
-        text = _render_project_cko_text(project, locked)
+        html = _render_project_cko_html(project, locked)
+        text = strip_tags(html)   # optional but recommended
+
         with open(full_path, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
 
@@ -220,6 +169,7 @@ def commit_project_definition(
             version=new_version,
             status=ProjectCKO.Status.DRAFT,
             rel_path=rel_path,
+            content_html=html,
             content_text=text,
             field_snapshot=dict(locked),
             created_by=project.owner,

@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, Tuple
 from chats.models import ChatWorkspace, ChatMessage
 from chats.services.cde_loop import run_cde
 from chats.services.cde_injection import build_cde_system_blocks
-from projects.models import Project
+from projects.models import Project, ProjectPlanningPurpose, ProjectPlanningStage
 
 
 # NOTE: keep existing imports and existing logic you already have for:
@@ -33,6 +33,13 @@ def bootstrap_chat(
     
     if project.defined_cko_id is None and project.kind != Project.Kind.SANDBOX:
         raise ValueError("Project is not initialised (no accepted CKO).")
+    if project.kind != Project.Kind.SANDBOX:
+        ppde_started = (
+            ProjectPlanningPurpose.objects.filter(project=project).exists()
+            or ProjectPlanningStage.objects.filter(project=project).exists()
+        )
+        if not ppde_started:
+            raise ValueError("PPDE has not been started.")
 
 
 

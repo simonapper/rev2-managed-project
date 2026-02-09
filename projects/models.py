@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 # projects/models.py
 
 from __future__ import annotations
@@ -115,6 +115,9 @@ class Project(models.Model):
         default=0,
         help_text="Increments whenever a new PDE revision cycle begins.",
     )
+
+    # Optional PPDE seed summary (condensed CKO extract for PPDE UI)
+    ppde_seed_summary = models.JSONField(default=dict, blank=True)
 
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -429,6 +432,24 @@ class ProjectDefinitionField(models.Model):
     value_text = models.TextField(blank=True, default="")
     last_validation = models.JSONField(blank=True, default=dict)
 
+    proposed_at = models.DateTimeField(null=True, blank=True)
+    proposed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="pde_fields_proposed",
+    )
+
+    last_edited_at = models.DateTimeField(null=True, blank=True)
+    last_edited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="pde_fields_edited",
+    )
+
     locked_at = models.DateTimeField(null=True, blank=True)
     locked_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -451,6 +472,46 @@ class ProjectDefinitionField(models.Model):
     def __str__(self) -> str:
         return f"{self.project_id}:{self.field_key}"
 
+class ProjectTopicChat(models.Model):
+    """
+    Stable binding for one topic chat per (project, user, scope, topic_key).
+    """
+
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="topic_chats",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="topic_chats",
+    )
+    scope = models.CharField(max_length=16, db_index=True)
+    topic_key = models.CharField(max_length=200, db_index=True)
+    chat = models.OneToOneField(
+        "chats.ChatWorkspace",
+        on_delete=models.CASCADE,
+        related_name="topic_binding",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "user", "scope", "topic_key"],
+                name="uq_project_topic_chat",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["project", "user"]),
+            models.Index(fields=["project", "scope", "topic_key"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.user_id}:{self.scope}:{self.topic_key}"
 
 class ProjectCKO(models.Model):
     """
@@ -487,11 +548,18 @@ class ProjectCKO(models.Model):
     )
 
     # Canonical content (DB authoritative)
+    content_html = models.TextField(
+        blank=True,
+        default="",
+        help_text="Canonical rendered CKO HTML document.",
+    )
+
     content_text = models.TextField(
         blank=True,
         default="",
-        help_text="Full rendered CKO content at time of commit.",
+        help_text="Plain text shadow of the CKO (export/diff/search).",
     )
+
 
     field_snapshot = models.JSONField(
         default=dict,
@@ -575,6 +643,386 @@ class ProjectPDESnapshot(models.Model):
         return f"PDE:{self.project_id}:r{self.revision}:{self.state}"
 
 
+class ProjectPlanningPurpose(models.Model):
+    """
+    PPDE planning purpose block for a Project.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "DRAFT"
+        PROPOSED = "PROPOSED", "PROPOSED"
+        PASS_LOCKED = "PASS_LOCKED", "PASS_LOCKED"
+
+    project = models.OneToOneField(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="ppde_purpose",
+    )
+
+    value_text = models.TextField(blank=True, default="")
+    last_validation = models.JSONField(blank=True, default=dict)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+
+    proposed_at = models.DateTimeField(null=True, blank=True)
+    proposed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="ppde_purpose_proposed",
+    )
+
+    last_edited_at = models.DateTimeField(null=True, blank=True)
+    last_edited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="ppde_purpose_edited",
+    )
+
+    locked_at = models.DateTimeField(null=True, blank=True)
+    locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="ppde_purpose_locked",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "status"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"PPDE:purpose:{self.project_id}"
+
+
+class ProjectPlanningStage(models.Model):
+    """
+    PPDE planning stage block for a Project.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "DRAFT"
+        PROPOSED = "PROPOSED", "PROPOSED"
+        PASS_LOCKED = "PASS_LOCKED", "PASS_LOCKED"
+
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="ppde_stages",
+    )
+
+    order_index = models.IntegerField(default=1)
+
+    title = models.CharField(max_length=200, blank=True, default="")
+    description = models.TextField(blank=True, default="")
+    purpose = models.TextField(blank=True, default="")
+    entry_condition = models.TextField(blank=True, default="")
+    acceptance_statement = models.TextField(blank=True, default="")
+    exit_condition = models.TextField(blank=True, default="")
+    key_deliverables = models.JSONField(default=list, blank=True)
+    duration_estimate = models.TextField(blank=True, default="")
+    risks_notes = models.TextField(blank=True, default="")
+    last_validation = models.JSONField(blank=True, default=dict)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+
+    proposed_at = models.DateTimeField(null=True, blank=True)
+    proposed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="ppde_stages_proposed",
+    )
+
+    last_edited_at = models.DateTimeField(null=True, blank=True)
+    last_edited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="ppde_stages_edited",
+    )
+
+    locked_at = models.DateTimeField(null=True, blank=True)
+    locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="ppde_stages_locked",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "status"]),
+            models.Index(fields=["project", "order_index"]),
+        ]
+        ordering = ["order_index", "id"]
+
+    def __str__(self) -> str:
+        return f"PPDE:stage:{self.project_id}:{self.id}"
+
+
+class ProjectWKO(models.Model):
+    """
+    Versioned Workflow Knowledge Object for a Project (PPDE commit output).
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        ACTIVE = "ACTIVE", "Active"
+        SUPERSEDED = "SUPERSEDED", "Superseded"
+
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="wko_versions",
+    )
+
+    version = models.IntegerField(default=1)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+
+    structure_contract_key = models.CharField(max_length=64, blank=True, default="")
+    structure_contract_version = models.IntegerField(null=True, blank=True)
+    transform_contract_key = models.CharField(max_length=64, blank=True, default="")
+    transform_contract_version = models.IntegerField(null=True, blank=True)
+
+    content_json = models.JSONField(default=dict, blank=True)
+    seed_snapshot = models.JSONField(default=dict, blank=True)
+    change_summary = models.CharField(max_length=300, blank=True, default="")
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="project_wkos_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    activated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="project_wkos_activated",
+    )
+    activated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "version"]),
+            models.Index(fields=["project", "status"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "version"],
+                name="uniq_project_wko_version",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"WKO:{self.project_id}:v{self.version}:{self.status}"
+
+
+class ProjectPlanningMilestone(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "DRAFT"
+        PROPOSED = "PROPOSED", "PROPOSED"
+        PASS_LOCKED = "PASS_LOCKED", "PASS_LOCKED"
+
+    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="ppde_milestones")
+    stage = models.ForeignKey("projects.ProjectPlanningStage", null=True, blank=True, on_delete=models.SET_NULL, related_name="milestones")
+    order_index = models.IntegerField(default=1)
+    title = models.CharField(max_length=200, blank=True, default="")
+    stage_title = models.CharField(max_length=200, blank=True, default="")
+    acceptance_statement = models.TextField(blank=True, default="")
+    target_date_hint = models.CharField(max_length=100, blank=True, default="")
+
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    proposed_at = models.DateTimeField(null=True, blank=True)
+    proposed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="ppde_milestones_proposed")
+    locked_at = models.DateTimeField(null=True, blank=True)
+    locked_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="ppde_milestones_locked")
+    last_edited_at = models.DateTimeField(null=True, blank=True)
+    last_edited_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="ppde_milestones_edited")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "status"]),
+            models.Index(fields=["project", "order_index"]),
+        ]
+        ordering = ["order_index", "id"]
+
+
+class ProjectPlanningAction(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "DRAFT"
+        PROPOSED = "PROPOSED", "PROPOSED"
+        PASS_LOCKED = "PASS_LOCKED", "PASS_LOCKED"
+
+    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="ppde_actions")
+    stage = models.ForeignKey("projects.ProjectPlanningStage", null=True, blank=True, on_delete=models.SET_NULL, related_name="actions")
+    order_index = models.IntegerField(default=1)
+    title = models.CharField(max_length=200, blank=True, default="")
+    stage_title = models.CharField(max_length=200, blank=True, default="")
+    owner_role = models.CharField(max_length=120, blank=True, default="")
+    definition_of_done = models.TextField(blank=True, default="")
+    effort_hint = models.CharField(max_length=120, blank=True, default="")
+
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    proposed_at = models.DateTimeField(null=True, blank=True)
+    proposed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="ppde_actions_proposed")
+    locked_at = models.DateTimeField(null=True, blank=True)
+    locked_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="ppde_actions_locked")
+    last_edited_at = models.DateTimeField(null=True, blank=True)
+    last_edited_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="ppde_actions_edited")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "status"]),
+            models.Index(fields=["project", "order_index"]),
+        ]
+        ordering = ["order_index", "id"]
+
+
+class ProjectPlanningRisk(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "DRAFT"
+        PROPOSED = "PROPOSED", "PROPOSED"
+        PASS_LOCKED = "PASS_LOCKED", "PASS_LOCKED"
+
+    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="ppde_risks")
+    stage = models.ForeignKey("projects.ProjectPlanningStage", null=True, blank=True, on_delete=models.SET_NULL, related_name="risks")
+    order_index = models.IntegerField(default=1)
+    title = models.CharField(max_length=200, blank=True, default="")
+    stage_title = models.CharField(max_length=200, blank=True, default="")
+    probability = models.CharField(max_length=10, blank=True, default="")
+    impact = models.CharField(max_length=10, blank=True, default="")
+    mitigation = models.TextField(blank=True, default="")
+
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    proposed_at = models.DateTimeField(null=True, blank=True)
+    proposed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="ppde_risks_proposed")
+    locked_at = models.DateTimeField(null=True, blank=True)
+    locked_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="ppde_risks_locked")
+    last_edited_at = models.DateTimeField(null=True, blank=True)
+    last_edited_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="ppde_risks_edited")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "status"]),
+            models.Index(fields=["project", "order_index"]),
+        ]
+        ordering = ["order_index", "id"]
+
+
+class ProjectExecutionTask(models.Model):
+    class Status(models.TextChoices):
+        TODO = "TODO", "TODO"
+        IN_PROGRESS = "IN_PROGRESS", "IN_PROGRESS"
+        BLOCKED = "BLOCKED", "BLOCKED"
+        DONE = "DONE", "DONE"
+
+    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="execution_tasks")
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True, default="")
+    stage_title = models.CharField(max_length=200, blank=True, default="")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.TODO)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="execution_tasks",
+    )
+    due_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True, default="")
+    source_wko_version = models.IntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "stage_title"]),
+            models.Index(fields=["project", "status"]),
+            models.Index(fields=["project", "source_wko_version"]),
+        ]
+class PhaseContract(models.Model):
+    """
+    Versioned, admin-editable contract for PPDE phase operations.
+    """
+
+    key = models.CharField(max_length=64)
+    title = models.CharField(max_length=200)
+    version = models.IntegerField(default=1)
+    is_active = models.BooleanField(default=False)
+
+    purpose_text = models.TextField(blank=True, default="")
+    inputs_text = models.TextField(blank=True, default="")
+    outputs_text = models.TextField(blank=True, default="")
+    method_guidance_text = models.TextField(blank=True, default="")
+    acceptance_test_text = models.TextField(blank=True, default="")
+
+    llm_review_prompt_text = models.TextField(blank=True, default="")
+    policy_json = models.JSONField(blank=True, default=dict)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="phase_contracts_created",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["key", "version"],
+                name="uq_phasecontract_key_version",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["key", "is_active"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"Contract:{self.key}:v{self.version}"
+
 class Folder(models.Model):
     """
     Lightweight hierarchy for organising chats.
@@ -602,3 +1050,4 @@ class Folder(models.Model):
 
     def __str__(self) -> str:
         return f"{self.project_id}:{self.name}"
+

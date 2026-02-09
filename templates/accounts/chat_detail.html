@@ -11,116 +11,75 @@
 
         <!--<hr class="my-3">-->
 
-        <!-- Top row: title + CDE status + controls -->
-<div class="d-flex justify-content-between align-items-center mb-2">
+        <!-- Top row: controls + input -->
+<form method="post" action="{% url 'accounts:chat_message_create' %}" enctype="multipart/form-data">
+  {% csrf_token %}
+  <input type="hidden" name="chat_id" value="{{ chat.id }}">
+  <input type="hidden" name="next" value="{{ request.get_full_path }}">
 
-  <div class="d-flex gap-3 align-items-center flex-wrap">
-
-    <!-- Chat title (view mode) -->
-    <div id="chatTitleView" class="fw-semibold" title="{{ chat.title }}">
-      {{ chat.title }}
+  <div class="d-flex align-items-start gap-2 mb-2">
+    <div class="flex-grow-1">
+      <textarea id="rw-chat-input" name="content" class="form-control" rows="2" placeholder="Type message..."></textarea>
     </div>
+    <div class="d-flex flex-column align-items-end gap-1" style="min-width: 160px;">
+      {% if fullscreen %}
+        <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_normal }}">Exit full screen</a>
+      {% else %}
+        <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_fullscreen }}">Full screen</a>
+      {% endif %}
 
-    <!-- Chat title (edit mode) -->
-    <form id="chatTitleEdit" method="post"
-          action="{% url 'accounts:chat_rename' chat.id %}"
-          class="d-none align-items-center gap-2">
-      {% csrf_token %}
-      <input type="text" name="title" class="form-control form-control-sm"
-             style="max-width: 420px;"
-             value="{{ chat.title }}" required>
-      <button type="submit" class="btn btn-sm btn-primary">Save</button>
-      <button type="button" class="btn btn-sm btn-outline-secondary" id="btnRenameCancel">Cancel</button>
-    </form>
-
-    <!-- CDE status tiles -->
-    <div class="rw-status">
-      <div class="rw-status-label">CDE</div>
-      <div class="rw-status-value">
-        {% if chat.is_managed %}Controlled{% else %}Loose{% endif %}
-      </div>
+      {% if show_system %}
+        <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_no_system }}">Hide system</a>
+      {% else %}
+        <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_with_system }}">Show system</a>
+      {% endif %}
     </div>
-
-    <div class="rw-status">
-      <div class="rw-status-label">Locked</div>
-      <div class="rw-status-value">
-        {% if chat.cde_is_locked %}Yes{% else %}No{% endif %}
-      </div>
-    </div>
-
   </div>
 
-  <div class="d-flex gap-2">
-
-    <button type="button" class="btn btn-sm btn-outline-secondary" id="btnRename">
-      Rename
-    </button>
-
-    {% if fullscreen %}
-      <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_normal }}">Exit full screen</a>
-    {% else %}
-      <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_fullscreen }}">Full screen</a>
+  <div class="d-flex align-items-center gap-2 mb-2">
+    {% if not chat.project.kind == "SANDBOX" %}
+      <span class="badge bg-primary" style="padding:.15rem .4rem; font-size:.7rem;">Controlled</span>
     {% endif %}
-
-    {% if show_system %}
-      <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_no_system }}">Hide system</a>
-    {% else %}
-      <a class="btn btn-sm btn-outline-secondary" href="?{{ qs_with_system }}">Show system</a>
-    {% endif %}
-
   </div>
-</div>
-        <form method="post" action="{% url 'accounts:chat_message_create' %}" enctype="multipart/form-data">
-          {% csrf_token %}
-          <input type="hidden" name="chat_id" value="{{ chat.id }}">
-          <input type="hidden" name="next" value="{{ request.get_full_path }}">
 
-          <div class="d-flex gap-2">
-            <textarea id="rw-chat-input"
-                      name="content"
-                      class="form-control"
-                      rows="3"
-                      placeholder="Type message..."></textarea>
+  <div id="rw-paste-status" class="small text-secondary mt-2"></div>
 
-            <button type="submit" class="btn btn-primary">Send</button>
-          </div>
+  <!-- Select-a-file upload -->
+  <div class="mt-2 d-flex align-items-center gap-2">
+    <button type="button" class="btn btn-sm btn-primary rw-btn-same rw-btn-file" id="rw-file-btn">Select file</button>
+    <input id="rw-file-input" type="file" style="display:none">
+    <span id="rw-file-name" class="small text-secondary"></span>
+    <button type="submit" class="btn btn-sm btn-success rw-btn-same">Send</button>
+    <div class="ms-auto"></div>
+  </div>
 
-          <div id="rw-paste-status" class="small text-secondary mt-2"></div>
+  {% if has_last_image %}
+    <div class="form-check mt-2">
+      <input class="form-check-input"
+             type="checkbox"
+             id="rw-include-last-image"
+             name="include_last_image"
+             value="1">
+      <label class="form-check-label" for="rw-include-last-image">
+        Include last image
+      </label>
+    </div>
+  {% endif %}
 
-          <!-- Select-a-file upload -->
-          <div class="mt-2 d-flex align-items-center gap-2">
-            <label class="btn btn-sm btn-outline-secondary mb-0" for="rw-file-input">Select file</label>
-            <input id="rw-file-input" type="file" style="display:none">
-            <span id="rw-file-name" class="small text-secondary"></span>
-          </div>
+  {% if has_last_file %}
+    <div class="form-check mt-2">
+      <input class="form-check-input"
+             type="checkbox"
+             id="rw-include-last-file"
+             name="include_last_file"
+             value="1">
+      <label class="form-check-label" for="rw-include-last-file">
+        Include last file
+      </label>
+    </div>
+  {% endif %}
 
-          {% if has_last_image %}
-            <div class="form-check mt-2">
-              <input class="form-check-input"
-                     type="checkbox"
-                     id="rw-include-last-image"
-                     name="include_last_image"
-                     value="1">
-              <label class="form-check-label" for="rw-include-last-image">
-                Include last image
-              </label>
-            </div>
-          {% endif %}
-
-          {% if has_last_file %}
-            <div class="form-check mt-2">
-              <input class="form-check-input"
-                     type="checkbox"
-                     id="rw-include-last-file"
-                     name="include_last_file"
-                     value="1">
-              <label class="form-check-label" for="rw-include-last-file">
-                Include last file
-              </label>
-            </div>
-          {% endif %}
-
-        </form>
+</form>
 
         {# Attachments list #}
         {% if attachments %}

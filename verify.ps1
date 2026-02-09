@@ -1,0 +1,1 @@
+Activate venv. ..venv\Scripts\Activate.ps1Django checkspython manage.py checkif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }Testspython manage.py test

@@ -16,26 +16,7 @@
       {% endif %}
     </div>
 
-    <div class="ms-auto d-flex align-items-center gap-2">
-      <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:chat_browse' %}">Browse chats</a>
-      <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:project_config_list' %}">Browse projects</a>
-
-      {# Only enable New chat when active project is DEFINED (or is SANDBOX if you later choose). #}
-        {% if active_project and active_project.defined_cko %}
-        <a class="btn btn-sm btn-primary" href="{% url 'accounts:chat_create' %}">
-          <i class="bi bi-plus-lg me-1"></i>New chat
-        </a>
-      {% else %}
-        <button class="btn btn-sm btn-primary" disabled>
-          <i class="bi bi-plus-lg me-1"></i>New chat
-        </button>
-      {% endif %}
-
-      <a class="btn btn-sm btn-primary" href="{% url 'accounts:project_create' %}">
-        <i class="bi bi-plus-lg me-1"></i>New project
-      </a>
-      <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:config_menu' %}">Settings</a>
-    </div>
+    <div class="ms-auto"></div>
   </div>
 
   <div class="rw-workarea">
@@ -54,13 +35,12 @@
 
           <div class="d-flex align-items-center justify-content-between mb-2">
             <div class="fw-semibold">Recent projects</div>
-            <a class="small text-secondary" href="{% url 'accounts:project_config_list' %}">View all projects</a>
           </div>
 
           <div class="mb-3">
               <div class="row g-2 rw-project-tiles">
                 {% for p in recent_projects %}
-                  <div class="col-12 col-sm-6 col-lg-2">
+                  <div class="col-12 col-sm-6 col-md-4 col-lg-3 col-xl-2">
                     {# IMPORTANT: route through project_home so UNASSIGNED -> PDE, DEFINED -> post-commit area #}
                     <a class="rw-chat-tile-link" href="{% url 'accounts:project_home' p.id %}">
                       <div class="card rw-chat-tile h-100">
@@ -73,14 +53,14 @@
                           </div>
 
                           {# Optional tiny status hint (ASCII only) #}
-                          <div class="small text-muted mt-1">
+                          <div class="text-muted mt-1" style="font-size:0.75rem;">
                             Status:
                             {% if p.kind == "SANDBOX" %}
-                              SANDBOX
+                              <span class="badge bg-secondary">SANDBOX</span>
                             {% elif p.defined_cko %}
-                              DEFINED
+                              <span class="badge bg-success">DEFINED</span>
                             {% else %}
-                              UNASSIGNED
+                              <span class="badge bg-warning text-dark">UNASSIGNED</span>
                             {% endif %}
                           </div>
 
@@ -98,7 +78,6 @@
 
           <div class="d-flex align-items-center justify-content-between mb-2">
             <div class="fw-semibold">Recent chats</div>
-            <a class="small text-secondary" href="{% url 'accounts:chat_browse' %}">View all chats</a>
           </div>
 
           <div class="mb-3">
@@ -131,27 +110,6 @@
               <div class="text-secondary small">No chats yet.</div>
             {% endif %}
           </div>
-
-          <hr class="my-3">
-
-          <div class="d-flex align-items-center justify-content-between mb-2">
-            <div class="fw-semibold">Settings</div>
-            <a class="small text-secondary" href="{% url 'accounts:config_menu' %}">Open settings</a>
-          </div>
-
-          <div class="d-flex flex-wrap gap-2 mb-3">
-            <a class="btn btn-outline-primary btn-sm rw-config-btn" href="{% url 'accounts:user_config_user' %}">User</a>
-            <a class="btn btn-outline-primary btn-sm rw-config-btn" href="{% url 'accounts:project_config_list' %}">Projects</a>
-            {% if can_override_chat %}
-              <a href="{% url 'accounts:chat_config_overrides' %}"
-                 class="btn btn-outline-primary btn-sm rw-config-btn">
-                This Chat
-              </a>
-            {% endif %}
-            <a class="btn btn-outline-primary btn-sm rw-config-btn" href="{% url 'imports:preview_import' %}">Import Chats</a>
-          </div>
-
-          <hr class="my-3">
 
           {% comment %}
             (Old master-detail turn UI removed / disabled during model refactor)

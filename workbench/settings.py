@@ -9,11 +9,16 @@ This file is deliberately:
 Production hardening is explicitly out of scope.
 """
 
+import os
 from pathlib import Path
 from dotenv import load_dotenv
-import os
 
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load environment variables from .env in project root
+load_dotenv(BASE_DIR / ".env")
+
+
 # import certifi
 
 # --------------------------------------------------
@@ -94,8 +99,6 @@ ROOT_URLCONF = "workbench.urls"
 # Templates
 # --------------------------------------------------
 
-
-BASE_DIR = Path(__file__).resolve().parent.parent
 
 TEMPLATES = [
     {

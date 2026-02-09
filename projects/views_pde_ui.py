@@ -13,18 +13,16 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
 from django.urls import reverse
+from django.utils import timezone
 
 from chats.services.llm import generate_panes
-from projects.models import Project, ProjectDefinitionField
-from projects.services.pde import draft_pde_from_seed
-from projects.services.pde_loop import ensure_pde_fields, run_pde_controlled
+from projects.models import Project, ProjectDefinitionField, ProjectCKO
+from projects.services.pde import draft_pde_from_seed, validate_field
+from projects.services.pde_commit import commit_project_definition
+from projects.services.pde_required_keys import pde_required_keys_for_defined
+from projects.services.pde_loop import ensure_pde_fields, read_locked_fields
 from projects.services.pde_spec import PDE_REQUIRED_FIELDS
-
-
-
-def _can_edit_pde(user, project: Project) -> bool:
-    # Minimal guard: owner only. Extend later with memberships.
-    return bool(project.owner_id == getattr(user, "id", None))
+from projects.services_project_membership import can_edit_pde, is_project_committer
 
 
 def _fields_for_project(project: Project) -> Dict[str, ProjectDefinitionField]:
@@ -51,6 +49,8 @@ def _compute_pde_state(project: Project) -> Dict[str, Any]:
             status=ProjectDefinitionField.Status.PASS_LOCKED,
         ).count()
     all_locked = bool(must_keys) and locked_must == len(must_keys)
+    print("PDE_STATE project", project.id, "must_keys", len(must_keys), "locked_must", locked_must, "all_locked", all_locked)
+
 
     if all_locked:
         badge = {"text": "Ready to Commit", "class": "bg-success"}
@@ -133,20 +133,58 @@ def _pde_help_answer(*, question: str, project: Project, generate_panes_func) ->
 def pde_detail(request, project_id: int):
     project = get_object_or_404(Project, id=project_id)
 
-    if not _can_edit_pde(request.user, project):
+    if not can_edit_pde(project, request.user):
         messages.error(request, "You do not have permission to edit this project definition.")
         return redirect("accounts:dashboard")
+    can_commit = is_project_committer(project, request.user)
 
-    # Ensure PDE rows exist
     ensure_pde_fields(project)
+
+    # If project is defined, ensure PDE is hydrated from the accepted CKO
+    # whenever the PDE is not fully locked (eg. first reopen, or got disturbed).
+    accepted = None
+    skip_hydrate = bool(request.session.get("pde_skip_hydrate"))
+    if project.defined_cko_id:
+        accepted = ProjectCKO.objects.filter(id=project.defined_cko_id, project=project).first()
+
+    pde_keys = {spec.key for spec in PDE_REQUIRED_FIELDS}
+    rows_now = list(ProjectDefinitionField.objects.filter(project=project))
+    has_nonlocked_pde = any(
+        (row.field_key in pde_keys) and (row.status != ProjectDefinitionField.Status.PASS_LOCKED)
+        for row in rows_now
+    )
+
+    if project.defined_cko_id and not skip_hydrate and not has_nonlocked_pde:
+        state = _compute_pde_state(project)
+        if not state.get("all_locked"):
+            if accepted and isinstance(accepted.field_snapshot, dict) and accepted.field_snapshot:
+                updated = 0
+                for key, value in accepted.field_snapshot.items():
+                    row = ProjectDefinitionField.objects.filter(project=project, field_key=key).first()
+                    if not row:
+                        continue
+                    row.value_text = (value or "").strip()
+                    row.status = ProjectDefinitionField.Status.PASS_LOCKED
+                    row.last_validation = {}
+                    row.save(update_fields=["value_text", "status", "last_validation", "updated_at"])
+                    updated += 1
+
+                pass
+    elif skip_hydrate:
+        request.session.pop("pde_skip_hydrate", None)
+        request.session.modified = True
 
     action = (request.POST.get("action") or "").strip().lower()
 
-    # Seed text: default to project.purpose for convenience
+    # Only show validation suggestions after an explicit validate action.
+    if request.method == "POST" and action != "validate_lock":
+        if request.session.get("pde_last_validation_key"):
+            request.session.pop("pde_last_validation_key", None)
+            request.session.modified = True
+
     seed_text = (project.purpose or "").strip()
     if request.method == "POST" and action in ("draft",):
         seed_text = (request.POST.get("seed_text") or "").strip() or seed_text
-
 
     # ------------------------------------------------------------
     # Action: Save and Exit (no validation)
@@ -154,16 +192,246 @@ def pde_detail(request, project_id: int):
     if request.method == "POST" and action == "save_exit":      
         request.session.pop("pde_help_auto_open_" + str(project.id), None)
         request.session.modified = True
-        for spec in PDE_REQUIRED_FIELDS:
-            proposed = (request.POST.get(spec.key) or "").strip()
-            row = ProjectDefinitionField.objects.get(project=project, field_key=spec.key)
-            row.value_text = proposed  # allow clearing
-            if row.status != ProjectDefinitionField.Status.PASS_LOCKED:
-                row.status = ProjectDefinitionField.Status.PROPOSED
-            row.save(update_fields=["value_text", "status", "updated_at"])
+        changed_any = False
 
-        messages.success(request, "Draft saved.")
-        return redirect("accounts:dashboard")
+        for spec in PDE_REQUIRED_FIELDS:
+            row = ProjectDefinitionField.objects.get(project=project, field_key=spec.key)
+            prior = (row.value_text or "").strip()
+            proposed = (request.POST.get(spec.key) or "").strip()
+
+            if row.status in (ProjectDefinitionField.Status.PROPOSED, ProjectDefinitionField.Status.PASS_LOCKED) and not can_commit:
+                continue
+
+            changed = (proposed != prior)
+            if not changed:
+                continue
+
+            changed_any = True
+            row.value_text = proposed
+
+            if can_commit and row.status in (ProjectDefinitionField.Status.PROPOSED, ProjectDefinitionField.Status.PASS_LOCKED):
+                row.status = ProjectDefinitionField.Status.DRAFT
+                row.proposed_by = None
+                row.proposed_at = None
+                row.locked_by = None
+                row.locked_at = None
+            else:
+                row.status = ProjectDefinitionField.Status.PROPOSED
+
+            row.last_edited_by = request.user
+            row.last_edited_at = timezone.now()
+
+            row.save(
+                update_fields=[
+                    "value_text",
+                    "status",
+                    "last_validation",
+                    "proposed_by",
+                    "proposed_at",
+                    "locked_by",
+                    "locked_at",
+                    "last_edited_by",
+                    "last_edited_at",
+                    "updated_at",
+                ]
+            )
+
+        if changed_any:
+            messages.success(request, "Changes saved.")
+        else:
+            messages.info(request, "No changes.")
+
+        return redirect("accounts:project_config_info", project_id=project.id)
+
+    # ------------------------------------------------------------
+    # Action: Propose Lock
+    # ------------------------------------------------------------
+    if request.method == "POST" and action == "propose_lock":
+        field_key = (request.POST.get("field_key") or "").strip()
+        if not field_key:
+            messages.error(request, "Missing field key.")
+            return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
+
+        row = ProjectDefinitionField.objects.get(project=project, field_key=field_key)
+        proposed_text = (request.POST.get("value_text") or "").strip()
+        if not proposed_text:
+            messages.error(request, "No value captured for proposal. Please try again.")
+            return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
+        if proposed_text != (row.value_text or "").strip():
+            row.value_text = proposed_text
+            row.last_edited_by = request.user
+            row.last_edited_at = timezone.now()
+        locked_fields = read_locked_fields(project)
+        spec = next((s for s in PDE_REQUIRED_FIELDS if s.key == field_key), None)
+        rubric_text = getattr(spec, "help_text", "") if spec else ""
+        vobj = validate_field(
+            generate_panes_func=generate_panes,
+            field_key=field_key,
+            value_text=proposed_text,
+            locked_fields=locked_fields,
+            rubric=rubric_text,
+        )
+        row.last_validation = vobj
+
+        if vobj.get("verdict") != "PASS":
+            row.status = ProjectDefinitionField.Status.DRAFT
+            row.save(
+                update_fields=[
+                    "value_text",
+                    "last_edited_by",
+                    "last_edited_at",
+                    "status",
+                    "last_validation",
+                    "updated_at",
+                ]
+            )
+            messages.error(
+                request,
+                "Blocked at: " + field_key + " (" + str(vobj.get("verdict") or "") + ")",
+            )
+            request.session["pde_last_validation_key"] = field_key
+            request.session["pde_skip_hydrate"] = True
+            request.session.modified = True
+            return redirect("projects:pde_detail", project_id=project.id)
+
+        if can_commit:
+            row.status = ProjectDefinitionField.Status.PASS_LOCKED
+            row.locked_by = request.user
+            row.locked_at = timezone.now()
+            row.save(
+                update_fields=[
+                    "value_text",
+                    "last_edited_by",
+                    "last_edited_at",
+                    "status",
+                    "last_validation",
+                    "locked_by",
+                    "locked_at",
+                    "updated_at",
+                ]
+            )
+            messages.success(request, "Field locked.")
+        else:
+            row.status = ProjectDefinitionField.Status.PROPOSED
+            row.proposed_by = request.user
+            row.proposed_at = timezone.now()
+            row.save(
+                update_fields=[
+                    "value_text",
+                    "last_edited_by",
+                    "last_edited_at",
+                    "status",
+                    "proposed_by",
+                    "proposed_at",
+                    "last_validation",
+                    "updated_at",
+                ]
+            )
+            messages.success(request, "Lock proposed: " + field_key)
+
+        request.session["pde_skip_hydrate"] = True
+        request.session.modified = True
+        return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
+
+    # ------------------------------------------------------------
+    # Action: Approve Lock
+    # ------------------------------------------------------------
+    if request.method == "POST" and action == "approve_lock":
+        if not can_commit:
+            messages.error(request, "Only the Project Committer can commit this project.")
+            return redirect("projects:pde_detail", project_id=project.id)
+
+        field_key = (request.POST.get("field_key") or "").strip()
+        if not field_key:
+            messages.error(request, "Missing field key.")
+            return redirect("projects:pde_detail", project_id=project.id)
+
+        row = ProjectDefinitionField.objects.get(project=project, field_key=field_key)
+        proposed_text = (request.POST.get("value_text") or "").strip()
+        if proposed_text and proposed_text != (row.value_text or "").strip():
+            row.value_text = proposed_text
+            row.last_edited_by = request.user
+            row.last_edited_at = timezone.now()
+        if row.status != ProjectDefinitionField.Status.PROPOSED:
+            messages.error(request, "Field is not proposed.")
+            return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
+
+        if (row.last_validation or {}).get("verdict") != "PASS":
+            locked_fields = read_locked_fields(project)
+            spec = next((s for s in PDE_REQUIRED_FIELDS if s.key == field_key), None)
+            rubric_text = getattr(spec, "help_text", "") if spec else ""
+            vobj = validate_field(
+                generate_panes_func=generate_panes,
+                field_key=field_key,
+                value_text=(row.value_text or "").strip(),
+                locked_fields=locked_fields,
+                rubric=rubric_text,
+            )
+            row.last_validation = vobj
+            if vobj.get("verdict") != "PASS":
+                row.save(update_fields=["last_validation", "updated_at"])
+                messages.error(
+                    request,
+                    "Blocked at: " + field_key + " (" + str(vobj.get("verdict") or "") + ")",
+                )
+                request.session["pde_last_validation_key"] = field_key
+                request.session["pde_skip_hydrate"] = True
+                request.session.modified = True
+                return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
+
+        row.status = ProjectDefinitionField.Status.PASS_LOCKED
+        row.locked_by = request.user
+        row.locked_at = timezone.now()
+        row.save(
+            update_fields=[
+                "value_text",
+                "last_edited_by",
+                "last_edited_at",
+                "status",
+                "last_validation",
+                "locked_by",
+                "locked_at",
+                "updated_at",
+            ]
+        )
+        request.session["pde_skip_hydrate"] = True
+        request.session.modified = True
+        messages.success(request, "Field locked.")
+        return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
+
+    # ------------------------------------------------------------
+    # Action: Reopen Field
+    # ------------------------------------------------------------
+    if request.method == "POST" and action == "reopen_field":
+        if not can_commit:
+            messages.error(request, "Only the Project Committer can commit this project.")
+            return redirect("projects:pde_detail", project_id=project.id)
+
+        field_key = (request.POST.get("field_key") or "").strip()
+        if not field_key:
+            messages.error(request, "Missing field key.")
+            return redirect("projects:pde_detail", project_id=project.id)
+
+        row = ProjectDefinitionField.objects.get(project=project, field_key=field_key)
+        row.status = ProjectDefinitionField.Status.DRAFT
+        row.proposed_by = None
+        row.proposed_at = None
+        row.locked_by = None
+        row.locked_at = None
+        row.save(
+            update_fields=[
+                "status",
+                "proposed_by",
+                "proposed_at",
+                "locked_by",
+                "locked_at",
+                "updated_at",
+            ]
+        )
+        request.session["pde_skip_hydrate"] = True
+        request.session.modified = True
+        messages.success(request, "Field reopened: " + field_key)
+        return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
 
     # ------------------------------------------------------------
     # Action: Help chat (non-canonical)
@@ -213,7 +481,7 @@ def pde_detail(request, project_id: int):
                 row.save(update_fields=["value_text", "status", "last_validation", "updated_at"])
                 updated += 1
 
-            messages.success(request, "Draft created. Updated fields: " + str(updated))
+            pass
 
         return redirect("projects:pde_detail", project_id=project.id)
 
@@ -221,25 +489,100 @@ def pde_detail(request, project_id: int):
     # Action: Validate + lock (controlled loop)
     # ------------------------------------------------------------
     if request.method == "POST" and action == "validate_lock":
+        if not can_commit:
+            messages.error(request, "Only the Project Committer can commit this project.")
+            return redirect("projects:pde_detail", project_id=project.id)
         user_inputs: Dict[str, str] = {}
+        spec_map = {s.key: s for s in PDE_REQUIRED_FIELDS}
         for spec in PDE_REQUIRED_FIELDS:
-            user_inputs[spec.key] = (request.POST.get(spec.key) or "").strip()
+            proposed = (request.POST.get(spec.key) or "").strip()
+            user_inputs[spec.key] = proposed
+            row = ProjectDefinitionField.objects.get(project=project, field_key=spec.key)
+            prior = (row.value_text or "").strip()
+            if proposed != prior:
+                row.value_text = proposed
+                row.status = ProjectDefinitionField.Status.PROPOSED
+                row.proposed_by = request.user
+                row.proposed_at = timezone.now()
+                row.locked_by = None
+                row.locked_at = None
+                row.last_edited_by = request.user
+                row.last_edited_at = timezone.now()
+                row.save(
+                    update_fields=[
+                        "value_text",
+                        "status",
+                        "proposed_by",
+                        "proposed_at",
+                        "locked_by",
+                        "locked_at",
+                        "last_edited_by",
+                        "last_edited_at",
+                        "updated_at",
+                    ]
+                )
+        request.session["pde_skip_hydrate"] = True
+        request.session.modified = True
 
-        res = run_pde_controlled(
-            project=project,
-            user=request.user,
-            generate_panes_func=generate_panes,
-            user_inputs=user_inputs,
+        locked_fields = read_locked_fields(project)
+        proposed_rows = list(
+            ProjectDefinitionField.objects.filter(
+                project=project,
+                status=ProjectDefinitionField.Status.PROPOSED,
+            )
         )
 
-        if res.get("ok"):
-            messages.success(request, "All fields locked. You can now Commit to DEFINED.")
-        else:
-            fb = res.get("first_blocker") or {}
+        if not proposed_rows:
+            messages.info(request, "No proposed fields to validate.")
+            return redirect("projects:pde_detail", project_id=project.id)
+
+        first_blocker = None
+        for row in proposed_rows:
+            spec = spec_map.get(row.field_key)
+            rubric_text = getattr(spec, "help_text", "") if spec else ""
+            vobj = validate_field(
+                generate_panes_func=generate_panes,
+                field_key=row.field_key,
+                value_text=(row.value_text or "").strip(),
+                locked_fields=locked_fields,
+                rubric=rubric_text,
+            )
+
+            if vobj.get("verdict") != "PASS":
+                row.last_validation = vobj
+                row.save(update_fields=["last_validation", "updated_at"])
+                first_blocker = vobj
+                continue
+
+            locked_value = (vobj.get("suggested_revision") or row.value_text or "").strip()
+            locked_fields[row.field_key] = locked_value
+            row.status = ProjectDefinitionField.Status.PASS_LOCKED
+            row.value_text = locked_value
+            row.last_validation = vobj
+            row.locked_at = timezone.now()
+            row.locked_by = request.user
+            row.save(
+                update_fields=[
+                    "status",
+                    "value_text",
+                    "last_validation",
+                    "locked_at",
+                    "locked_by",
+                    "updated_at",
+                ]
+            )
+
+        if first_blocker:
             messages.error(
                 request,
-                "Blocked at: " + str(fb.get("field_key") or "") + " (" + str(fb.get("verdict") or "") + ")",
+                "Blocked at: " + str(first_blocker.get("field_key") or "") + " (" + str(first_blocker.get("verdict") or "") + ")",
             )
+            request.session["pde_last_validation_key"] = str(first_blocker.get("field_key") or "")
+            request.session.modified = True
+        else:
+            messages.success(request, "Proposed fields locked.")
+            request.session.pop("pde_last_validation_key", None)
+            request.session.modified = True
 
         return redirect("projects:pde_detail", project_id=project.id)
 
@@ -247,18 +590,55 @@ def pde_detail(request, project_id: int):
     # Action: Commit (create DRAFT CKO) -> Preview
     # ------------------------------------------------------------
 
+    pde_has_changes = True
+    # NOTE: Ignore non-PDE fields (not in PDE_REQUIRED_FIELDS) for PDE state.
+    all_rows_locked = True
+    for row in rows_now:
+        if row.field_key not in pde_keys:
+            continue
+        if row.status != ProjectDefinitionField.Status.PASS_LOCKED:
+            all_rows_locked = False
+            break
+
+    if project.defined_cko_id and accepted and isinstance(accepted.field_snapshot, dict):
+        if all_rows_locked:
+            pde_has_changes = False
+            snap = accepted.field_snapshot or {}
+            if snap:
+                row_map = {(row.field_key or "").strip(): row for row in rows_now if row.field_key in pde_keys}
+                for key, snap_val in snap.items():
+                    if key not in pde_keys:
+                        continue
+                    row = row_map.get((key or "").strip())
+                    if not row:
+                        continue
+                    if (row.value_text or "").strip() != (snap_val or "").strip():
+                        pde_has_changes = True
+                        break
+        else:
+            pde_has_changes = True
+
     if request.method == "POST" and action == "commit":
+        if not can_commit:
+            messages.error(request, "Only the Project Committer can commit this project.")
+            return redirect("projects:pde_detail", project_id=project.id)
+        if project.defined_cko_id and not pde_has_changes:
+            messages.info(request, "No changes to commit.")
+            return redirect("projects:pde_detail", project_id=project.id)
         state = _compute_pde_state(project)
         if not state.get("all_locked"):
             messages.error(request, "Cannot commit: not all required fields are locked.")
             return redirect("projects:pde_detail", project_id=project.id)
 
         # Create DRAFT ProjectCKO snapshot (no acceptance here).
-        res = commit_project_definition(project=project)
-        if not res.get("ok"):
-            messages.error(request, "Commit failed: " + str(res.get("error") or "unknown error"))
+        try:
+            res = commit_project_definition(
+                project=project,
+                required_keys=pde_required_keys_for_defined(),
+            )
+        except Exception as e:
+            messages.error(request, "Commit failed: " + str(e))
             return redirect("projects:pde_detail", project_id=project.id)
-
         cko_id = res.get("cko_id")
         if not cko_id:
             messages.error(request, "Commit failed: missing cko_id.")
@@ -283,6 +663,8 @@ def pde_detail(request, project_id: int):
                 "status": (getattr(row, "status", "") or "") if row else "",
                 "value_text": (getattr(row, "value_text", "") or "") if row else "",
                 "last_validation": getattr(row, "last_validation", {}) if row else {},
+                "proposed_by": (getattr(getattr(row, "proposed_by", None), "username", "") or "") if row else "",
+                "locked_by": (getattr(getattr(row, "locked_by", None), "username", "") or "") if row else "",
                 "summary": getattr(spec, "summary", ""),
                 "help_text": getattr(spec, "help_text", ""),
 
@@ -296,6 +678,17 @@ def pde_detail(request, project_id: int):
 
 
     state = _compute_pde_state(project)
+    ui_all_locked = all_rows_locked
+    ui_has_proposed = any(
+        r.status == ProjectDefinitionField.Status.PROPOSED and r.field_key in pde_keys
+        for r in rows_now
+    )
+    if ui_has_proposed:
+        state["badge"] = {"text": "Proposed", "class": "bg-warning text-dark"}
+    elif project.defined_cko_id and not pde_has_changes:
+        state["badge"] = {"text": "Committed", "class": "bg-success"}
+    elif ui_all_locked:
+        state["badge"] = {"text": "Ready to Commit", "class": "bg-success"}
     pde_help_log = _get_help_log(request, project.id)
     auto_key = "pde_help_auto_open_" + str(project.id)
     pde_help_auto_open = bool(request.session.get(auto_key))
@@ -303,8 +696,13 @@ def pde_detail(request, project_id: int):
         request.session.pop(auto_key, None)
         request.session.modified = True
 
+    show_validation_key = (request.session.get("pde_last_validation_key") or "").strip()
+    if show_validation_key:
+        request.session.pop("pde_last_validation_key", None)
+        request.session.modified = True
+
     return render(
-        request,
+    request,
         "projects/pde_detail.html",
         {
             "project": project,
@@ -313,10 +711,13 @@ def pde_detail(request, project_id: int):
             "pde_status_badge": state["badge"],
             "pde_nav": _pde_nav(specs),
             "any_locked": state["any_locked"],
-            "all_locked": state["all_locked"],
+            "all_locked": ui_all_locked,
+            "pde_can_commit": can_commit,
+            "pde_has_changes": pde_has_changes,
+            "show_validation_key": show_validation_key,
             "pde_help_log": pde_help_log,
             "pde_help_auto_open": pde_help_auto_open,
-            "ui_return_to": reverse("accounts:dashboard"),
+            "ui_return_to": reverse("accounts:project_home", kwargs={"project_id": project.id}),
             "current_field_key": current_field_key,
 
             # Global topbar Help offcanvas wiring (PDE uses existing help log)

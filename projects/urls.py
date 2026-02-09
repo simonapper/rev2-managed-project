@@ -8,9 +8,12 @@ from __future__ import annotations
 from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import path
-from accounts import views as accounts_views
 from projects import views
+from projects import views_project
 from projects import views_pde_ui
+from projects import views_ppde_ui
+from projects import views_wko
+from projects import views_execution
 from projects.views_pde import pde_create_project_cko, pde_field_lock, pde_field_verify, pde_home, pde_commit
 from projects import views_cko
 
@@ -26,7 +29,10 @@ urlpatterns = [
     # path("<int:project_id>/mark_sandbox/", views.project_mark_sandbox, name="project_mark_sandbox"),
     path("<int:project_id>/pde/commit/", pde_commit, name="pde_commit"),
     path("<int:project_id>/pde/ui/", views_pde_ui.pde_detail, name="pde_detail"),
-    path("<int:project_id>/home/", accounts_views.project_home, name="project_home"),
+    path("<int:project_id>/ppde/ui/", views_ppde_ui.ppde_detail, name="ppde_detail"),
+    path("<int:project_id>/wko/preview/", views_wko.wko_preview, name="wko_preview"),
+    path("<int:project_id>/execution/", views_execution.execution_board, name="execution_board"),
+    path("<int:project_id>/home/", views_project.project_home, name="project_home"),
     path("<int:project_id>/cko/preview/", views_cko.cko_preview, name="cko_preview"),
     path("<int:project_id>/cko/<int:cko_id>/accept/", views_cko.cko_accept, name="cko_accept"),
 

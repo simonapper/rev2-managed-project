@@ -22,13 +22,20 @@ from django.contrib.auth.tokens import default_token_generator
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import UploadedFile
 from django.core.paginator import Paginator
-from django.db import transaction
-from django.db.models import Count, Exists, OuterRef, Q
+from django.db.models import Count, Exists, OuterRef, Q, Case, When, Value, IntegerField
 from django.db.models.functions import Coalesce
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+
+
+def _safe_int(val):
+    try:
+        return int(val)
+    except Exception:
+        return None
+
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_decode
 from django.views.decorators.http import require_POST
 
@@ -38,16 +45,14 @@ from chats.models import ChatMessage, ChatWorkspace
 from chats.services.cde_injection import build_cde_system_blocks
 from chats.services.cde_loop import validate_cde_inputs
 from chats.services.chat_bootstrap import bootstrap_chat
-from chats.services.cleanup import delete_empty_sandbox_chats
 from chats.services.llm import _get_default_model_key, generate_panes, generate_text
 from chats.services.llm import build_image_parts_from_attachments
 from chats.services.turns import build_chat_turn_context
-from config.models import ConfigRecord, ConfigScope, ConfigVersion, SystemConfigPointers
-from projects.models import Project
+from config.models import SystemConfigPointers
+from projects.models import ProjectPlanningPurpose, ProjectPlanningStage
 from projects.services.context_resolution import resolve_effective_context
 from projects.services.llm_instructions import PROTOCOL_LIBRARY, build_system_messages
-from projects.services.project_bootstrap import bootstrap_project
-from projects.services_project_membership import accessible_projects_qs, is_project_manager
+from projects.services_project_membership import accessible_projects_qs
 from uploads.models import ChatAttachment
 
 
@@ -168,228 +173,6 @@ def dashboard(request):
     )
 
 
-@login_required
-def active_project_set(request):
-    if request.method != "POST":
-        return JsonResponse({"ok": False, "error": "POST required"}, status=405)
-
-    project_id = request.POST.get("project_id")
-    if not project_id:
-        messages.error(request, "No project selected.")
-        return redirect(request.POST.get("next") or "accounts:dashboard")
-
-    try:
-        pid = int(project_id)
-    except ValueError:
-        messages.error(request, "Invalid project.")
-        return redirect(request.POST.get("next") or "accounts:dashboard")
-
-    active_project = get_object_or_404(accessible_projects_qs(request.user), pk=pid)
-
-    request.session["rw_active_project_id"] = active_project.id
-    request.session.modified = True
-
-    return redirect(request.POST.get("next") or "accounts:dashboard")
-
-
-# ------------------------------------------------------------
-# Projects (home/create/delete/select/project_chat_list)
-# ------------------------------------------------------------
-
-@login_required
-def project_home(request, project_id: int):
-    project = get_object_or_404(Project, id=project_id)
-
-    # 1) Sandbox always routes to operational area (never PDE)
-    if project.kind == Project.Kind.SANDBOX:
-        return redirect("accounts:chat_browse")
-
-    # 2) Standard projects: PDE until defined_cko exists
-    if project.defined_cko_id is None:
-        return redirect("projects:pde_detail", project_id=project.id)
-
-    # 3) Defined projects: project detail page
-    return redirect("accounts:project_config_info", project_id=project.id)
-
-@login_required
-def project_create(request):
-    class ProjectCreateForm(forms.ModelForm):
-        class Meta:
-            model = Project
-            fields = ("name", "purpose", "kind", "primary_type", "mode")
-            widgets = {
-                "name": forms.TextInput(attrs={"class": "form-control"}),
-                "purpose": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
-                "kind": forms.Select(attrs={"class": "form-select form-select-sm"}),
-                "primary_type": forms.Select(attrs={"class": "form-select form-select-sm"}),
-                "mode": forms.Select(attrs={"class": "form-select form-select-sm"}),
-            }
-            labels = {
-                "kind": "Definition path",
-                "primary_type": "Project category",
-                "mode": "Stage",
-            }
-
-    if request.method == "POST":
-        form = ProjectCreateForm(request.POST)
-        if form.is_valid():
-            p = form.save(commit=False)
-            p.owner = request.user
-            p.save()
-
-            bootstrap_project(project=p)
-
-            request.session["rw_active_project_id"] = p.id
-            request.session.modified = True
-
-            if p.kind == Project.Kind.SANDBOX:
-                chat = bootstrap_chat(
-                    project=p,
-                    user=request.user,
-                    title="Chat 1",
-                    generate_panes_func=generate_panes,
-                    session_overrides=(request.session.get("rw_session_overrides", {}) or {}),
-                )
-                request.session["rw_active_chat_id"] = chat.id
-                request.session.modified = True
-                messages.success(request, "Sandbox project created.")
-                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
-
-            messages.success(request, "Project created. Define it in PDE to enable chats.")
-            return redirect(reverse("projects:pde_detail", args=[p.id]))
-    else:
-        form = ProjectCreateForm()
-
-    return render(request, "accounts/project_create.html", {"form": form})
-
-
-@require_POST
-@login_required
-def project_delete(request, project_id: int):
-    p = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
-
-    if p.kind != "SANDBOX":
-        messages.error(request, "Only SANDBOX projects can be deleted.")
-        return redirect("accounts:project_config_list")
-
-    if not (request.user.is_superuser or p.owner_id == request.user.id):
-        messages.error(request, "You do not have permission to delete this project.")
-        return redirect("accounts:project_config_list")
-
-    has_real_msgs = ChatMessage.objects.filter(
-        chat__project=p,
-        role__iexact="USER",
-    ).exists()
-
-    if has_real_msgs:
-        messages.error(request, "Project contains chats with messages and cannot be deleted.")
-        return redirect("accounts:project_config_list")
-
-    name = p.name or "(unnamed project)"
-
-    with transaction.atomic():
-        Project.objects.filter(pk=p.pk).update(active_l4_config=None)
-
-        delete_empty_sandbox_chats(project=p)
-
-        scopes = ConfigScope.objects.filter(project=p)
-        ConfigVersion.objects.filter(config__scope__in=scopes).delete()
-        ConfigRecord.objects.filter(scope__in=scopes).delete()
-        scopes.delete()
-
-        p.delete()
-
-    messages.success(request, f"Deleted SANDBOX project: {name}")
-    return redirect("accounts:project_config_list")
-
-
-@login_required
-def project_select(request, project_id: int):
-    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
-
-    request.session["rw_active_project_id"] = project.id
-    request.session.pop("rw_active_chat_id", None)
-    request.session.modified = True
-
-    return redirect("accounts:project_chat_list", project_id=project.id)
-
-
-@login_required
-def project_chat_list(request, project_id: int):
-    user = request.user
-
-    if user.is_superuser or user.is_staff:
-        pqs = accessible_projects_qs(user)
-    else:
-        pqs = (
-            accessible_projects_qs(user)
-            .filter(Q(owner=user) | Q(scoped_roles__user=user))
-            .distinct()
-        )
-
-    projects = pqs.select_related("owner", "active_l4_config").order_by("name")
-    active_project = get_object_or_404(accessible_projects_qs(user), pk=project_id)
-
-    prev_project_id = request.session.get("rw_active_project_id")
-    if str(prev_project_id) != str(active_project.id):
-        request.session["rw_active_project_id"] = active_project.id
-        request.session.pop("rw_active_chat_id", None)
-        request.session.modified = True
-
-    qs = ChatWorkspace.objects.select_related("created_by").filter(project=active_project)
-
-    status = request.GET.get("status")
-    q = (request.GET.get("q") or "").strip()
-
-    if status in (ChatWorkspace.Status.ACTIVE, ChatWorkspace.Status.ARCHIVED):
-        qs = qs.filter(status=status)
-
-    if q:
-        qs = qs.filter(
-            Q(title__icontains=q)
-            | Q(last_output_snippet__icontains=q)
-            | Q(created_by__username__icontains=q)
-        )
-
-    qs = qs.annotate(
-        user_msg_count=Coalesce(Count("messages", filter=Q(messages__role__iexact="USER")), 0),
-        assistant_msg_count=Coalesce(Count("messages", filter=Q(messages__role__iexact="ASSISTANT")), 0),
-    ).annotate(
-        can_delete=Q(user_msg_count=0),
-        turn_count=Coalesce(Count("messages", filter=Q(messages__role__iexact="USER")), 0),
-    )
-
-    sort = request.GET.get("sort", "updated")
-    direction = request.GET.get("dir", "desc")
-
-    sort_map = {
-        "title": "title",
-        "owner": "created_by__username",
-        "updated": "updated_at",
-        "turns": "turn_count",
-    }
-
-    order_field = sort_map.get(sort, "updated_at")
-    if direction == "desc":
-        order_field = f"-{order_field}"
-
-    qs = qs.order_by(order_field, "-id")
-
-    paginator = Paginator(qs, 25)
-    page_obj = paginator.get_page(request.GET.get("page"))
-
-    return render(
-        request,
-        "accounts/project_chat_list.html",
-        {
-            "projects": projects,
-            "active_project": active_project,
-            "page_obj": page_obj,
-            "filters": {"status": status or "", "q": q},
-            "sort": sort,
-            "dir": direction,
-        },
-    )
 
 
 # ------------------------------------------------------------
@@ -534,12 +317,17 @@ def chat_create(request):
         )
 
         if not is_sandbox:
-            messages.error(
-                request,
-                "Only Sandbox projects support chat creation right now. "
-                + f"(mode={mode or 'NONE'}, kind={kind or 'NONE'}, primary_type={primary_type or 'NONE'})"
+            if project.defined_cko_id is None:
+                messages.error(request, "Project is not defined. Complete PDE first.")
+                return redirect("accounts:chat_create")
+
+            ppde_started = (
+                ProjectPlanningPurpose.objects.filter(project=project).exists()
+                or ProjectPlanningStage.objects.filter(project=project).exists()
             )
-            return redirect("accounts:chat_create")
+            if not ppde_started:
+                messages.error(request, "Start PPDE before creating chats.")
+                return redirect("projects:ppde_detail", project_id=project.id)
 
         cde_mode = (request.POST.get("cde_mode") or "SKIP").strip().upper()
         cde_inputs = {
@@ -697,6 +485,7 @@ def chat_message_create(request):
     user = request.user
 
     request.session["rw_active_chat_id"] = chat.id
+    request.session["rw_active_project_id"] = chat.project_id
     request.session.modified = True
 
     ChatMessage.objects.create(
@@ -830,9 +619,25 @@ def chat_browse(request):
 
     selected_project_id = None
     active_project = None
-    if project_param.isdigit():
-        selected_project_id = int(project_param)
+    project_filter_active = False
+    pid_int = _safe_int(project_param)
+    if pid_int is not None:
+        selected_project_id = pid_int
         active_project = projects.filter(pk=selected_project_id).first()
+        project_filter_active = True
+
+    # If no explicit filter, fall back to session active project for highlighting
+    if not project_filter_active:
+        pid = request.session.get("rw_active_project_id")
+        pid_int = _safe_int(pid)
+        if pid_int is not None:
+            active_project = projects.filter(pk=pid_int).first()
+
+    # Keep global active project (topbar) in sync with the browse filter
+    if project_filter_active and active_project is not None:
+        request.session["rw_active_project_id"] = active_project.id
+        request.session.modified = True
+
 
     qs = (
         ChatWorkspace.objects.select_related("project", "created_by")
@@ -840,8 +645,17 @@ def chat_browse(request):
         .annotate(turn_count=Count("messages", filter=Q(messages__role=ChatMessage.Role.USER)))
     )
 
-    # Apply project filter only when a real project is selected
-    if active_project is not None:
+    if active_project is not None and not project_param:
+        qs = qs.annotate(
+            is_active_project=Case(
+                When(project=active_project, then=Value(1)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        )
+
+    # Apply project filter only when explicitly selected
+    if project_filter_active and active_project is not None:
         qs = qs.filter(project=active_project)
 
     status = (request.GET.get("status") or "").strip()
@@ -873,10 +687,29 @@ def chat_browse(request):
     if direction == "desc":
         order_field = f"-{order_field}"
 
-    qs = qs.order_by(order_field, "-created_at")
+    if active_project is not None and not project_param:
+        qs = qs.order_by("-is_active_project", order_field, "-created_at")
+    else:
+        qs = qs.order_by(order_field, "-created_at")
 
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
+
+    palette = [
+        "rgba(59, 130, 246, 0.16)",
+        "rgba(16, 185, 129, 0.16)",
+        "rgba(234, 179, 8, 0.18)",
+        "rgba(168, 85, 247, 0.16)",
+        "rgba(244, 63, 94, 0.14)",
+        "rgba(14, 165, 233, 0.16)",
+        "rgba(249, 115, 22, 0.16)",
+        "rgba(34, 197, 94, 0.16)",
+        "rgba(99, 102, 241, 0.16)",
+        "rgba(148, 163, 184, 0.20)",
+    ]
+    for c in page_obj.object_list:
+        idx = int(c.project_id) % len(palette)
+        setattr(c, "row_color", palette[idx])
 
     return render(
         request,
@@ -1028,79 +861,6 @@ def user_config_definitions(request):
     return render(request, "accounts/config_user_definitions.html")
 
 
-@login_required
-def project_config_list(request):
-    user = request.user
-
-    qs = accessible_projects_qs(user)
-
-    sort = request.GET.get("sort", "name")
-    direction = request.GET.get("dir", "asc")
-
-    sort_map = {
-        "name": "name",
-        "owner": "owner__username",
-        "profile": "active_l4_config__file_name",
-        "updated": "updated_at",
-    }
-    order_field = sort_map.get(sort, "name")
-    if direction == "desc":
-        order_field = f"-{order_field}"
-
-    projects = qs.select_related("owner", "active_l4_config").order_by(order_field, "name")
-
-    p = Paginator(projects, 25)
-    page_obj = p.get_page(request.GET.get("page"))
-    projects_with_permissions = [(proj, is_project_manager(proj, user)) for proj in page_obj.object_list]
-
-    return render(
-        request,
-        "accounts/config_project_list.html",
-        {
-            "projects_with_permissions": projects_with_permissions,
-            "sort": sort,
-            "dir": direction,
-            "page_obj": page_obj,
-        },
-    )
-
-
-@login_required
-def project_config_info(request, project_id: int):
-    active_project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
-    return render(request, "accounts/config_project_info.html", {"project": active_project})
-
-
-@login_required
-def project_config_definitions(request, project_id: int):
-    active_project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
-    return render(request, "accounts/config_project_definitions.html", {"project": active_project})
-
-
-@login_required
-def project_config_edit(request, project_id):
-    project = get_object_or_404(Project, id=project_id)
-
-    if not is_project_manager(project, request.user):
-        return redirect("accounts:project_config_list")
-
-    if request.method == "POST":
-        new_name = (request.POST.get("name") or "").strip()
-        description = request.POST.get("description", "")
-        if new_name:
-            project.name = new_name
-            project.description = description
-            project.save()
-            return redirect("accounts:project_config_list")
-        error = "Project name cannot be empty."
-    else:
-        error = None
-
-    return render(
-        request,
-        "accounts/config_project_edit.html",
-        {"project": project, "error": error},
-    )
 
 
 # --------------------------------------------------------

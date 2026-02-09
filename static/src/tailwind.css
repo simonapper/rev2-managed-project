@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+  h1, h2, h3, h4 {
+    @apply font-semibold tracking-tight text-slate-900;
+  }
+}
+
+
+@layer components {
+
+  .rw-main {
+    padding-top: 0;
+  }
+
+  .rw-main-tight {
+    margin-top: -0.75rem;
+  }
+
+
+  .rw-status-grid {
+    justify-content: center;
+    padding-left: 0;
+  }
+
+
+  .rw-topbar-btn {
+    min-width: 132px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .rw-topbar {
+    @apply bg-white/90 backdrop-blur border-b border-slate-200;
+  }
+  
+  .card {
+    @apply border border-slate-200 shadow-sm rounded-lg;
+  }
+  .card-body {
+    @apply text-slate-800;
+  }
+  .btn {
+    @apply rounded-md font-medium;
+  }
+  .btn-primary {
+    @apply bg-slate-900 border-slate-900;
+  }
+  .btn-outline-primary {
+    @apply text-slate-900 border-slate-300;
+  }
+  .btn-outline-secondary {
+    @apply text-slate-700 border-slate-300;
+  }
+  .btn-success {
+    @apply bg-emerald-600 border-emerald-600;
+  }
+  .alert {
+    @apply rounded-md;
+  }
+}

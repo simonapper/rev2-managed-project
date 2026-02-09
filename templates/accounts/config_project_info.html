@@ -1,34 +1,288 @@
-﻿{# -*- coding: utf-8 -*- #}
-{# templates/accounts/config_project_info.html #}
+﻿{# templates/accounts/project_config_info.html #}
 {% extends "base.html" %}
 
+{% block title %}Project — {{ project.name }}{% endblock %}
+
 {% block content %}
-<div class="container-fluid px-4 py-3">
+<div class="rw-main-inner">
+  <div class="rw-workarea">
 
-  <div class="d-flex align-items-center justify-content-between mb-3">
-    <div>
-      <h5 class="mb-1">Project Settings — Info</h5>
-      <div class="text-secondary small">{{ project.name }}</div>
+    <!-- Always-visible header -->
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="d-flex align-items-start justify-content-between gap-3">
+          <div class="min-w-0">
+            <div class="h5 mb-1">{{ project.name }}</div>
+            <div class="small text-secondary">
+              Owner: {{ project.owner }} |
+              Kind: {{ project.kind }} |
+              Status: {% if project.defined_cko_id %}DEFINED{% else %}UNDEFINED{% endif %}
+            </div>
+            <div class="small text-muted mt-1">
+              Created: {{ project.created_at }} |
+              Updated: {{ project.updated_at }}
+            </div>
+          </div>
+
+          <div class="d-flex flex-column gap-2">
+            <div class="d-flex gap-2">
+              {% if active_wko %}
+                <a class="btn btn-sm btn-outline-secondary"
+                   href="{% url 'projects:ppde_detail' project.id %}">
+                  Back to PPDE
+                </a>
+                <a class="btn btn-sm btn-primary"
+                   href="{% url 'projects:wko_preview' project.id %}">
+                  View Accepted WKO
+                </a>
+              {% else %}
+                <a class="btn btn-sm btn-outline-secondary"
+                   href="{% url 'projects:pde_detail' project.id %}">
+                  Back to PDE
+                </a>
+                {% if accepted_cko %}
+                  <a class="btn btn-sm btn-primary"
+                     href="{% url 'projects:cko_preview' project.id %}?accepted=1">
+                    View Accepted CKO
+                  </a>
+                {% endif %}
+              {% endif %}
+            </div>
+            {% if not active_wko %}
+              <div class="d-flex gap-2">
+                <a class="btn btn-sm btn-outline-secondary"
+                   href="{% url 'projects:ppde_detail' project.id %}">
+                  Open PPDE
+                </a>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
     </div>
 
-    <a href="{% url 'accounts:project_config_edit' project.id %}"
-       class="btn btn-sm btn-outline-secondary">
-      Back
-    </a>
-  </div>
+    <!-- Collapsed drawers -->
+    <div class="card shadow-sm">
+      <div class="card-body">
 
-  <div class="card">
-    <div class="card-body rw-definitions rw-content-scroll">
-      <p class="mb-2">
-        <strong>Operating Profile</strong> is the project’s default Level 4 configuration.
-      </p>
-      <ul class="mb-0">
-        <li>Defines default <strong>Work Type</strong>, <strong>Mode</strong>, and checkpoint posture.</li>
-        <li>Applies when a workspace/session does not explicitly override these values.</li>
-        <li>Does not change governance (Level 3 still binds).</li>
-      </ul>
+        <details class="rw-drawer">
+          <summary class="fw-semibold">Core team</summary>
+          <div class="pt-2">
+            <div class="small text-secondary mb-2">
+              Exactly one Project Committer is required. Contributors can propose PDE edits.
+            </div>
+
+            <table class="table table-sm mb-2">
+              <thead>
+                <tr>
+                  <th style="width:280px;">User</th>
+                  <th>Role</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in member_rows %}
+                  <tr>
+                    <td>{{ row.user.username }}</td>
+                    <td>{{ row.role_label }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+
+            {% if can_edit_committee %}
+              <form method="post" class="mt-3">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="committee_update" />
+
+                <div class="mb-3">
+                  <label class="form-label small mb-1">Project Committer</label>
+                  <select class="form-select form-select-sm" name="committer_id">
+                    {% for row in member_rows %}
+                      <option value="{{ row.user_id }}"
+                        {% if row.is_committer %}selected{% endif %}>
+                        {{ row.user.username }}
+                      </option>
+                    {% endfor %}
+                    {% for u in available_users %}
+                      <option value="{{ u.id }}">{{ u.username }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+
+                <div class="small text-secondary mb-2">Members</div>
+                <table class="table table-sm">
+                  <thead>
+                    <tr>
+                      <th>User</th>
+                      <th style="width:160px;">Authority</th>
+                      <th style="width:80px;">Remove</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in member_rows %}
+                      <tr>
+                        <td>
+                          {{ row.user.username }}
+                          <input type="hidden" name="member_ids" value="{{ row.user_id }}" />
+                        </td>
+                        <td>
+                          {% if row.is_committer %}
+                            Committer
+                          {% else %}
+                            <select class="form-select form-select-sm" name="member_role_{{ row.user_id }}">
+                              <option value="CONTRIBUTOR" {% if row.role == "CONTRIBUTOR" %}selected{% endif %}>Contributor</option>
+                              <option value="MANAGER" {% if row.role == "MANAGER" %}selected{% endif %}>Manager</option>
+                              <option value="OBSERVER" {% if row.role == "OBSERVER" %}selected{% endif %}>Observer</option>
+                            </select>
+                          {% endif %}
+                        </td>
+                        <td>
+                          {% if row.is_committer %}
+                            —
+                          {% else %}
+                            <input type="checkbox" name="member_remove_{{ row.user_id }}" />
+                          {% endif %}
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+
+                <div class="mb-3">
+                  <label class="form-label small mb-1">Add contributors</label>
+                  <select class="form-select form-select-sm" name="add_user_ids" multiple>
+                    {% for u in available_users %}
+                      <option value="{{ u.id }}">{{ u.username }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+
+                <button class="btn btn-sm btn-primary" type="submit">Save team</button>
+              </form>
+            {% else %}
+              <div class="small text-muted">Only the Project Committer can edit the committee.</div>
+            {% endif %}
+          </div>
+        </details>
+
+        <hr class="my-3" />
+
+        <details class="rw-drawer">
+          <summary class="fw-semibold">Project identity</summary>
+          <div class="pt-2">
+            <div class="small text-secondary mb-2">Core fields from Project.</div>
+            <table class="table table-sm mb-0">
+              <tbody>
+                <tr><th style="width:220px;">Name</th><td>{{ project.name }}</td></tr>
+                <tr><th>Owner</th><td>{{ project.owner }}</td></tr>
+                <tr><th>Kind</th><td>{{ project.kind }}</td></tr>
+                <tr><th>Primary type</th><td>{{ project.primary_type }}</td></tr>
+                <tr><th>Mode</th><td>{{ project.mode }}</td></tr>
+                <tr><th>Created</th><td>{{ project.created_at }}</td></tr>
+                <tr><th>Updated</th><td>{{ project.updated_at }}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+
+        <hr class="my-3" />
+
+        <details class="rw-drawer">
+          <summary class="fw-semibold">Canonical definition</summary>
+          <div class="pt-2">
+            {% if accepted_cko %}
+              <div class="small text-secondary mb-2">
+                Current ACCEPTED CKO:
+                <span class="fw-semibold">
+                  CKO-{{ project.name }}-V{{ accepted_cko.version }}
+                </span>
+                <span class="small text-muted">
+                  ({{ accepted_cko.created_at|date:"Y-m-d" }})
+                </span>
+              </div>
+
+              <div class="small text-secondary mb-3">
+                Status: {{ accepted_cko.status }}
+              </div>
+
+              <div class="d-flex gap-2 mb-3">
+                <a class="btn btn-sm btn-outline-primary"
+                   href="{% url 'projects:cko_preview' project.id %}?accepted=1">
+                  View CKO
+                </a>
+
+                <a class="btn btn-sm btn-outline-secondary"
+                   href="{% url 'projects:pde_detail' project.id %}">
+                  Reopen PDE (revise)
+                </a>
+              </div>
+
+              {% if cko_history %}
+                <div class="small text-muted mb-1">Version history</div>
+                <ul class="small mb-0">
+                  {% for cko in cko_history %}
+                    <li>
+                      CKO-{{ project.name }}-V{{ cko.version }}
+                      - {{ cko.status }}
+                      - {{ cko.created_at|date:"Y-m-d" }}
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="small text-secondary">No history available.</div>
+              {% endif %}
+            {% else %}
+              <div class="text-secondary small">Project is not defined.</div>
+            {% endif %}
+          </div>
+        </details>
+
+        <hr class="my-3" />
+
+        <details class="rw-drawer">
+          <summary class="fw-semibold">Storage</summary>
+          <div class="pt-2">
+            <table class="table table-sm mb-0">
+              <tbody>
+                <tr><th style="width:220px;">artefact_root_ref</th><td>{{ project.artefact_root_ref }}</td></tr>
+              </tbody>
+            </table>
+
+            {% if artefacts %}
+              <div class="small text-muted mt-3 mb-1">Known artefacts</div>
+              <ul class="small mb-0">
+                {% for a in artefacts %}
+                  <li>{{ a }}</li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <div class="small text-secondary mt-2">No artefacts listed yet.</div>
+            {% endif %}
+          </div>
+        </details>
+
+        <hr class="my-3" />
+
+        <details class="rw-drawer">
+          <summary class="fw-semibold">Governance state</summary>
+          <div class="pt-2">
+            <table class="table table-sm mb-0">
+              <tbody>
+                <tr><th style="width:220px;">defined_cko_id</th><td>{{ project.defined_cko_id }}</td></tr>
+                <tr><th>defined_by</th><td>{{ project.defined_by }}</td></tr>
+                <tr><th>defined_at</th><td>{{ project.defined_at }}</td></tr>
+                <tr><th>last_revision_at</th><td>{{ project.last_revision_at }}</td></tr>
+              </tbody>
+            </table>
+            <div class="small text-muted mt-2">
+              Audit trail hooks appear here later.
+            </div>
+          </div>
+        </details>
+
+      </div>
     </div>
-  </div>
 
+  </div>
 </div>
 {% endblock %}

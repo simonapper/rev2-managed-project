@@ -1,0 +1,84 @@
+﻿{# templates/partials/rw_help_offcanvas.html #}
+{# 7-bit ASCII only. #}
+
+<div class="offcanvas offcanvas-end rw-help"
+     tabindex="-1"
+     id="rwHelp"
+     aria-labelledby="rwHelpLabel">
+  <div class="offcanvas-header">
+    <h5 class="offcanvas-title" id="rwHelpLabel">{{ rw_help_title|default:"Help" }}</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+
+  <div class="offcanvas-body d-flex flex-column gap-2">
+
+    <div class="small text-secondary">
+      {{ rw_help_hint|default:"Ask a question. This does not change your data unless you choose to apply edits." }}
+    </div>
+
+    <div class="rw-help-log border rounded p-2 bg-white">
+      {% if rw_help_log %}
+        {% for m in rw_help_log %}
+          <div class="mb-2">
+            <div class="fw-semibold" style="font-size:0.8rem;">
+              {% if m.role == "user" %}You{% else %}Assistant{% endif %}
+            </div>
+            <div style="white-space:pre-wrap; font-size:0.85rem;">{{ m.text }}</div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="text-secondary small">No help messages yet.</div>
+      {% endif %}
+    </div>
+
+    {% if rw_help_post_url %}
+      <form method="post" action="{{ rw_help_post_url }}" class="mt-auto">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="{{ rw_help_action_ask|default:'help_ask' }}" />
+
+        <div class="mb-2">
+          <label class="form-label small mb-1" for="id_rw_help_question">Question</label>
+          <textarea class="form-control"
+                    id="id_rw_help_question"
+                    name="help_question"
+                    rows="3"
+                    placeholder="Type a question..."></textarea>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-primary" type="submit">Ask</button>
+          <button class="btn btn-sm btn-outline-secondary"
+                  type="submit"
+                  name="action"
+                  value="{{ rw_help_action_clear|default:'help_clear' }}">
+            Clear
+          </button>
+        </div>
+
+        {% if rw_help_auto_open %}
+          <div class="small text-secondary mt-2">
+            (Help drawer will reopen after this page refresh.)
+          </div>
+        {% endif %}
+      </form>
+    {% else %}
+      <div class="small text-secondary mt-2">
+        Help is not enabled for this page yet.
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if rw_help_auto_open %}
+<script>
+(function () {
+  try {
+    var el = document.getElementById("rwHelp");
+    if (el && window.bootstrap) {
+      var oc = bootstrap.Offcanvas.getOrCreateInstance(el);
+      oc.show();
+    }
+  } catch (e) {}
+})();
+</script>
+{% endif %}
