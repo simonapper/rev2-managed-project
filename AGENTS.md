@@ -50,3 +50,23 @@ keep URL names/paths stable unless explicitly told
 prefer moving code without changing behaviour
 
 Codex merges project instructions it finds along the path from repo root to your working directory, with later/closer files overriding earlier ones.
+
+## Review Conference Notes (Artefact Glossary + Structure)
+Artefact Glossary + Structure (excerpt):
+- Anchor: the single artefact for a marker.
+- Marker: INTENT, ROUTE, EXECUTE, COMPLETE.
+- Review Conference: per project per user chat for one marker.
+- CKO: Canonical Knowledge Object (INTENT anchor).
+- WKO: Workflow Knowledge Object (execution artefact, not in this slice).
+- TKO: Transfer Knowledge Object (handoff record).
+- PKO: Policy Knowledge Object (policy record).
+- Do not interpret CKO as course kick-off.
+- Use structures as guidance, not bureaucracy.
+- Never add filler text to populate sections.
+
+Lightweight canonical structures (sections optional):
+- CKO sections: Canonical summary (<=10 words), Scope, Statement, Supporting basis, Assumptions, Alternatives considered, Uncertainties / limits, Provenance.
+- WKO sections: Purpose, Current state, Open questions, Options / candidate approaches, Risks / dependencies, Next actions, Provenance.
+- TKO sections: Canonical summary (<=10 words), Working preferences, Context / why this exists, Current state, Decisions made (and why), In scope next, Out of scope, Known risks / gotchas, Files / modules / commands, Next step (single, concrete).
+- PKO sections: Policy summary (<=10 words), Policy statement, Rationale, Applies to, Does not apply to, Enforcement, Exceptions, Versioning / provenance.
+## End Review Conference Notes
