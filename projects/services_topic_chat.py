@@ -47,6 +47,10 @@ def get_or_create_topic_chat(
         .first()
     )
     if existing:
+        desired_title = (title or "").strip()
+        if desired_title and existing.chat and (existing.chat.title or "") != desired_title:
+            existing.chat.title = desired_title
+            existing.chat.save(update_fields=["title"])
         return existing.chat
 
     cde_mode = (mode or "CONTROLLED").strip().upper() or "CONTROLLED"

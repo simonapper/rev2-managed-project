@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from django import forms
 from django.conf import settings
@@ -49,10 +50,25 @@ from chats.services.llm import _get_default_model_key, generate_panes, generate_
 from chats.services.llm import build_image_parts_from_attachments
 from chats.services.turns import build_chat_turn_context
 from config.models import SystemConfigPointers
-from projects.models import ProjectPlanningPurpose, ProjectPlanningStage
+from projects.models import (
+    ProjectDefinitionField,
+    ProjectPlanningPurpose,
+    ProjectPlanningStage,
+    ProjectPlanningMilestone,
+    ProjectPlanningAction,
+    ProjectPlanningRisk,
+    ProjectAnchor,
+    ProjectReviewChat,
+    ProjectReviewStageChat,
+    ProjectTopicChat,
+)
+from projects.services.artefact_render import render_artefact_html
+from projects.services_text_normalise import normalise_sections
+from projects.services_artefacts import normalise_pdo_payload, merge_execute_payload
+from projects.services_execute_validator import validate_execute_update, merge_execute_update
 from projects.services.context_resolution import resolve_effective_context
 from projects.services.llm_instructions import PROTOCOL_LIBRARY, build_system_messages
-from projects.services_project_membership import accessible_projects_qs
+from projects.services_project_membership import accessible_projects_qs, can_edit_pde, can_edit_ppde, is_project_committer
 from uploads.models import ChatAttachment
 
 
@@ -70,16 +86,26 @@ ALLOWED_MODELS = [
     ("gpt-4o", "gpt-4o"),
 ]
 
+ALLOWED_ANTHROPIC_MODELS = [
+    ("claude-sonnet-4-5-20250929", "claude-sonnet-4-5-20250929"),
+    ("claude-opus-4-5-20251101", "claude-opus-4-5-20251101"),
+    ("claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
+]
+
 
 class SystemConfigForm(forms.ModelForm):
     openai_model_default = forms.ChoiceField(
         choices=ALLOWED_MODELS,
         widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
     )
+    anthropic_model_default = forms.ChoiceField(
+        choices=ALLOWED_ANTHROPIC_MODELS,
+        widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
+    )
 
     class Meta:
         model = SystemConfigPointers
-        fields = ("openai_model_default",)
+        fields = ("openai_model_default", "anthropic_model_default")
 
 
 # ------------------------------------------------------------
@@ -213,6 +239,7 @@ def chat_suggest_goals(request):
     text = generate_text(
         system_blocks=system_blocks,
         messages=[{"role": "user", "content": user_msg}],
+        user=request.user,
     )
 
     alts = []
@@ -236,7 +263,10 @@ def chat_draft_cde(request):
 
     from chats.services.cde import draft_cde_from_seed
 
-    res = draft_cde_from_seed(generate_panes_func=generate_panes, seed_text=seed)
+    def _generate_panes_for_user(*args, **kwargs):
+        return generate_panes(*args, user=request.user, **kwargs)
+
+    res = draft_cde_from_seed(generate_panes_func=_generate_panes_for_user, seed_text=seed)
     if not res.get("ok"):
         return JsonResponse({"ok": False, "error": res.get("error") or "Draft failed."})
 
@@ -346,9 +376,12 @@ def chat_create(request):
         else:
             cde_json = {}
 
+        def _generate_panes_for_user(*args, **kwargs):
+            return generate_panes(*args, user=user, **kwargs)
+
         if cde_mode == "CONTROLLED":
             cde_result = validate_cde_inputs(
-                generate_panes_func=generate_panes,
+                generate_panes_func=_generate_panes_for_user,
                 user_inputs=cde_inputs,
             )
 
@@ -381,7 +414,7 @@ def chat_create(request):
             project=project,
             user=user,
             title=title,
-            generate_panes_func=generate_panes,
+            generate_panes_func=_generate_panes_for_user,
             session_overrides=(request.session.get("rw_session_overrides", {}) or {}),
             cde_mode=cde_mode,
             cde_inputs=cde_inputs,
@@ -488,7 +521,7 @@ def chat_message_create(request):
     request.session["rw_active_project_id"] = chat.project_id
     request.session.modified = True
 
-    ChatMessage.objects.create(
+    user_msg = ChatMessage.objects.create(
         chat=chat,
         role=ChatMessage.Role.USER,
         raw_text=content,
@@ -552,6 +585,18 @@ def chat_message_create(request):
         else:
             content = content + "\n\n[ATTACHMENT: none]"
 
+    binding = ProjectTopicChat.objects.filter(chat=chat).first()
+    if binding:
+        seed_msg = (
+            ChatMessage.objects
+            .filter(chat=chat, role=ChatMessage.Role.USER)
+            .order_by("id")
+            .first()
+        )
+        seed_text = (seed_msg.raw_text or "").strip() if seed_msg else ""
+        if seed_text.startswith("Topic chat:"):
+            content = "Seed context:\n" + seed_text + "\n\nUser message:\n" + content
+
     sys_text = "\n\n".join([b for b in system_blocks if (b or "").strip()]).strip()
     if sys_text:
         ChatMessage.objects.create(
@@ -562,10 +607,41 @@ def chat_message_create(request):
             segment_meta={"parser_version": "system_v1", "confidence": "N/A"},
         )
 
+    history_qs = (
+        ChatMessage.objects
+        .filter(chat=chat)
+        .exclude(id=user_msg.id)
+        .order_by("created_at", "id")
+    )
+
+    history_messages = []
+    for m in history_qs:
+        role = (m.role or "").upper().strip()
+        if role == "USER":
+            text = (m.raw_text or m.answer_text or "").strip()
+            if text:
+                history_messages.append(
+                    {"role": "user", "content": [{"type": "input_text", "text": text}]}
+                )
+        elif role == "ASSISTANT":
+            text = (m.answer_text or m.raw_text or "").strip()
+            if text:
+                history_messages.append(
+                    {"role": "assistant", "content": [{"type": "output_text", "text": text}]}
+                )
+
+    if history_messages:
+        last_roles = [m.get("role") for m in history_messages[-5:]]
+    else:
+        last_roles = []
+    print("LLM history messages:", len(history_messages), "last roles:", last_roles)
+
     panes = generate_panes(
         content,
         image_parts=image_parts,
         system_blocks=system_blocks,
+        history_messages=history_messages,
+        user=request.user,
     )
 
     assistant_answer = (panes.get("answer") or "")
@@ -596,6 +672,568 @@ def chat_message_create(request):
         return redirect(next_url)
 
     return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+
+@require_POST
+@login_required
+def chat_use_selected(request):
+    chat_id = (request.POST.get("chat_id") or "").strip()
+    selected_text = (request.POST.get("selected_text") or "").strip()
+    apply_mode = (request.POST.get("apply_mode") or "replace").strip().lower()
+    next_url = (request.POST.get("next") or "").strip()
+
+    if apply_mode not in ("replace", "append"):
+        apply_mode = "replace"
+
+    if not chat_id or not chat_id.isdigit():
+        messages.error(request, "Invalid chat.")
+        return redirect("accounts:dashboard")
+    if not selected_text:
+        messages.error(request, "No selected text.")
+        if next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            return redirect(next_url)
+        return redirect(reverse("accounts:chat_detail", args=[int(chat_id)]))
+
+    chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=int(chat_id))
+    project = chat.project
+
+    if not accessible_projects_qs(request.user).filter(id=project.id).exists():
+        messages.error(request, "No permission for this project.")
+        return redirect("accounts:chat_browse")
+
+    def merge_text(existing: str, incoming: str) -> str:
+        if apply_mode == "append" and existing:
+            return existing.rstrip() + "\n\n" + incoming.lstrip()
+        return incoming
+
+    def extract_json_object(text: str):
+        s = (text or "").strip()
+        if not s:
+            return None, "Empty input."
+        def _clean(raw: str) -> str:
+            cleaned = raw
+            cleaned = re.sub(r'">(\s*[}\]])', r'"\1', cleaned)
+            cleaned = re.sub(r'>\s*(?=[}\]])', "", cleaned)
+            cleaned = re.sub(r'>\s*$', "", cleaned)
+            return cleaned
+        s = _clean(s)
+        try:
+            obj = json.loads(s)
+            if isinstance(obj, dict):
+                return obj, None
+        except Exception as e:
+            parse_err = str(e)
+            pass
+        s = _clean(s)
+        try:
+            decoder = json.JSONDecoder()
+        except Exception:
+            return None, "JSON decoder unavailable."
+        idx = s.find("{")
+        while idx != -1:
+            try:
+                obj, _end = decoder.raw_decode(s[idx:])
+                if isinstance(obj, dict):
+                    return obj, None
+            except Exception as e:
+                parse_err = str(e)
+                pass
+            idx = s.find("{", idx + 1)
+        return None, parse_err if "parse_err" in locals() else "Invalid JSON."
+
+    binding = ProjectTopicChat.objects.select_related("project", "user").filter(chat=chat).first()
+    stage_binding = ProjectReviewStageChat.objects.filter(chat=chat, user=request.user).first()
+
+    if not binding and stage_binding:
+        payload, payload_err = extract_json_object(selected_text)
+        if not isinstance(payload, dict):
+            err = "Stage update requires valid JSON. Check for stray characters like '>' or missing quotes."
+            if payload_err:
+                err += " Parse error: " + payload_err
+            messages.error(request, err)
+            return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+        anchor, _ = ProjectAnchor.objects.get_or_create(
+            project=project,
+            marker=stage_binding.marker,
+            defaults={"content": "", "status": ProjectAnchor.Status.DRAFT},
+        )
+        if stage_binding.marker == "EXECUTE":
+            payload_stage_id = str(payload.get("stage_id") or "").strip()
+            if not payload_stage_id:
+                payload["stage_id"] = f"S{stage_binding.stage_number}"
+            payload["stage_number"] = stage_binding.stage_number
+            route_anchor = ProjectAnchor.objects.filter(project=project, marker="ROUTE").first()
+            route_json = route_anchor.content_json if route_anchor else {}
+            current_execute = anchor.content_json or {}
+            proposed_execute = merge_execute_update(route_json or {}, current_execute, {"stages": [payload]})
+            ok, errs = validate_execute_update(route_json or {}, current_execute, proposed_execute)
+            if not ok:
+                messages.error(request, "EXECUTE update rejected: " + "; ".join(errs))
+                return redirect(reverse("projects:project_review", args=[project.id]) + "#review-execute")
+            anchor.content_json = proposed_execute
+        else:
+            base = normalise_pdo_payload(anchor.content_json or {})
+            stages = base.get("stages") or []
+            updated = False
+            payload_stage_id = str(payload.get("stage_id") or "").strip()
+            for idx, item in enumerate(stages):
+                try:
+                    item_stage_id = str(item.get("stage_id") or "").strip()
+                    if payload_stage_id and item_stage_id and payload_stage_id == item_stage_id:
+                        payload["stage_number"] = int(item.get("stage_number") or stage_binding.stage_number)
+                        if not payload_stage_id:
+                            payload["stage_id"] = item_stage_id
+                        stages[idx] = normalise_pdo_payload({"stages": [payload]}).get("stages", [payload])[0]
+                        updated = True
+                        break
+                    if int(item.get("stage_number") or 0) == stage_binding.stage_number:
+                        payload["stage_number"] = stage_binding.stage_number
+                        if not payload_stage_id:
+                            payload["stage_id"] = item_stage_id or f"S{stage_binding.stage_number}"
+                        stages[idx] = normalise_pdo_payload({"stages": [payload]}).get("stages", [payload])[0]
+                        updated = True
+                        break
+                except Exception:
+                    continue
+            if not updated:
+                payload["stage_number"] = stage_binding.stage_number
+                if not payload_stage_id:
+                    payload["stage_id"] = f"S{stage_binding.stage_number}"
+                stages.append(normalise_pdo_payload({"stages": [payload]}).get("stages", [payload])[0])
+            base["stages"] = stages
+            anchor.content_json = base
+        anchor.content = ""
+        anchor.save(update_fields=["content_json", "content", "updated_at"])
+        messages.success(request, "Stage updated.")
+        review_marker = "execute" if stage_binding.marker == "EXECUTE" else "route"
+        return redirect(
+            reverse("projects:project_review", args=[project.id])
+            + "?review_chat_id="
+            + str(chat.id)
+            + "&review_chat_open=1&review_edit="
+            + review_marker
+            + "&review_anchor_open=1#review-"
+            + review_marker
+        )
+    if not binding:
+        review_binding = ProjectReviewChat.objects.filter(chat=chat, user=request.user).first()
+        if not review_binding:
+            messages.error(request, "This chat is not linked to a topic.")
+            return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+        payload, payload_err = extract_json_object(selected_text)
+        if review_binding.marker == "ROUTE" and not isinstance(payload, dict):
+            err = "Route update requires valid JSON. Check for stray characters like '>' or missing quotes."
+            if payload_err:
+                err += " Parse error: " + payload_err
+            messages.error(request, err)
+            return redirect(
+                reverse("projects:project_review", args=[project.id])
+                + "?review_chat_id="
+                + str(chat.id)
+                + "&review_chat_open=1&review_edit=route&review_anchor_open=1#review-route"
+            )
+        anchor, _ = ProjectAnchor.objects.get_or_create(
+            project=project,
+            marker=review_binding.marker,
+            defaults={"content": "", "status": ProjectAnchor.Status.DRAFT},
+        )
+        if payload:
+            if review_binding.marker == "ROUTE":
+                base = normalise_pdo_payload(anchor.content_json or {})
+                incoming = normalise_pdo_payload(payload)
+                merged = {
+                    "pdo_summary": incoming.get("pdo_summary") or base.get("pdo_summary") or "",
+                    "cko_alignment": {
+                        "stage1_inputs_match": (
+                            (incoming.get("cko_alignment") or {}).get("stage1_inputs_match")
+                            or (base.get("cko_alignment") or {}).get("stage1_inputs_match")
+                            or ""
+                        ),
+                        "final_outputs_match": (
+                            (incoming.get("cko_alignment") or {}).get("final_outputs_match")
+                            or (base.get("cko_alignment") or {}).get("final_outputs_match")
+                            or ""
+                        ),
+                    },
+                    "planning_purpose": incoming.get("planning_purpose") or base.get("planning_purpose") or "",
+                    "planning_constraints": incoming.get("planning_constraints") or base.get("planning_constraints") or "",
+                    "assumptions": incoming.get("assumptions") or base.get("assumptions") or "",
+                    "stages": incoming.get("stages") or base.get("stages") or [],
+                }
+                anchor.content_json = merged
+            elif review_binding.marker == "EXECUTE":
+                route_anchor = ProjectAnchor.objects.filter(project=project, marker="ROUTE").first()
+                route_json = route_anchor.content_json if route_anchor else {}
+                current_execute = anchor.content_json or {}
+                ok, errs = validate_execute_update(route_json or {}, current_execute, payload or {})
+                if not ok:
+                    messages.error(request, "EXECUTE update rejected: " + "; ".join(errs))
+                    return redirect(reverse("projects:project_review", args=[project.id]) + "#review-execute")
+                anchor.content_json = merge_execute_update(route_json or {}, current_execute, payload or {})
+            else:
+                anchor.content_json = payload
+            anchor.content = ""
+            anchor.save(update_fields=["content_json", "content", "updated_at"])
+        else:
+            merged = merge_text((anchor.content or "").strip(), selected_text)
+            anchor.content = normalise_sections(merged)
+            anchor.save(update_fields=["content", "updated_at"])
+        messages.success(request, "Anchor updated.")
+        marker_lower = review_binding.marker.lower()
+        extra = ""
+        if marker_lower == "route":
+            extra = "&review_edit=route&review_anchor_open=1"
+        return redirect(
+            reverse("projects:project_review", args=[project.id])
+            + "?review_chat_id="
+            + str(chat.id)
+            + "&review_chat_open=1#review-"
+            + marker_lower
+            + extra
+        )
+
+    if binding.user_id != request.user.id:
+        messages.error(request, "No permission for this topic chat.")
+        return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+    if binding.scope == "PPDE":
+        if not can_edit_ppde(project, request.user):
+            messages.error(request, "You do not have permission to edit PPDE.")
+            return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+        if binding.topic_key == "PURPOSE":
+            purpose = ProjectPlanningPurpose.objects.filter(project=project).first()
+            if not purpose:
+                messages.error(request, "Planning Purpose not found.")
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+            can_commit = is_project_committer(project, request.user)
+            if purpose.status != ProjectPlanningPurpose.Status.DRAFT and not can_commit:
+                messages.error(request, "Purpose is not editable.")
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+            if can_commit and purpose.status != ProjectPlanningPurpose.Status.DRAFT:
+                purpose.status = ProjectPlanningPurpose.Status.DRAFT
+                purpose.proposed_by = None
+                purpose.proposed_at = None
+                purpose.locked_by = None
+                purpose.locked_at = None
+
+            purpose_payload, payload_err = extract_json_object(selected_text)
+            if not isinstance(purpose_payload, dict):
+                err = "Purpose update requires valid JSON object."
+                if payload_err:
+                    err += " Parse error: " + payload_err
+                messages.error(request, err)
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+            purpose_text = str(purpose_payload.get("planning_purpose") or "").strip()
+            if not purpose_text:
+                messages.error(request, "Missing planning_purpose.")
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+            purpose.value_text = merge_text((purpose.value_text or "").strip(), purpose_text)
+            purpose.last_edited_by = request.user
+            purpose.last_edited_at = timezone.now()
+            purpose.save(update_fields=[
+                "value_text",
+                "status",
+                "proposed_by",
+                "proposed_at",
+                "locked_by",
+                "locked_at",
+                "last_edited_by",
+                "last_edited_at",
+                "updated_at",
+            ])
+            messages.success(request, "Planning Purpose updated.")
+            if next_url and url_has_allowed_host_and_scheme(
+                url=next_url,
+                allowed_hosts={request.get_host()},
+                require_https=request.is_secure(),
+            ):
+                return redirect(next_url)
+            return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + "#ppde-purpose")
+
+        if binding.topic_key.startswith("STAGE:"):
+            stage_id_raw = binding.topic_key.split(":", 1)[1].strip()
+            if not stage_id_raw.isdigit():
+                messages.error(request, "Invalid stage key.")
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+            stage = ProjectPlanningStage.objects.filter(project=project, id=int(stage_id_raw)).first()
+            if not stage:
+                messages.error(request, "Stage not found.")
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+            can_commit = is_project_committer(project, request.user)
+            if stage.status != ProjectPlanningStage.Status.DRAFT and not can_commit:
+                messages.error(request, "Stage is not editable.")
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+            payload, payload_err = extract_json_object(selected_text)
+            if not isinstance(payload, dict):
+                err = "Stage update requires valid JSON object."
+                if payload_err:
+                    err += " Parse error: " + payload_err
+                messages.error(request, err)
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+            if can_commit and stage.status != ProjectPlanningStage.Status.DRAFT:
+                stage.status = ProjectPlanningStage.Status.DRAFT
+                stage.proposed_by = None
+                stage.proposed_at = None
+                stage.locked_by = None
+                stage.locked_at = None
+
+            def merge_field(existing_val: str, incoming_val: str) -> str:
+                if apply_mode == "append" and existing_val:
+                    return existing_val.rstrip() + "\n\n" + incoming_val.lstrip()
+                return incoming_val
+
+            fields = [
+                "title",
+                "description",
+                "purpose",
+                "entry_conditions",
+                "acceptance_statement",
+                "exit_conditions",
+                "key_variables",
+                "duration_estimate",
+                "risks_notes",
+            ]
+            key_map = {
+                "entry_conditions": "entry_condition",
+                "exit_conditions": "exit_condition",
+                "key_variables": "key_variables",
+            }
+            for f in fields:
+                incoming = payload.get(f)
+                if incoming is None:
+                    continue
+                incoming_s = str(incoming).strip()
+                if not incoming_s:
+                    continue
+                dest = key_map.get(f, f)
+                existing_s = (getattr(stage, dest) or "").strip()
+                setattr(stage, dest, merge_field(existing_s, incoming_s))
+
+            incoming_kd = payload.get("key_deliverables")
+            if incoming_kd is not None:
+                if not isinstance(incoming_kd, str):
+                    messages.error(request, "key_deliverables must be a string.")
+                    return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+                cleaned = [s.strip() for s in incoming_kd.splitlines() if s.strip()]
+                if apply_mode == "append" and (stage.key_deliverables or []):
+                    stage.key_deliverables = list(stage.key_deliverables or []) + cleaned
+                else:
+                    stage.key_deliverables = cleaned
+
+            stage.last_edited_by = request.user
+            stage.last_edited_at = timezone.now()
+            stage.save(update_fields=[
+                "title",
+                "description",
+                "purpose",
+                "entry_condition",
+                "acceptance_statement",
+                "exit_condition",
+                "key_variables",
+                "key_deliverables",
+                "duration_estimate",
+                "risks_notes",
+                "status",
+                "proposed_by",
+                "proposed_at",
+                "locked_by",
+                "locked_at",
+                "last_edited_by",
+                "last_edited_at",
+                "updated_at",
+            ])
+            messages.success(request, "Stage updated.")
+            if next_url and url_has_allowed_host_and_scheme(
+                url=next_url,
+                allowed_hosts={request.get_host()},
+                require_https=request.is_secure(),
+            ):
+                return redirect(next_url)
+            return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + "#ppde-stage-" + str(stage.id))
+
+        if binding.topic_key.startswith("EXEC_PLAN:"):
+            stage_id_raw = binding.topic_key.split(":", 1)[1].strip()
+            if not stage_id_raw.isdigit():
+                messages.error(request, "Invalid stage key.")
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+            stage = ProjectPlanningStage.objects.filter(project=project, id=int(stage_id_raw)).first()
+            if not stage:
+                messages.error(request, "Stage not found.")
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+            can_commit = is_project_committer(project, request.user)
+            if stage.status != ProjectPlanningStage.Status.DRAFT and not can_commit:
+                messages.error(request, "Execution plan is not editable.")
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+            payload = extract_json_object(selected_text)
+            if not isinstance(payload, dict):
+                messages.error(request, "Execution plan update requires valid JSON object.")
+                return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+            milestones = payload.get("milestones") if isinstance(payload.get("milestones"), list) else []
+            actions = payload.get("actions") if isinstance(payload.get("actions"), list) else []
+            risks = payload.get("risks") if isinstance(payload.get("risks"), list) else []
+
+            now = timezone.now()
+            if apply_mode != "append":
+                ProjectPlanningMilestone.objects.filter(project=project, stage=stage).delete()
+                ProjectPlanningAction.objects.filter(project=project, stage=stage).delete()
+                ProjectPlanningRisk.objects.filter(project=project, stage=stage).delete()
+
+            m_idx = ProjectPlanningMilestone.objects.filter(project=project, stage=stage).count()
+            a_idx = ProjectPlanningAction.objects.filter(project=project, stage=stage).count()
+            r_idx = ProjectPlanningRisk.objects.filter(project=project, stage=stage).count()
+
+            for item in milestones:
+                if not isinstance(item, dict):
+                    continue
+                m_idx += 1
+                ProjectPlanningMilestone.objects.create(
+                    project=project,
+                    stage=stage,
+                    order_index=m_idx,
+                    title=str(item.get("title") or ""),
+                    stage_title=str(item.get("stage_title") or stage.title or ""),
+                    acceptance_statement=str(item.get("acceptance_statement") or ""),
+                    target_date_hint=str(item.get("target_date_hint") or ""),
+                    status=ProjectPlanningMilestone.Status.PROPOSED,
+                    proposed_by=request.user,
+                    proposed_at=now,
+                )
+            for item in actions:
+                if not isinstance(item, dict):
+                    continue
+                a_idx += 1
+                ProjectPlanningAction.objects.create(
+                    project=project,
+                    stage=stage,
+                    order_index=a_idx,
+                    title=str(item.get("title") or ""),
+                    stage_title=str(item.get("stage_title") or stage.title or ""),
+                    owner_role=str(item.get("owner_role") or ""),
+                    definition_of_done=str(item.get("definition_of_done") or ""),
+                    effort_hint=str(item.get("effort_hint") or ""),
+                    status=ProjectPlanningAction.Status.PROPOSED,
+                    proposed_by=request.user,
+                    proposed_at=now,
+                )
+            for item in risks:
+                if not isinstance(item, dict):
+                    continue
+                r_idx += 1
+                ProjectPlanningRisk.objects.create(
+                    project=project,
+                    stage=stage,
+                    order_index=r_idx,
+                    title=str(item.get("title") or ""),
+                    stage_title=str(item.get("stage_title") or stage.title or ""),
+                    probability=str(item.get("probability") or ""),
+                    impact=str(item.get("impact") or ""),
+                    mitigation=str(item.get("mitigation") or ""),
+                    status=ProjectPlanningRisk.Status.PROPOSED,
+                    proposed_by=request.user,
+                    proposed_at=now,
+                )
+
+            messages.success(request, "Execution plan updated.")
+            if next_url and url_has_allowed_host_and_scheme(
+                url=next_url,
+                allowed_hosts={request.get_host()},
+                require_https=request.is_secure(),
+            ):
+                return redirect(next_url)
+            return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + "#ppde-stage-" + str(stage.id))
+
+    if binding.scope == "PDE" and binding.topic_key.startswith("FIELD:"):
+        if not can_edit_pde(project, request.user):
+            messages.error(request, "You do not have permission to edit PDE.")
+            return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+        field_key = binding.topic_key.split(":", 1)[1].strip()
+        row = ProjectDefinitionField.objects.filter(project=project, field_key=field_key).first()
+        if not row:
+            messages.error(request, "PDE field not found.")
+            return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+        can_commit = is_project_committer(project, request.user)
+        if row.status != ProjectDefinitionField.Status.DRAFT and not can_commit:
+            messages.error(request, "Field is not editable.")
+            return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+        if can_commit and row.status != ProjectDefinitionField.Status.DRAFT:
+            row.status = ProjectDefinitionField.Status.DRAFT
+            row.proposed_by = None
+            row.proposed_at = None
+            row.locked_by = None
+            row.locked_at = None
+
+        row.value_text = merge_text((row.value_text or "").strip(), selected_text)
+        row.last_edited_by = request.user
+        row.last_edited_at = timezone.now()
+        row.save(update_fields=[
+            "value_text",
+            "status",
+            "proposed_by",
+            "proposed_at",
+            "locked_by",
+            "locked_at",
+            "last_edited_by",
+            "last_edited_at",
+            "updated_at",
+        ])
+        messages.success(request, "PDE field updated.")
+        return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
+
+    messages.error(request, "Unsupported topic type.")
+    return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+
+@require_POST
+@login_required
+def chat_topic_delete(request, chat_id: int):
+    chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=chat_id)
+
+    binding = ProjectTopicChat.objects.filter(chat=chat).first()
+    if not binding:
+        messages.error(request, "This chat is not linked to a topic.")
+        return redirect("accounts:chat_detail", chat_id=chat.id)
+
+    if binding.user_id != request.user.id:
+        messages.error(request, "No permission to delete this topic chat.")
+        return redirect("accounts:chat_detail", chat_id=chat.id)
+
+    return_url = ""
+    if binding.scope == "PPDE":
+        anchor = ""
+        if binding.topic_key == "PURPOSE":
+            anchor = "#ppde-purpose"
+        elif binding.topic_key.startswith("STAGE:"):
+            stage_id = binding.topic_key.split(":", 1)[1]
+            if stage_id:
+                anchor = "#ppde-stage-" + stage_id
+        return_url = reverse("projects:ppde_detail", kwargs={"project_id": chat.project_id}) + anchor
+    elif binding.scope == "PDE" and binding.topic_key.startswith("FIELD:"):
+        field_key = binding.topic_key.split(":", 1)[1]
+        return_url = reverse("projects:pde_detail", kwargs={"project_id": chat.project_id}) + "#pde-field-" + field_key
+
+    chat.delete()
+    messages.success(request, "Topic chat deleted.")
+    if return_url:
+        return redirect(return_url)
+    return redirect("accounts:chat_browse")
 
 
 @login_required
@@ -793,6 +1431,24 @@ def chat_detail(request, chat_id: int):
     has_last_image = any((getattr(a, "source", "") or "").lower() == "paste" for a in atts)
     has_last_file = any((getattr(a, "source", "") or "").lower() == "filepicker" for a in atts)
 
+    ppde_return_url = ""
+    topic_chat_return_url = ""
+    binding = ProjectTopicChat.objects.filter(chat=chat).first()
+    if binding and binding.scope == "PPDE":
+        anchor = ""
+        if binding.topic_key == "PURPOSE":
+            anchor = "#ppde-purpose"
+        elif binding.topic_key.startswith("STAGE:"):
+            stage_id = binding.topic_key.split(":", 1)[1]
+            if stage_id:
+                anchor = "#ppde-stage-" + stage_id
+        ppde_return_url = reverse("projects:ppde_detail", kwargs={"project_id": chat.project_id}) + anchor
+        topic_chat_return_url = ppde_return_url
+    elif binding and binding.scope == "PDE" and binding.topic_key.startswith("FIELD:"):
+        field_key = binding.topic_key.split(":", 1)[1]
+        if field_key:
+            topic_chat_return_url = reverse("projects:pde_detail", kwargs={"project_id": chat.project_id}) + "#pde-field-" + field_key
+
     return render(
         request,
         "accounts/chat_detail.html",
@@ -811,6 +1467,8 @@ def chat_detail(request, chat_id: int):
             "system_latest": {},
             "has_last_image": has_last_image,
             "has_last_file": has_last_file,
+            "ppde_return_url": ppde_return_url,
+            "topic_chat_return_url": topic_chat_return_url,
             **ctx,
         },
     )
@@ -822,6 +1480,39 @@ def chat_detail(request, chat_id: int):
 
 @login_required
 def config_menu(request):
+    profile = getattr(request.user, "profile", None)
+    if profile is None:
+        raise Http404("User profile not found. Run backfill / ensure profile creation.")
+
+    if request.method == "POST":
+        provider = (request.POST.get("llm_provider") or "").strip().lower()
+        allowed = {"openai", "anthropic"}
+        allowed_openai_models = {k for k, _ in ALLOWED_MODELS}
+        allowed_anthropic_models = {k for k, _ in ALLOWED_ANTHROPIC_MODELS}
+
+        if provider not in allowed:
+            messages.error(request, "Invalid LLM provider.")
+        else:
+            update_fields = ["llm_provider"]
+            profile.llm_provider = provider
+            if provider == "openai":
+                openai_model = (request.POST.get("openai_model_default") or "").strip()
+                if openai_model not in allowed_openai_models:
+                    messages.error(request, "Invalid OpenAI model.")
+                    return redirect("accounts:config_menu")
+                profile.openai_model_default = openai_model
+                update_fields.append("openai_model_default")
+            elif provider == "anthropic":
+                anthropic_model = (request.POST.get("anthropic_model_default") or "").strip()
+                if anthropic_model not in allowed_anthropic_models:
+                    messages.error(request, "Invalid Anthropic model.")
+                    return redirect("accounts:config_menu")
+                profile.anthropic_model_default = anthropic_model
+                update_fields.append("anthropic_model_default")
+            profile.save(update_fields=update_fields)
+            messages.success(request, "LLM settings updated.")
+        return redirect("accounts:config_menu")
+
     active_chat_id = request.session.get("rw_active_chat_id")
     return render(
         request,
@@ -829,6 +1520,13 @@ def config_menu(request):
         {
             "active_chat_id": active_chat_id,
             "can_override_chat": bool(active_chat_id),
+            "llm_provider": (profile.llm_provider or "openai"),
+            "openai_model_default": (profile.openai_model_default or "gpt-5.1"),
+            "anthropic_model_default": (
+                profile.anthropic_model_default or "claude-sonnet-4-5-20250929"
+            ),
+            "openai_model_choices": ALLOWED_MODELS,
+            "anthropic_model_choices": ALLOWED_ANTHROPIC_MODELS,
         },
     )
 
@@ -1122,7 +1820,10 @@ def chat_config_overrides(request):
                         system_blocks = build_system_messages(resolved_now)
 
                         internal_user = "Internal: acknowledge the override is active. Say: Ready."
-                        panes = generate_panes("\n\n".join(system_blocks) + "\n\n" + "User:\n" + internal_user)
+                        panes = generate_panes(
+                            "\n\n".join(system_blocks) + "\n\n" + "User:\n" + internal_user,
+                            user=request.user,
+                        )
 
                         assistant_raw = (
                             "ANSWER:\n"

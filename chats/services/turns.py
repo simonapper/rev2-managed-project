@@ -91,6 +91,20 @@ def build_chat_turn_context(request, chat):
             pending_user = None
             continue
 
+    if pending_user is not None:
+        turns.append({
+            "turn_id": f"pending-{pending_user.id}",
+            "kind": "turn",
+            "input": pending_user,
+            "assistant": None,
+            "answer": "",
+            "reasoning": "",
+            "output": "",
+            "created_at": pending_user.created_at,
+            "title": _preview(pending_user.raw_text or "(no input)"),
+        })
+        pending_user = None
+
     # Number turns (1..N) in chronological construction order
     n = 0
     for t in turns:
@@ -136,6 +150,16 @@ def build_chat_turn_context(request, chat):
     key_fn = key_map.get(turn_sort, key_map["updated"])
     items = sorted(items, key=key_fn, reverse=(turn_dir == "desc"))
 
+    # If no explicit selection, refresh active to latest TURN after sorting
+    if not selected_turn_id and items:
+        last_turn = None
+        for it in reversed(items):
+            if it.get("kind") == "turn":
+                last_turn = it
+                break
+        active_turn = last_turn or items[-1]
+        is_system_turn = bool(active_turn) and str(active_turn.get("turn_id", "")).startswith("sys-")
+
 
     # Re-number turns after user sort; SYSTEM stays blank
     n = 0
@@ -149,10 +173,12 @@ def build_chat_turn_context(request, chat):
     return {
         "attachments": attachments,
         "turn_items": items,
+        "turn_items_rev": list(reversed(items)),
         "active_turn": active_turn,
         "turn_sort": turn_sort,
         "turn_dir": turn_dir,
         "is_system_turn": is_system_turn,
+        "show_system": show_system,
     }
 
 

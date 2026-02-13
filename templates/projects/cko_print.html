@@ -1,0 +1,152 @@
+{# templates/projects/cko_print.html #}
+{# 7-bit ASCII only. #}
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CKO Print - {{ project.name }}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 14mm 12mm;
+    }
+
+    :root {
+      color-scheme: light;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      color: #111;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      line-height: 1.45;
+      font-size: 11pt;
+    }
+
+    .page {
+      max-width: 190mm;
+      margin: 0 auto;
+      padding: 4mm 0;
+    }
+
+    .meta {
+      margin-bottom: 6mm;
+      border-bottom: 1px solid #d9d9d9;
+      padding-bottom: 4mm;
+    }
+
+    .title {
+      font-size: 16pt;
+      font-weight: 700;
+      margin: 0 0 1mm;
+    }
+
+    .sub {
+      font-size: 10pt;
+      color: #444;
+      margin: 0;
+    }
+
+    .status {
+      margin-top: 1mm;
+      font-size: 10pt;
+      color: #444;
+    }
+
+    .doc,
+    .structured {
+      break-inside: avoid-page;
+    }
+
+    .structured {
+      margin-top: 8mm;
+      border-top: 1px solid #d9d9d9;
+      padding-top: 4mm;
+    }
+
+    .structured h2 {
+      margin: 0 0 3mm;
+      font-size: 12pt;
+    }
+
+    pre,
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 10pt;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 3mm 0;
+    }
+
+    th,
+    td {
+      border: 1px solid #ddd;
+      padding: 2mm;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    .actions {
+      margin-top: 4mm;
+    }
+
+    .btn {
+      display: inline-block;
+      border: 1px solid #999;
+      padding: 1.5mm 3mm;
+      font-size: 9pt;
+      background: #f6f6f6;
+      color: #111;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    @media print {
+      .actions {
+        display: none;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="meta">
+      <h1 class="title">CKO Print</h1>
+      <p class="sub">Project: {{ project.name }}</p>
+      <p class="sub">CKO ID: {{ cko.cko_id }} | Version: {{ cko.version }}{% if viewing_accepted %} | Accepted{% endif %}</p>
+      {% if cko.created_at %}
+        <p class="status">Date: {{ cko.created_at|date:"Y-m-d" }}</p>
+      {% endif %}
+      <div class="actions">
+        <button type="button" class="btn" onclick="window.print();">Print</button>
+      </div>
+    </header>
+
+    <section class="doc">
+      {{ cko_body_html|safe }}
+    </section>
+
+    {% if content_json_html %}
+      <section class="structured">
+        <h2>Structured CKO</h2>
+        {{ content_json_html|safe }}
+      </section>
+    {% endif %}
+
+  </main>
+</body>
+</html>

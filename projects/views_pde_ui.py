@@ -11,18 +11,20 @@ from typing import Any, Dict, List
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, redirect, render
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_POST
 from django.urls import reverse
 from django.utils import timezone
 
 from chats.services.llm import generate_panes
-from projects.models import Project, ProjectDefinitionField, ProjectCKO
+from projects.models import Project, ProjectDefinitionField, ProjectCKO, ProjectTopicChat
 from projects.services.pde import draft_pde_from_seed, validate_field
 from projects.services.pde_commit import commit_project_definition
 from projects.services.pde_required_keys import pde_required_keys_for_defined
 from projects.services.pde_loop import ensure_pde_fields, read_locked_fields
 from projects.services.pde_spec import PDE_REQUIRED_FIELDS
+from projects.services_topic_chat import get_or_create_topic_chat
 from projects.services_project_membership import can_edit_pde, is_project_committer
+from chats.services.turns import build_chat_turn_context
 
 
 def _fields_for_project(project: Project) -> Dict[str, ProjectDefinitionField]:
@@ -127,6 +129,83 @@ def _pde_help_answer(*, question: str, project: Project, generate_panes_func) ->
     return (str(panes.get("output") or "")).strip() or "No answer returned."
 
 
+@require_POST
+@login_required
+def pde_topic_chat_open(request, project_id: int):
+    project = get_object_or_404(Project, pk=project_id)
+    if not can_edit_pde(project, request.user):
+        messages.error(request, "You do not have permission to open a topic chat for this section.")
+        return redirect("projects:pde_detail", project_id=project.id)
+
+    spec_key = (request.POST.get("spec_key") or "").strip()
+    if not spec_key:
+        messages.error(request, "Invalid field.")
+        return redirect("projects:pde_detail", project_id=project.id)
+
+    spec_map = {s.key: s for s in PDE_REQUIRED_FIELDS}
+    spec = spec_map.get(spec_key)
+    if not spec:
+        messages.error(request, "Field not found.")
+        return redirect("projects:pde_detail", project_id=project.id)
+
+    row = ProjectDefinitionField.objects.filter(project=project, field_key=spec_key).first()
+    status = (getattr(row, "status", "") or "")
+    can_commit = is_project_committer(project, request.user)
+    if status == ProjectDefinitionField.Status.PASS_LOCKED or (
+        status == ProjectDefinitionField.Status.PROPOSED and not can_commit
+    ):
+        messages.error(request, "You do not have permission to open a topic chat for this section.")
+        return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + spec_key)
+
+    label = (getattr(spec, "label", "") or spec_key).strip()
+    summary = (getattr(spec, "summary", "") or "").strip()
+    help_text = (getattr(spec, "help_text", "") or "").strip()
+    current_value = (getattr(row, "value_text", "") or "") if row else ""
+
+    seed_user_text = "\n".join(
+        [
+            "Topic chat: PDE Field",
+            "Scope: PDE",
+            "Topic key: FIELD:" + spec_key,
+            "Label: " + label,
+            "Tier: " + (getattr(spec, "tier", "") or ""),
+            "Required: " + ("yes" if getattr(spec, "required", True) else "no"),
+            "",
+            "Current value:",
+            current_value or "(empty)",
+            "",
+            "Summary:",
+            summary or "(none)",
+            "",
+            "Guidance:",
+            help_text or "(none)",
+            "",
+            "Goal: Help produce a better draft for this field.",
+            "Output: Replacement text only (no markdown).",
+            "Success criteria: ready to paste into the field.",
+        ]
+    )
+
+    chat = get_or_create_topic_chat(
+        project=project,
+        user=request.user,
+        scope="PDE",
+        topic_key="FIELD:" + spec_key,
+        title="PDE-" + (project.name or "") + "-" + label + "-" + request.user.username,
+        seed_user_text=seed_user_text,
+        mode="CONTROLLED",
+    )
+
+    request.session["rw_active_project_id"] = project.id
+    request.session["rw_active_chat_id"] = chat.id
+    request.session.modified = True
+
+    open_in = (request.POST.get("open_in") or "").strip().lower()
+    if open_in == "drawer":
+        base = reverse("projects:pde_detail", kwargs={"project_id": project.id})
+        qs = "pde_chat_id=" + str(chat.id) + "&pde_chat_open=1"
+        return redirect(base + "?" + qs + "#pde-field-" + spec_key)
+    return redirect(reverse("accounts:chat_detail", args=[chat.id]))
 
 @login_required
 @require_http_methods(["GET", "POST"])
@@ -137,6 +216,9 @@ def pde_detail(request, project_id: int):
         messages.error(request, "You do not have permission to edit this project definition.")
         return redirect("accounts:dashboard")
     can_commit = is_project_committer(project, request.user)
+
+    def _generate_panes_for_user(*args, **kwargs):
+        return generate_panes(*args, user=request.user, **kwargs)
 
     ensure_pde_fields(project)
 
@@ -265,7 +347,7 @@ def pde_detail(request, project_id: int):
         spec = next((s for s in PDE_REQUIRED_FIELDS if s.key == field_key), None)
         rubric_text = getattr(spec, "help_text", "") if spec else ""
         vobj = validate_field(
-            generate_panes_func=generate_panes,
+            generate_panes_func=_generate_panes_for_user,
             field_key=field_key,
             value_text=proposed_text,
             locked_fields=locked_fields,
@@ -361,7 +443,7 @@ def pde_detail(request, project_id: int):
             spec = next((s for s in PDE_REQUIRED_FIELDS if s.key == field_key), None)
             rubric_text = getattr(spec, "help_text", "") if spec else ""
             vobj = validate_field(
-                generate_panes_func=generate_panes,
+                generate_panes_func=_generate_panes_for_user,
                 field_key=field_key,
                 value_text=(row.value_text or "").strip(),
                 locked_fields=locked_fields,
@@ -446,7 +528,7 @@ def pde_detail(request, project_id: int):
         log = _get_help_log(request, project.id)
         if q:
             log.append({"role": "user", "text": q})
-            a = _pde_help_answer(question=q, project=project, generate_panes_func=generate_panes)
+            a = _pde_help_answer(question=q, project=project, generate_panes_func=_generate_panes_for_user)
             log.append({"role": "assistant", "text": a})
             _set_help_log(request, project.id, log)
         else:
@@ -461,7 +543,7 @@ def pde_detail(request, project_id: int):
     # Action: Draft from seed (fills draft values, does not lock)
     # ------------------------------------------------------------
     if request.method == "POST" and action == "draft":
-        res = draft_pde_from_seed(generate_panes_func=generate_panes, seed_text=seed_text)
+        res = draft_pde_from_seed(generate_panes_func=_generate_panes_for_user, seed_text=seed_text)
         if not res.get("ok"):
             messages.error(request, "Draft failed: " + str(res.get("error") or "unknown error"))
         else:
@@ -541,7 +623,7 @@ def pde_detail(request, project_id: int):
             spec = spec_map.get(row.field_key)
             rubric_text = getattr(spec, "help_text", "") if spec else ""
             vobj = validate_field(
-                generate_panes_func=generate_panes,
+                generate_panes_func=_generate_panes_for_user,
                 field_key=row.field_key,
                 value_text=(row.value_text or "").strip(),
                 locked_fields=locked_fields,
@@ -670,6 +752,52 @@ def pde_detail(request, project_id: int):
 
             }
         )
+
+    pde_chat_id_raw = (request.GET.get("pde_chat_id") or "").strip()
+    if not pde_chat_id_raw:
+        pde_chat_id_raw = str(request.session.get("pde_drawer_chat_id") or "")
+    open_param = (request.GET.get("pde_chat_open") or "").strip()
+    if open_param in ("0", "1"):
+        request.session["pde_drawer_open"] = (open_param == "1")
+        request.session.modified = True
+
+    selected_chat_id = int(pde_chat_id_raw) if pde_chat_id_raw.isdigit() else None
+    if selected_chat_id is not None:
+        request.session["pde_drawer_chat_id"] = selected_chat_id
+        request.session.modified = True
+
+    topic_keys = ["FIELD:" + s["key"] for s in specs]
+    bindings = (
+        ProjectTopicChat.objects
+        .select_related("chat")
+        .filter(project=project, user=request.user, scope="PDE", topic_key__in=topic_keys)
+    )
+    topic_key_to_chat = {b.topic_key: b.chat for b in bindings if b.chat_id}
+
+    chat_ctx_map = {}
+    for topic_key, chat in topic_key_to_chat.items():
+        ctx = build_chat_turn_context(request, chat)
+        qs = request.GET.copy()
+        qs["pde_chat_id"] = str(chat.id)
+        qs["pde_chat_open"] = "1"
+        qs.pop("turn", None)
+        qs.pop("system", None)
+        ctx["chat"] = chat
+        ctx["qs_base"] = qs.urlencode()
+        if selected_chat_id == chat.id:
+            if open_param in ("0", "1"):
+                ctx["is_open"] = (open_param == "1")
+            else:
+                ctx["is_open"] = bool(request.session.get("pde_drawer_open"))
+        else:
+            ctx["is_open"] = False
+        chat_ctx_map[chat.id] = ctx
+
+    for s in specs:
+        topic_key = "FIELD:" + s["key"]
+        chat = topic_key_to_chat.get(topic_key)
+        s["topic_chat_id"] = chat.id if chat else None
+        s["topic_chat_ctx"] = chat_ctx_map.get(chat.id) if chat else None
     current_field_key = ""
     for s in specs:
         if (s.get("status") or "") != ProjectDefinitionField.Status.PASS_LOCKED:

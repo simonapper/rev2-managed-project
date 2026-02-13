@@ -5,6 +5,7 @@
 
 {% block content %}
 <div class="container-fluid py-4">
+  {# inline chat drawer renders inside each section below #}
   <form method="post" id="ppdeSaveAllForm" class="d-none">
     {% csrf_token %}
     <input type="hidden" name="action" value="save_all" />
@@ -15,9 +16,11 @@
     <div class="col-12">
       <div class="card shadow-sm mb-3">
         <div class="card-body">
-          <div class="d-flex align-items-center justify-content-between mb-2">
-            <div class="fw-semibold">Seeded Context (CKO)</div>
-            <div class="d-flex gap-2">
+          <details open class="mb-0" data-ppde-detail-key="ppde-seed">
+            <summary class="fw-semibold">Seeded Context (CKO)</summary>
+            <div class="d-flex align-items-center justify-content-between mb-2 mt-2">
+              <div></div>
+              <div class="d-flex gap-2">
               {% if ppde_can_commit %}
                 <form method="post" class="m-0" onsubmit="return confirm('Generate stages from CKO? This will replace current draft stages.');">
                   {% csrf_token %}
@@ -43,8 +46,8 @@
                   <button class="btn btn-sm btn-outline-primary" type="submit">Condense</button>
                 </form>
               {% endif %}
+              </div>
             </div>
-          </div>
           {% if stage_preview %}
             <div class="border rounded p-3 mb-3">
               <div class="d-flex align-items-center justify-content-between">
@@ -96,39 +99,17 @@
           {% else %}
             <div class="small text-muted">No seed snapshot available.</div>
           {% endif %}
-        </div>
-      </div>
-
-      <div class="card shadow-sm mb-3">
-        <div class="card-body">
-          <div class="fw-semibold mb-2">WKO Provenance</div>
-          {% if latest_wko %}
-            <table class="table table-sm mb-0">
-              <tbody>
-                <tr><th style="width:180px;">Latest version</th><td>v{{ latest_wko.version }} — {{ latest_wko.status }}</td></tr>
-                <tr><th>Created by</th><td>{{ latest_wko.created_by }}</td></tr>
-                <tr><th>Created at</th><td>{{ latest_wko.created_at|date:"Y-m-d H:i" }}</td></tr>
-                <tr>
-                  <th>Contracts</th>
-                  <td>
-                    STRUCTURE_PROJECT v{{ latest_wko.structure_contract_version|default:"-" }}<br />
-                    TRANSFORM_STAGE v{{ latest_wko.transform_contract_version|default:"-" }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          {% else %}
-            <div class="small text-muted">No WKO versions yet.</div>
-          {% endif %}
+          </details>
         </div>
       </div>
 
       <div class="card shadow-sm mb-3" id="ppde-purpose">
         <div class="card-body">
-          <div class="d-flex align-items-start justify-content-between gap-3">
-            <div class="min-w-0">
-              <div class="fw-semibold">Planning Purpose</div>
-              <div class="small text-muted mt-1">
+          <details open class="mb-0" data-ppde-detail-key="ppde-purpose">
+            <summary class="fw-semibold">Planning Purpose</summary>
+            <div class="d-flex align-items-start justify-content-between gap-3 mt-2">
+              <div class="min-w-0">
+                <div class="small text-muted mt-1">
                 Status:
                 <span class="fw-semibold">
                   {% if purpose.status == "PROPOSED" %}
@@ -140,49 +121,115 @@
                   {% endif %}
                 </span>
               </div>
+              </div>
+              {% if purpose.status == "DRAFT" or ppde_can_commit %}
+                {% if purpose_chat_id %}
+                  <a class="btn btn-sm btn-outline-primary"
+                     href="?ppde_chat_id={{ purpose_chat_id }}&ppde_chat_open=1#ppde-purpose">Open topic chat</a>
+                {% else %}
+                  <form method="post" action="{% url 'projects:ppde_topic_chat_open' project.id %}" class="m-0">
+                    {% csrf_token %}
+                    <input type="hidden" name="topic_type" value="PURPOSE" />
+                    <input type="hidden" name="open_in" value="drawer" />
+                    <button class="btn btn-sm btn-outline-primary" type="submit">Topic chat</button>
+                  </form>
+                {% endif %}
+              {% endif %}
             </div>
-          </div>
-
           <form method="post" class="mt-2">
             {% csrf_token %}
             <input type="hidden" name="block_key" value="purpose" />
 
-            <textarea name="purpose_text"
-                      class="form-control"
-                      rows="4"
-                      data-ppde-block="purpose"
-                      data-ppde-field="purpose_text"
-                      {% if purpose.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ purpose.value_text }}</textarea>
+            <div class="mb-2">
+              <label class="form-label small text-muted mb-1">PDO summary</label>
+              <textarea name="pdo_summary"
+                        class="form-control"
+                        rows="2"
+                        data-ppde-block="purpose"
+                        data-ppde-field="pdo_summary"
+                        {% if purpose.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ purpose.pdo_summary }}</textarea>
+            </div>
+
+            <div class="mb-2">
+              <label class="form-label small text-muted mb-1">CKO alignment: stage 1 inputs match</label>
+              <textarea name="cko_alignment_stage1_inputs_match"
+                        class="form-control"
+                        rows="2"
+                        data-ppde-block="purpose"
+                        data-ppde-field="cko_alignment_stage1_inputs_match"
+                        {% if purpose.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ purpose.cko_alignment_stage1_inputs_match }}</textarea>
+            </div>
+
+            <div class="mb-2">
+              <label class="form-label small text-muted mb-1">CKO alignment: final outputs match</label>
+              <textarea name="cko_alignment_final_outputs_match"
+                        class="form-control"
+                        rows="2"
+                        data-ppde-block="purpose"
+                        data-ppde-field="cko_alignment_final_outputs_match"
+                        {% if purpose.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ purpose.cko_alignment_final_outputs_match }}</textarea>
+            </div>
+
+            <div class="mb-2">
+              <label class="form-label small text-muted mb-1">Planning constraints</label>
+              <textarea name="planning_constraints"
+                        class="form-control"
+                        rows="2"
+                        data-ppde-block="purpose"
+                        data-ppde-field="planning_constraints"
+                        {% if purpose.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ purpose.planning_constraints }}</textarea>
+            </div>
+
+            <div class="mb-2">
+              <label class="form-label small text-muted mb-1">Assumptions</label>
+              <textarea name="assumptions"
+                        class="form-control"
+                        rows="2"
+                        data-ppde-block="purpose"
+                        data-ppde-field="assumptions"
+                        {% if purpose.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ purpose.assumptions }}</textarea>
+            </div>
+
+            <div class="mb-2">
+              <label class="form-label small text-muted mb-1">Planning purpose</label>
+              <textarea name="purpose_text"
+                        class="form-control"
+                        rows="4"
+                        data-ppde-block="purpose"
+                        data-ppde-field="purpose_text"
+                        {% if purpose.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ purpose.value_text }}</textarea>
+            </div>
 
             <div class="d-flex align-items-center justify-content-between mt-2">
               <div class="small text-muted">Define the intent and scope of the planning workflow.</div>
               <div class="d-flex gap-2">
-                {% if purpose.status == "DRAFT" or ppde_can_commit %}
-                  <button type="submit" name="action" value="save_block" class="btn btn-sm btn-outline-secondary">Save Draft</button>
-                {% endif %}
-                {% if ppde_can_commit %}
-                  <button type="submit" name="action" value="seed_purpose_from_cko"
-                          class="btn btn-sm btn-outline-primary"
-                          {% if purpose.value_text %}onclick="return confirm('Planning purpose already exists. Seed from CKO will not overwrite it. Continue?');"{% endif %}>
-                    Seed from CKO
-                  </button>
-                  {% if not structure_contract %}
-                    <div class="small text-muted align-self-center">No active contract set (admin).</div>
-                  {% endif %}
-                {% endif %}
-                <button type="submit" name="action" value="verify_block" class="btn btn-sm btn-outline-primary">Verify</button>
-                {% if not transform_contract %}
-                  <div class="small text-muted align-self-center">No active contract set (admin).</div>
-                {% endif %}
-                {% if purpose.status == "DRAFT" %}
-                  <button type="submit" name="action" value="propose_lock" class="btn btn-sm btn-outline-primary">Propose Lock</button>
-                {% endif %}
-                {% if purpose.status == "PROPOSED" and ppde_can_commit %}
-                  <button type="submit" name="action" value="approve_lock" class="btn btn-sm btn-success">Approve Lock</button>
-                  <button type="submit" name="action" value="reopen_block" class="btn btn-sm btn-outline-secondary">Reopen</button>
-                {% endif %}
                 {% if purpose.status == "PASS_LOCKED" and ppde_can_commit %}
                   <button type="submit" name="action" value="reopen_block" class="btn btn-sm btn-outline-secondary">Reopen</button>
+                {% else %}
+                  {% if purpose.status == "DRAFT" or ppde_can_commit %}
+                    <button type="submit" name="action" value="save_block" class="btn btn-sm btn-outline-secondary">Save Draft</button>
+                  {% endif %}
+                  {% if ppde_can_commit %}
+                    <button type="submit" name="action" value="seed_purpose_from_cko"
+                            class="btn btn-sm btn-outline-primary"
+                            {% if purpose.value_text %}onclick="return confirm('Planning purpose already exists. Seed from CKO will not overwrite it. Continue?');"{% endif %}>
+                      Seed from CKO
+                    </button>
+                    {% if not structure_contract %}
+                      <div class="small text-muted align-self-center">No active contract set (admin).</div>
+                    {% endif %}
+                  {% endif %}
+                  <button type="submit" name="action" value="verify_block" class="btn btn-sm btn-outline-primary">Verify</button>
+                  {% if not transform_contract %}
+                    <div class="small text-muted align-self-center">No active contract set (admin).</div>
+                  {% endif %}
+                  {% if purpose.status == "DRAFT" %}
+                    <button type="submit" name="action" value="propose_lock" class="btn btn-sm btn-outline-primary">Propose Lock</button>
+                  {% endif %}
+                  {% if purpose.status == "PROPOSED" and ppde_can_commit %}
+                    <button type="submit" name="action" value="approve_lock" class="btn btn-sm btn-success">Approve Lock</button>
+                    <button type="submit" name="action" value="reopen_block" class="btn btn-sm btn-outline-secondary">Reopen</button>
+                  {% endif %}
                 {% endif %}
               </div>
             </div>
@@ -216,20 +263,23 @@
               </div>
             {% endif %}
           {% endif %}
+          {% include "projects/ppde_inline_chat.html" with chat_ctx=purpose_chat_ctx %}
+          </details>
         </div>
       </div>
 
       {% for stage in stages %}
         <div class="card shadow-sm mb-3" id="ppde-stage-{{ stage.id }}">
           <div class="card-body">
-            <div class="d-flex align-items-start justify-content-between gap-3">
-              <div class="min-w-0">
-                <div class="fw-semibold">Stage {{ stage.order_index }}</div>
-                <div class="small text-muted mt-1">
-                  Status:
-                  <span class="fw-semibold">
-                    {% if stage.status == "PROPOSED" %}
-                      PROPOSED{% if stage.proposed_by %} ({{ stage.proposed_by }}){% endif %}
+            <details open class="mb-0" data-ppde-detail-key="ppde-stage-{{ stage.id }}">
+              <summary class="fw-semibold">Stage {{ stage.order_index }}</summary>
+              <div class="d-flex align-items-start justify-content-between gap-3 mt-2">
+                <div class="min-w-0">
+                  <div class="small text-muted mt-1">
+                Status:
+                <span class="fw-semibold">
+                  {% if stage.status == "PROPOSED" %}
+                    PROPOSED{% if stage.proposed_by %} ({{ stage.proposed_by }}){% endif %}
                     {% elif stage.status == "PASS_LOCKED" %}
                       LOCKED{% if stage.locked_by %} ({{ stage.locked_by }}){% endif %}
                     {% else %}
@@ -237,8 +287,8 @@
                     {% endif %}
                   </span>
                 </div>
-              </div>
-              <div class="d-flex gap-2">
+                </div>
+                <div class="d-flex gap-2">
                 <form method="post">
                   {% csrf_token %}
                   <input type="hidden" name="action" value="stage_move_up" />
@@ -257,6 +307,20 @@
                   <input type="hidden" name="block_key" value="stage:{{ stage.id }}" />
                   <button class="btn btn-sm btn-outline-secondary" type="submit">Duplicate</button>
                 </form>
+                {% if stage.status == "DRAFT" or ppde_can_commit %}
+                  {% if stage.topic_chat_id %}
+                    <a class="btn btn-sm btn-outline-primary"
+                       href="?ppde_chat_id={{ stage.topic_chat_id }}&ppde_chat_open=1#ppde-stage-{{ stage.id }}">Open topic chat</a>
+                  {% else %}
+                    <form method="post" action="{% url 'projects:ppde_topic_chat_open' project.id %}">
+                      {% csrf_token %}
+                      <input type="hidden" name="topic_type" value="STAGE" />
+                      <input type="hidden" name="stage_id" value="{{ stage.id }}" />
+                      <input type="hidden" name="open_in" value="drawer" />
+                      <button class="btn btn-sm btn-outline-primary" type="submit">Topic chat</button>
+                    </form>
+                  {% endif %}
+                {% endif %}
                 {% if ppde_can_commit %}
                   <form method="post">
                     {% csrf_token %}
@@ -267,7 +331,6 @@
                 {% endif %}
               </div>
             </div>
-
             <form method="post" class="mt-2">
               {% csrf_token %}
               <input type="hidden" name="block_key" value="stage:{{ stage.id }}" />
@@ -283,14 +346,6 @@
                          {% if stage.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %} />
                 </div>
                 <div class="col-12">
-                  <label class="form-label small text-muted mb-1">Description</label>
-                  <textarea name="description" class="form-control" rows="3"
-                            data-ppde-block="stage"
-                            data-stage-id="{{ stage.id }}"
-                            data-ppde-field="description"
-                            {% if stage.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ stage.description }}</textarea>
-                </div>
-                <div class="col-12">
                   <label class="form-label small text-muted mb-1">Purpose</label>
                   <textarea name="purpose" class="form-control" rows="2"
                             data-ppde-block="stage"
@@ -299,36 +354,36 @@
                             {% if stage.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ stage.purpose }}</textarea>
                 </div>
                 <div class="col-12">
-                  <label class="form-label small text-muted mb-1">Entry Condition</label>
-                  <textarea name="entry_condition" class="form-control" rows="2"
+                  <label class="form-label small text-muted mb-1">Inputs (material known at the start)</label>
+                  <textarea name="inputs" class="form-control" rows="2"
                             data-ppde-block="stage"
                             data-stage-id="{{ stage.id }}"
-                            data-ppde-field="entry_condition"
-                            {% if stage.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ stage.entry_condition }}</textarea>
+                            data-ppde-field="inputs"
+                            {% if stage.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ stage.inputs }}</textarea>
                 </div>
                 <div class="col-12">
-                  <label class="form-label small text-muted mb-1">Acceptance Statement</label>
-                  <textarea name="acceptance_statement" class="form-control" rows="2"
+                  <label class="form-label small text-muted mb-1">Stage process (1-3 sentences: how inputs become outputs)</label>
+                  <textarea name="stage_process" class="form-control" rows="2"
                             data-ppde-block="stage"
                             data-stage-id="{{ stage.id }}"
-                            data-ppde-field="acceptance_statement"
-                            {% if stage.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ stage.acceptance_statement }}</textarea>
+                            data-ppde-field="stage_process"
+                            {% if stage.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ stage.stage_process }}</textarea>
                 </div>
                 <div class="col-12">
-                  <label class="form-label small text-muted mb-1">Exit Condition</label>
-                  <textarea name="exit_condition" class="form-control" rows="2"
+                  <label class="form-label small text-muted mb-1">Outputs (one per line; feed the next stage)</label>
+                  <textarea name="outputs" class="form-control" rows="3"
                             data-ppde-block="stage"
                             data-stage-id="{{ stage.id }}"
-                            data-ppde-field="exit_condition"
-                            {% if stage.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ stage.exit_condition }}</textarea>
+                            data-ppde-field="outputs"
+                            {% if stage.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ stage.outputs }}</textarea>
                 </div>
                 <div class="col-12">
-                  <label class="form-label small text-muted mb-1">Key Deliverables (one per line)</label>
-                  <textarea name="key_deliverables" class="form-control" rows="3"
+                  <label class="form-label small text-muted mb-1">Assumptions (optional)</label>
+                  <textarea name="assumptions" class="form-control" rows="2"
                             data-ppde-block="stage"
                             data-stage-id="{{ stage.id }}"
-                            data-ppde-field="key_deliverables"
-                            {% if stage.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ stage.key_deliverables }}</textarea>
+                            data-ppde-field="assumptions"
+                            {% if stage.status != "DRAFT" and not ppde_can_commit %}readonly{% endif %}>{{ stage.assumptions }}</textarea>
                 </div>
                 <div class="col-12">
                   <label class="form-label small text-muted mb-1">Duration Estimate</label>
@@ -351,46 +406,38 @@
               <div class="d-flex align-items-center justify-content-between mt-3">
                 <div class="small text-muted">Lock when this stage definition is complete.</div>
                 <div class="d-flex gap-2">
-                  {% if stage.status == "DRAFT" or ppde_can_commit %}
-                    <button type="submit" name="action" value="save_block" class="btn btn-sm btn-outline-secondary">Save Draft</button>
-                  {% endif %}
-                  <button type="submit" name="action" value="verify_block" class="btn btn-sm btn-outline-primary">Verify</button>
-                  {% if transform_contract %}
-                    <button class="btn btn-sm btn-outline-secondary" type="button"
-                            data-bs-toggle="modal" data-bs-target="#ppdeTransformContract">
-                      View contract
-                    </button>
-                  {% else %}
-                    <div class="small text-muted align-self-center">No active contract set (admin).</div>
-                  {% endif %}
-                  {% if stage.status == "DRAFT" %}
-                    <button type="submit" name="action" value="propose_lock" class="btn btn-sm btn-outline-primary">Propose Lock</button>
-                  {% endif %}
-                  {% if stage.status == "PROPOSED" and ppde_can_commit %}
-                    <button type="submit" name="action" value="approve_lock" class="btn btn-sm btn-success">Approve Lock</button>
-                    <button type="submit" name="action" value="reopen_block" class="btn btn-sm btn-outline-secondary">Reopen</button>
-                  {% endif %}
                   {% if stage.status == "PASS_LOCKED" and ppde_can_commit %}
                     <button type="submit" name="action" value="reopen_block" class="btn btn-sm btn-outline-secondary">Reopen</button>
+                  {% else %}
+                    {% if stage.status == "DRAFT" or ppde_can_commit %}
+                      <button type="submit" name="action" value="save_block" class="btn btn-sm btn-outline-secondary">Save Draft</button>
+                    {% endif %}
+                    <button type="submit" name="action" value="verify_block" class="btn btn-sm btn-outline-primary">Verify</button>
+                    {% if transform_contract %}
+                      <button class="btn btn-sm btn-outline-secondary" type="button"
+                              data-bs-toggle="modal" data-bs-target="#ppdeTransformContract">
+                        View contract
+                      </button>
+                    {% else %}
+                      <div class="small text-muted align-self-center">No active contract set (admin).</div>
+                    {% endif %}
+                    {% if stage.status == "DRAFT" %}
+                      <button type="submit" name="action" value="propose_lock" class="btn btn-sm btn-outline-primary">Propose Lock</button>
+                    {% endif %}
+                    {% if stage.status == "PROPOSED" and ppde_can_commit %}
+                      <button type="submit" name="action" value="approve_lock" class="btn btn-sm btn-success">Approve Lock</button>
+                      <button type="submit" name="action" value="reopen_block" class="btn btn-sm btn-outline-secondary">Reopen</button>
+                    {% endif %}
                   {% endif %}
                 </div>
               </div>
             </form>
 
-            <form method="post" class="mt-2">
-              {% csrf_token %}
-              <input type="hidden" name="block_key" value="stage:{{ stage.id }}" />
-              <div class="d-flex gap-2">
-                <button type="submit" name="action" value="derive_stage_plan" class="btn btn-sm btn-outline-primary">
-                  Derive plan items
-                </button>
-                {% if ppde_can_commit %}
-                  <button type="submit" name="action" value="approve_stage_plan" class="btn btn-sm btn-outline-success">
-                    Approve plan items
-                  </button>
-                {% endif %}
-              </div>
-            </form>
+            {% include "projects/ppde_inline_chat.html" with chat_ctx=stage.topic_chat_ctx %}
+
+            <div class="text-muted small mt-2">
+              Execution planning is produced in MDE, not PPDE.
+            </div>
 
             {% if stage.last_validation and show_validation_key == stage.validation_key %}
               {% if stage.last_validation.issues %}
@@ -413,220 +460,127 @@
                   </ul>
                 </div>
               {% endif %}
-              {% if stage.last_validation.suggested_revision %}
-                <div class="mt-2 small">
-                  <div class="fw-semibold">Suggested revision</div>
-                  <div style="white-space:pre-wrap;">{{ stage.last_validation.suggested_revision }}</div>
-                </div>
-              {% endif %}
+            {% if stage.last_validation.suggested_revision %}
+              <div class="mt-2 small">
+                <div class="fw-semibold">Suggested revision</div>
+                <div style="white-space:pre-wrap;">{{ stage.last_validation.suggested_revision }}</div>
+              </div>
             {% endif %}
+          {% endif %}
+            </details>
           </div>
         </div>
       {% endfor %}
 
-      <div class="card shadow-sm mb-3">
-        <div class="card-body">
-          <div class="d-flex align-items-center justify-content-between mb-2">
-            <div class="fw-semibold">Plan</div>
-            <div class="d-flex gap-2">
-              {% if ppde_can_commit %}
-                <form method="post" class="m-0">
-                  {% csrf_token %}
-                  <input type="hidden" name="action" value="generate_plan_from_stages" />
-                  <button class="btn btn-sm btn-outline-primary" type="submit">Generate plan</button>
-                </form>
-                <form method="post" class="m-0">
-                  {% csrf_token %}
-                  <input type="hidden" name="action" value="promote_plan_to_tasks" />
-                  <button class="btn btn-sm btn-outline-secondary" type="submit">Promote to tasks</button>
-                </form>
-              {% endif %}
-              {% if not plan_contract %}
-                <div class="small text-muted align-self-center">No active contract set (admin).</div>
-              {% endif %}
-            </div>
-          </div>
-          {% if not plan_contract %}
-            <div class="small text-muted mb-2">Plan generation is disabled until a contract is active.</div>
-          {% endif %}
-
-          {% if plan_preview %}
-            <div class="border rounded p-3 mb-3">
-              <div class="d-flex align-items-center justify-content-between">
-                <div class="fw-semibold">Plan summary preview</div>
-                <form method="post" class="m-0">
-                  {% csrf_token %}
-                  <input type="hidden" name="action" value="plan_preview_discard" />
-                  <button class="btn btn-sm btn-outline-secondary" type="submit">Discard</button>
-                </form>
-              </div>
-              {% if plan_preview.warnings %}
-                <div class="small text-warning mt-2">
-                  {% for w in plan_preview.warnings %}
-                    <div>{{ w }}</div>
-                  {% endfor %}
-                </div>
-              {% endif %}
-              <div class="row mt-3">
-                <div class="col-md-4">
-                  <div class="small text-muted">Milestones ({{ plan_preview.summary.milestones.count }})</div>
-                  <ul class="small mb-0">
-                    {% for item in plan_preview.summary.milestones.top %}
-                      <li>{{ item }}</li>
-                    {% empty %}
-                      <li class="text-muted">None</li>
-                    {% endfor %}
-                  </ul>
-                </div>
-                <div class="col-md-4">
-                  <div class="small text-muted">Actions ({{ plan_preview.summary.actions.count }})</div>
-                  <ul class="small mb-0">
-                    {% for item in plan_preview.summary.actions.top %}
-                      <li>{{ item }}</li>
-                    {% empty %}
-                      <li class="text-muted">None</li>
-                    {% endfor %}
-                  </ul>
-                </div>
-                <div class="col-md-4">
-                  <div class="small text-muted">Risks ({{ plan_preview.summary.risks.count }})</div>
-                  <ul class="small mb-0">
-                    {% for item in plan_preview.summary.risks.top %}
-                      <li>{{ item }}</li>
-                    {% empty %}
-                      <li class="text-muted">None</li>
-                    {% endfor %}
-                  </ul>
-                </div>
-              </div>
-              <div class="d-flex gap-2 mt-3">
-                <form method="post" class="m-0">
-                  {% csrf_token %}
-                  <input type="hidden" name="action" value="plan_preview_apply" />
-                  <input type="hidden" name="apply_mode" value="approve" />
-                  <button class="btn btn-sm btn-primary" type="submit">Approve</button>
-                </form>
-                <form method="post" class="m-0">
-                  {% csrf_token %}
-                  <input type="hidden" name="action" value="plan_preview_apply" />
-                  <input type="hidden" name="apply_mode" value="edit" />
-                  <button class="btn btn-sm btn-outline-primary" type="submit">Edit</button>
-                </form>
-              </div>
-            </div>
-          {% endif %}
-
-          <div class="accordion" id="ppdePlanAccordion">
-            <div class="accordion-item">
-              <h2 class="accordion-header" id="ppdePlanMilestonesHeading">
-                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ppdePlanMilestones">
-                  Milestones
-                </button>
-              </h2>
-              <div id="ppdePlanMilestones" class="accordion-collapse collapse" data-bs-parent="#ppdePlanAccordion">
-                <div class="accordion-body">
-                  {% if plan_milestones %}
-                    <ul class="small mb-0">
-                      {% for m in plan_milestones %}
-                        <li>
-                          <span class="fw-semibold">{{ m.title|default:"(untitled)" }}</span>
-                          {% if m.stage_title %}<span class="badge bg-light text-dark">{{ m.stage_title }}</span>{% endif %}
-                          <span class="badge bg-secondary">{{ m.status }}</span>
-                          <div class="text-muted">Acceptance: {{ m.acceptance_statement|default:"-" }}</div>
-                        </li>
-                      {% endfor %}
-                    </ul>
-                  {% else %}
-                    <div class="small text-muted">No milestones yet.</div>
-                  {% endif %}
-                </div>
-              </div>
-            </div>
-
-            <div class="accordion-item">
-              <h2 class="accordion-header" id="ppdePlanActionsHeading">
-                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ppdePlanActions">
-                  Actions
-                </button>
-              </h2>
-              <div id="ppdePlanActions" class="accordion-collapse collapse" data-bs-parent="#ppdePlanAccordion">
-                <div class="accordion-body">
-                  {% if plan_actions %}
-                    <ul class="small mb-0">
-                      {% for a in plan_actions %}
-                        <li>
-                          <span class="fw-semibold">{{ a.title|default:"(untitled)" }}</span>
-                          {% if a.stage_title %}<span class="badge bg-light text-dark">{{ a.stage_title }}</span>{% endif %}
-                          <span class="badge bg-secondary">{{ a.status }}</span>
-                          <div class="text-muted">DoD: {{ a.definition_of_done|default:"-" }}</div>
-                        </li>
-                      {% endfor %}
-                    </ul>
-                  {% else %}
-                    <div class="small text-muted">No actions yet.</div>
-                  {% endif %}
-                </div>
-              </div>
-            </div>
-
-            <div class="accordion-item">
-              <h2 class="accordion-header" id="ppdePlanRisksHeading">
-                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ppdePlanRisks">
-                  Risks
-                </button>
-              </h2>
-              <div id="ppdePlanRisks" class="accordion-collapse collapse" data-bs-parent="#ppdePlanAccordion">
-                <div class="accordion-body">
-                  {% if plan_risks %}
-                    <ul class="small mb-0">
-                      {% for r in plan_risks %}
-                        <li>
-                          <span class="fw-semibold">{{ r.title|default:"(untitled)" }}</span>
-                          {% if r.stage_title %}<span class="badge bg-light text-dark">{{ r.stage_title }}</span>{% endif %}
-                          <span class="badge bg-secondary">{{ r.status }}</span>
-                          <div class="text-muted">Mitigation: {{ r.mitigation|default:"-" }}</div>
-                        </li>
-                      {% endfor %}
-                    </ul>
-                  {% else %}
-                    <div class="small text-muted">No risks yet.</div>
-                  {% endif %}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card shadow-sm mb-3">
-        <div class="card-body">
-          <div class="fw-semibold mb-2">WKO Versions</div>
-          {% if wko_versions %}
-            <ul class="small mb-0">
-              {% for w in wko_versions %}
-                <li>
-                  v{{ w.version }} — {{ w.status }} — {{ w.created_at|date:"Y-m-d" }}
-                  {% if ppde_can_commit %}
-                    <form method="post" class="d-inline ms-2">
-                      {% csrf_token %}
-                      <input type="hidden" name="action" value="revert_prepare" />
-                      <input type="hidden" name="target_wko_id" value="{{ w.id }}" />
-                      <button class="btn btn-sm btn-outline-secondary" type="submit">Revert</button>
-                    </form>
-                  {% endif %}
-                </li>
-              {% endfor %}
-            </ul>
-          {% else %}
-            <div class="small text-muted">No WKO versions yet.</div>
-          {% endif %}
-        </div>
-      </div>
+      {# Plan / execution / WKO surfaces removed: PPDE is PDO-only #}
     </div>
-  </div>
-</div>
-{% endblock %}
+  <script>
+  (function () {
+    var form = document.getElementById("ppdeSaveAllForm");
+    var fieldsHost = document.getElementById("ppdeSaveAllFields");
+    if (!form || !fieldsHost) return;
 
+    function clearDynamicFields() {
+      while (fieldsHost.firstChild) {
+        fieldsHost.removeChild(fieldsHost.firstChild);
+      }
+    }
+
+    function addHidden(name, value) {
+      var input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = value || "";
+      fieldsHost.appendChild(input);
+    }
+
+    window.ppdeSaveExit = function () {
+      clearDynamicFields();
+      addHidden("exit", "1");
+
+      var purposeFields = [
+        "pdo_summary",
+        "cko_alignment_stage1_inputs_match",
+        "cko_alignment_final_outputs_match",
+        "planning_constraints",
+        "assumptions",
+        "purpose_text"
+      ];
+      purposeFields.forEach(function (key) {
+        var el = document.querySelector("[data-ppde-block='purpose'][data-ppde-field='" + key + "']");
+        if (el) {
+          addHidden(key, el.value || "");
+        }
+      });
+
+      var stageFields = document.querySelectorAll("[data-ppde-block='stage'][data-stage-id][data-ppde-field]");
+      stageFields.forEach(function (el) {
+        var sid = el.getAttribute("data-stage-id") || "";
+        var field = el.getAttribute("data-ppde-field") || "";
+        if (!sid || !field) return;
+        var name = "stage_" + sid + "__" + field;
+        addHidden(name, el.value || "");
+      });
+
+      form.submit();
+      return false;
+    };
+  })();
+  </script>
+
+  <script>
+  (function () {
+    var key = "ppde_scroll_" + "{{ project.id }}";
+    if (window.location.hash) {
+      return;
+    }
+    var saved = sessionStorage.getItem(key);
+    if (saved !== null) {
+      var y = parseInt(saved, 10);
+      if (!isNaN(y)) {
+        window.scrollTo(0, y);
+      }
+    }
+
+    var forms = document.querySelectorAll("form");
+    forms.forEach(function (f) {
+      f.addEventListener("submit", function () {
+        sessionStorage.setItem(key, String(window.scrollY || 0));
+      });
+    });
+  })();
+  </script>
+
+  <script>
+  (function () {
+    var storageKey = "ppde_details_" + "{{ project.id }}";
+    var details = document.querySelectorAll("details[data-ppde-detail-key]");
+    if (!details.length) return;
+
+    var saved = {};
+    try {
+      saved = JSON.parse(localStorage.getItem(storageKey) || "{}");
+    } catch (e) {
+      saved = {};
+    }
+
+    details.forEach(function (el) {
+      var k = el.getAttribute("data-ppde-detail-key");
+      if (!k) return;
+      if (Object.prototype.hasOwnProperty.call(saved, k)) {
+        el.open = !!saved[k];
+      }
+      el.addEventListener("toggle", function () {
+        saved[k] = !!el.open;
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(saved));
+        } catch (e) {}
+      });
+    });
+  })();
+  </script>
+
+</div>
 {% if structure_contract %}
 <div class="modal fade" id="ppdeStructureContract" tabindex="-1" aria-labelledby="ppdeStructureContractLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -643,28 +597,6 @@
         <div class="mb-2"><div class="fw-semibold">Method guidance</div><div style="white-space:pre-wrap;">{{ structure_contract.method_guidance_text }}</div></div>
         <div class="mb-2"><div class="fw-semibold">Acceptance test</div><div style="white-space:pre-wrap;">{{ structure_contract.acceptance_test_text }}</div></div>
         <div class="mb-2"><div class="fw-semibold">LLM review prompt</div><div style="white-space:pre-wrap;">{{ structure_contract.llm_review_prompt_text }}</div></div>
-      </div>
-    </div>
-  </div>
-</div>
-{% endif %}
-
-{% if plan_contract %}
-<div class="modal fade" id="ppdePlanContract" tabindex="-1" aria-labelledby="ppdePlanContractLabel" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="ppdePlanContractLabel">{{ plan_contract.title }} (v{{ plan_contract.version }})</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body">
-        <div class="small text-muted mb-2">Key: {{ plan_contract.key }}</div>
-        <div class="mb-2"><div class="fw-semibold">Purpose</div><div style="white-space:pre-wrap;">{{ plan_contract.purpose_text }}</div></div>
-        <div class="mb-2"><div class="fw-semibold">Inputs</div><div style="white-space:pre-wrap;">{{ plan_contract.inputs_text }}</div></div>
-        <div class="mb-2"><div class="fw-semibold">Outputs</div><div style="white-space:pre-wrap;">{{ plan_contract.outputs_text }}</div></div>
-        <div class="mb-2"><div class="fw-semibold">Method guidance</div><div style="white-space:pre-wrap;">{{ plan_contract.method_guidance_text }}</div></div>
-        <div class="mb-2"><div class="fw-semibold">Acceptance test</div><div style="white-space:pre-wrap;">{{ plan_contract.acceptance_test_text }}</div></div>
-        <div class="mb-2"><div class="fw-semibold">LLM review prompt</div><div style="white-space:pre-wrap;">{{ plan_contract.llm_review_prompt_text }}</div></div>
       </div>
     </div>
   </div>
@@ -710,13 +642,13 @@
 
     {% if stage_preview %}
       <div class="border rounded p-2 bg-white">
-        <div class="fw-semibold small mb-1">Current preview (titles + acceptance)</div>
+        <div class="fw-semibold small mb-1">Current preview (titles + outputs)</div>
         <ul class="small mb-0">
           {% for item in stage_preview.stages %}
             <li class="mb-1">
               <span class="fw-semibold">{{ item.title|default:"(untitled)" }}</span>
-              {% if item.acceptance_statement %}
-                <div class="text-muted">Acceptance: {{ item.acceptance_statement }}</div>
+              {% if item.outputs %}
+                <div class="text-muted">Outputs: {{ item.outputs }}</div>
               {% endif %}
             </li>
           {% endfor %}
@@ -806,10 +738,20 @@
     clearDynamicFields();
     addHidden("exit", "1");
 
-    var purpose = document.querySelector("[data-ppde-block='purpose'][data-ppde-field='purpose_text']");
-    if (purpose) {
-      addHidden("purpose_text", purpose.value || "");
-    }
+    var purposeFields = [
+      "pdo_summary",
+      "cko_alignment_stage1_inputs_match",
+      "cko_alignment_final_outputs_match",
+      "planning_constraints",
+      "assumptions",
+      "purpose_text"
+    ];
+    purposeFields.forEach(function (key) {
+      var el = document.querySelector("[data-ppde-block='purpose'][data-ppde-field='" + key + "']");
+      if (el) {
+        addHidden(key, el.value || "");
+      }
+    });
 
     var stageFields = document.querySelectorAll("[data-ppde-block='stage'][data-stage-id][data-ppde-field]");
     stageFields.forEach(function (el) {
@@ -824,3 +766,29 @@
   });
 })();
 </script>
+
+<script>
+(function () {
+  var key = "ppde_scroll_" + "{{ project.id }}";
+  if (window.location.hash) {
+    return;
+  }
+  var saved = sessionStorage.getItem(key);
+  if (saved !== null) {
+    var y = parseInt(saved, 10);
+    if (!isNaN(y)) {
+      window.scrollTo(0, y);
+    }
+    sessionStorage.removeItem(key);
+  }
+
+  var forms = document.querySelectorAll("form");
+  forms.forEach(function (f) {
+    f.addEventListener("submit", function () {
+      sessionStorage.setItem(key, String(window.scrollY || 0));
+    });
+  });
+})();
+</script>
+
+{% endblock %}

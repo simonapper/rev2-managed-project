@@ -1,4 +1,4 @@
-﻿{# -*- coding: utf-8 -*- #}
+{# -*- coding: utf-8 -*- #}
 {# templates/accounts/config_user_edit.html #}
 
 {% extends "base.html" %}
@@ -18,17 +18,22 @@
         <h5 class="card-title mb-2">Language</h5>
 
         <div class="row g-2 align-items-end">
-          <div class="col-12 col-md-4">
+          <div class="col-12 col-md-3">
             <label class="form-label small mb-1">Interaction Language</label>
             {{ form.default_language }}
           </div>
 
-          <div class="col-12 col-md-4">
+          <div class="col-12 col-md-3">
             <label class="form-label small mb-1">Language variant</label>
             {{ form.default_language_variant }}
           </div>
 
-          <div class="col-12 col-md-4">
+          <div class="col-12 col-md-3">
+            <label class="form-label small mb-1">LLM provider</label>
+            {{ form.llm_provider }}
+          </div>
+
+          <div class="col-12 col-md-3">
             <div class="form-check mb-1">
               {{ form.language_switching_permitted }}
               <label class="form-check-label small">Language switching permitted</label>
@@ -93,3 +98,4 @@
 
 </div>
 {% endblock %}
+

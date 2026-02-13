@@ -70,3 +70,88 @@ Lightweight canonical structures (sections optional):
 - TKO sections: Canonical summary (<=10 words), Working preferences, Context / why this exists, Current state, Decisions made (and why), In scope next, Out of scope, Known risks / gotchas, Files / modules / commands, Next step (single, concrete).
 - PKO sections: Policy summary (<=10 words), Policy statement, Rationale, Applies to, Does not apply to, Enforcement, Exceptions, Versioning / provenance.
 ## End Review Conference Notes
+
+## Artefact Definitions
+- Anchor: the single artefact for a marker.
+- Marker: INTENT, ROUTE, EXECUTE, COMPLETE.
+- Review Conference: per project per user chat for one marker.
+- CKO means Canonical Knowledge Object (not course kick-off).
+- WKO: Workflow Knowledge Object.
+- TKO: Transfer Knowledge Object.
+- PKO: Policy Knowledge Object.
+
+## Artefact Structures (sections optional; do not add filler)
+### CKO
+- Canonical summary (<=10 words)
+- Scope
+- Statement
+- Supporting basis
+- Assumptions
+- Alternatives considered
+- Uncertainties / limits
+- Provenance
+
+### WKO
+- Purpose
+- Current state
+- Open questions
+- Options / candidate approaches
+- Risks / dependencies
+- Next actions
+- Provenance
+
+### TKO
+- Canonical summary (<=10 words)
+- Working preferences
+- Context / why this exists
+- Current state
+- Decisions made (and why)
+- In scope next
+- Out of scope
+- Known risks / gotchas
+- Files / modules / commands
+- Next step (single, concrete)
+
+### PKO
+- Policy summary (<=10 words)
+- Policy statement
+- Rationale
+- Applies to
+- Does not apply to
+- Enforcement
+- Exceptions
+- Versioning / provenance
+
+## Artefact Formatting Rules
+- Section headers are "# TITLE" lines.
+- Exactly ONE blank line between header and body.
+- Each section body ends with exactly ONE blank line.
+- Avoid mixing numbered and bulleted lists in the same section unless order matters.
+- Prefer "- " bullets; use "1. 2. 3." only when sequencing matters.
+- Collapse 3+ consecutive newlines to 2.
+- Ensure final output ends with a newline.
+
+## EXECUTE Review Conference Contract
+Purpose: maintain the EXECUTE ledger derived from ROUTE.
+Rules:
+- Do not invent stages or work items.
+- Do not change stage_id or stage_number.
+- If the plan needs change, propose a ROUTE revision.
+- Do not delete decisions, evidence, or history fields.
+Output:
+- Return exactly one JSON code block labelled json.
+
+## Stage Review Conference Contract
+Purpose: update one stage only.
+Rules:
+- Update only the target stage.
+- Keep changes local.
+- Preserve stage_id and stage_number.
+Output:
+- Return the full EXECUTE JSON in one json block.
+
+## Writing Style Rules
+- Use short sentences.
+- One idea per sentence.
+- Avoid qualifiers or hedging.
+- Avoid comma-joined clauses.

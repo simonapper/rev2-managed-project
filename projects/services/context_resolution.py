@@ -157,32 +157,31 @@ def resolve_effective_context(
         .first()
     )
 
-    if project.kind == Project.Kind.SANDBOX:
-        pointers = SystemConfigPointers.objects.get(pk=1)
+    pointers = SystemConfigPointers.objects.get(pk=1)
 
-        l2 = _config_payload(pointers.active_l2_config)
-        l4_cfg = _config_payload(pointers.active_l4_config)
+    l2 = _config_payload(pointers.active_l2_config)
+    l4_source = project.active_l4_config or pointers.active_l4_config
+    l4_cfg = _config_payload(l4_source)
 
-        level4 = _build_level4_dict(
-            user=user,
-            project=project,
-            prefs=prefs,
-            l4_cfg=l4_cfg,
-            session_overrides=session_overrides,
-            chat_overrides=chat_overrides,
-        )
+    level4 = _build_level4_dict(
+        user=user,
+        project=project,
+        prefs=prefs,
+        l4_cfg=l4_cfg,
+        session_overrides=session_overrides,
+        chat_overrides=chat_overrides,
+    )
 
-        return {
-            "level1": None,
-            "level2": l2,
-            "level3": None,
-            "level4": level4,
-            "provenance": {
-                "project_kind": project.kind,
-                "system_l4_config_id": getattr(pointers.active_l4_config, "id", None),
-                "session_overrides_keys": sorted(session_overrides.keys()),
-                "chat_overrides_keys": sorted(chat_overrides.keys()),
-            },
-        }
-
-    raise NotImplementedError("Standard project path not yet implemented")
+    return {
+        "level1": None,
+        "level2": l2,
+        "level3": None,
+        "level4": level4,
+        "provenance": {
+            "project_kind": project.kind,
+            "system_l4_config_id": getattr(pointers.active_l4_config, "id", None),
+            "project_l4_config_id": getattr(project.active_l4_config, "id", None),
+            "session_overrides_keys": sorted(session_overrides.keys()),
+            "chat_overrides_keys": sorted(chat_overrides.keys()),
+        },
+    }

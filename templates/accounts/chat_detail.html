@@ -12,6 +12,30 @@
         <!--<hr class="my-3">-->
 
         <!-- Top row: controls + input -->
+<div class="d-flex align-items-start justify-content-end mb-2">
+  <div class="d-flex flex-column align-items-end gap-1">
+    {% if ppde_return_url %}
+      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="{{ ppde_return_url }}">Return to PPDE</a>
+    {% endif %}
+    {% if topic_chat_return_url %}
+      <form method="post" action="{% url 'accounts:chat_topic_delete' chat.id %}" class="m-0">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-outline-danger rw-topbar-btn rw-btn-xs py-1 px-2" onclick="return confirm('Delete this topic chat?');">Delete topic chat</button>
+      </form>
+    {% endif %}
+    {% if fullscreen %}
+      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_normal }}">Exit full screen</a>
+    {% else %}
+      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_fullscreen }}">Full screen</a>
+    {% endif %}
+    {% if show_system %}
+      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_no_system }}">Hide system</a>
+    {% else %}
+      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_with_system }}">Show system</a>
+    {% endif %}
+  </div>
+</div>
+
 <form method="post" action="{% url 'accounts:chat_message_create' %}" enctype="multipart/form-data">
   {% csrf_token %}
   <input type="hidden" name="chat_id" value="{{ chat.id }}">
@@ -22,31 +46,14 @@
       <textarea id="rw-chat-input" name="content" class="form-control" rows="2" placeholder="Type message..."></textarea>
     </div>
     <div class="d-flex flex-column align-items-end gap-1" style="min-width: 160px;">
-      {% if fullscreen %}
-        <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_normal }}">Exit full screen</a>
-      {% else %}
-        <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_fullscreen }}">Full screen</a>
-      {% endif %}
-
-      {% if show_system %}
-        <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_no_system }}">Hide system</a>
-      {% else %}
-        <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_with_system }}">Show system</a>
-      {% endif %}
+      <button type="button" class="btn btn-sm btn-outline-secondary rw-btn-same rw-btn-file" id="rw-file-btn">Select file</button>
     </div>
-  </div>
-
-  <div class="d-flex align-items-center gap-2 mb-2">
-    {% if not chat.project.kind == "SANDBOX" %}
-      <span class="badge bg-primary" style="padding:.15rem .4rem; font-size:.7rem;">Controlled</span>
-    {% endif %}
   </div>
 
   <div id="rw-paste-status" class="small text-secondary mt-2"></div>
 
   <!-- Select-a-file upload -->
   <div class="mt-2 d-flex align-items-center gap-2">
-    <button type="button" class="btn btn-sm btn-primary rw-btn-same rw-btn-file" id="rw-file-btn">Select file</button>
     <input id="rw-file-input" type="file" style="display:none">
     <span id="rw-file-name" class="small text-secondary"></span>
     <button type="submit" class="btn btn-sm btn-success rw-btn-same">Send</button>
@@ -80,6 +87,19 @@
   {% endif %}
 
 </form>
+
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <form method="post" action="{% url 'accounts:chat_use_selected' %}" id="rw-use-selected-form" class="d-flex gap-2 m-0">
+            {% csrf_token %}
+            <input type="hidden" name="chat_id" value="{{ chat.id }}">
+            <input type="hidden" name="selected_text" id="rw-selected-text" value="">
+            <input type="hidden" name="apply_mode" id="rw-selected-mode" value="replace">
+            <button type="button" class="btn btn-sm btn-outline-primary" data-apply-mode="replace">Use selected (replace)</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-mode="append">Use selected (append)</button>
+            <button type="button" class="btn btn-sm btn-outline-primary" data-apply-mode="replace" data-source="input">Use input (replace)</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-mode="append" data-source="input">Use input (append)</button>
+          </form>
+        </div>
 
         {# Attachments list #}
         {% if attachments %}
@@ -162,6 +182,8 @@
                 <div class="alert alert-secondary mb-0">Select a turn to view its panes.</div>
               {% else %}
                 {% with pane=active_turn %}
+                  <textarea id="rw-active-answer" class="d-none" aria-hidden="true">{{ pane.answer|default:"" }}</textarea>
+                  <textarea id="rw-active-output" class="d-none" aria-hidden="true">{{ pane.output|default:"" }}</textarea>
                   <div class="d-flex flex-column gap-2">
                     {% if not is_system_turn %}
                       <details open class="rw-channel">
@@ -286,6 +308,55 @@
 
     list.addEventListener("scroll", function () {
       sessionStorage.setItem(key, list.scrollTop);
+    });
+  })();
+
+  // ------------------------------------------------------------
+  // Use selected text for topic chats
+  // ------------------------------------------------------------
+  (function () {
+    var form = document.getElementById("rw-use-selected-form");
+    if (!form) return;
+    var textInput = document.getElementById("rw-selected-text");
+    var modeInput = document.getElementById("rw-selected-mode");
+    var buttons = form.querySelectorAll("button[data-apply-mode]");
+    if (!textInput || !modeInput || !buttons.length) return;
+
+    function getSelectedText() {
+      var sel = window.getSelection ? window.getSelection() : null;
+      if (!sel) return "";
+      return String(sel).trim();
+    }
+
+    function getInputText() {
+      var el = document.getElementById("rw-chat-input");
+      if (el && String(el.value || "").trim()) {
+        return String(el.value || "").trim();
+      }
+      var ansEl = document.getElementById("rw-active-answer");
+      if (ansEl && String(ansEl.value || "").trim()) {
+        return String(ansEl.value || "").trim();
+      }
+      var outEl = document.getElementById("rw-active-output");
+      if (outEl && String(outEl.value || "").trim()) {
+        return String(outEl.value || "").trim();
+      }
+      return "";
+    }
+
+    buttons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var src = btn.getAttribute("data-source") || "selected";
+        var txt = (src === "input") ? getInputText() : getSelectedText();
+        if (!txt) {
+          alert(src === "input" ? "Type/paste JSON or select a turn with OUTPUT first." : "Select text in the chat first.");
+          return;
+        }
+        var mode = btn.getAttribute("data-apply-mode") || "replace";
+        textInput.value = txt;
+        modeInput.value = mode;
+        form.submit();
+      });
     });
   })();
 
@@ -505,6 +576,33 @@
           });
       });
     }
+    })();
+    (function() {
+      var draftKey = "rw_chat_draft_{{ chat.id }}";
+      var inputEl = document.getElementById("rw-chat-input");
+      var formEl = inputEl ? inputEl.closest("form") : null;
+      if (inputEl) {
+        try {
+          var saved = localStorage.getItem(draftKey) || "";
+          if (saved && !inputEl.value) {
+            inputEl.value = saved;
+          }
+        } catch (e) {}
+        var saveDraft = function () {
+          try {
+            localStorage.setItem(draftKey, inputEl.value || "");
+          } catch (e) {}
+        };
+        inputEl.addEventListener("input", saveDraft);
+        inputEl.addEventListener("blur", saveDraft);
+      }
+      if (formEl) {
+        formEl.addEventListener("submit", function () {
+          try {
+            localStorage.removeItem(draftKey);
+          } catch (e) {}
+        });
+      }
     })();
     (function() {
       // 7-bit ASCII: inline rename toggle

@@ -10,6 +10,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
 from projects.models import Project, ProjectWKO
+from projects.services.artefact_render import render_artefact_html
 from projects.services_project_membership import can_view_project
 
 
@@ -31,6 +32,7 @@ def wko_preview(request, project_id: int) -> HttpResponse:
         return redirect("projects:ppde_detail", project_id=project.id)
 
     content_text = json.dumps(wko.content_json or {}, indent=2, ensure_ascii=True)
+    content_html = render_artefact_html("WKO", wko.content_json or {})
     return render(
         request,
         "projects/wko_preview.html",
@@ -38,5 +40,6 @@ def wko_preview(request, project_id: int) -> HttpResponse:
             "project": project,
             "wko": wko,
             "content_text": content_text,
+            "content_html": content_html,
         },
     )

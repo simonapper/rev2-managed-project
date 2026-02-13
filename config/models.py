@@ -272,6 +272,15 @@ class SystemConfigPointers(models.Model):
         default="gpt-5.1",
         help_text="Default OpenAI model key, e.g. gpt-5.1, gpt-4.1-mini, o4-mini",
     )
+    anthropic_model_default = models.CharField(
+        max_length=80,
+        blank=True,
+        default="claude-sonnet-4-5-20250929",
+        help_text=(
+            "Default Anthropic model key, e.g. claude-sonnet-4-5-20250929, "
+            "claude-opus-4-5-20251101, claude-haiku-4-5-20251001"
+        ),
+    )
 
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

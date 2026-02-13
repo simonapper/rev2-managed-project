@@ -1,5 +1,5 @@
 # projects/views_ppde_ui.py
-# PPDE (Planning WKO editor) UI
+# PPDE (Planning PDO editor) UI
 
 from __future__ import annotations
 
@@ -12,23 +12,41 @@ from django.db.models import Max
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from urllib.parse import urlencode
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 
 from chats.services.llm import generate_panes
+from chats.services.turns import build_chat_turn_context
+from chats.models import ChatWorkspace
 from projects.models import (
     PhaseContract,
     Project,
     ProjectCKO,
-    ProjectPlanningAction,
-    ProjectPlanningMilestone,
-    ProjectPlanningRisk,
     ProjectPlanningPurpose,
     ProjectPlanningStage,
-    ProjectWKO,
-    ProjectExecutionTask,
+    ProjectTopicChat,
+    ProjectPDO,
 )
 from projects.services_project_membership import can_edit_ppde, is_project_committer
+from projects.services_topic_chat import get_or_create_topic_chat
 
+
+WORKING_METHOD_BLOCK = (
+    "Working method\n"
+    "Treat the listed sources as authoritative in this order: CKO -> Planning Purpose -> current draft -> other artefacts.\n"
+    "Do not invent project facts not present in the sources; ask if missing.\n"
+    "Work iteratively:\n"
+    "- Identify gaps or ambiguities.\n"
+    "- Ask concise clarification questions if needed.\n"
+    "- Propose a revised draft.\n"
+    "- Confirm with the user before finalising output.\n"
+    "Keep all suggestions consistent with the project's stated goals, constraints, and acceptance criteria.\n"
+    "\n"
+    "Output discipline\n"
+    "When the user indicates readiness, return only the required JSON structure.\n"
+    "Do not include explanations, markdown, or extra text in the final output.\n"
+)
 
 PPDE_VALIDATOR_BOILERPLATE = (
     "You are reviewing one PPDE block for clarity and completeness.\n"
@@ -53,6 +71,8 @@ PPDE_VALIDATOR_BOILERPLATE = (
     "- issues: empty if PASS.\n"
     "- questions: max 3, only if needed.\n"
     "- suggested_revision: provide a best improved rewrite even if WEAK/CONFLICT.\n"
+    "\n"
+    + WORKING_METHOD_BLOCK
 )
 
 PPDE_SEED_SUMMARY_BOILERPLATE = (
@@ -78,7 +98,9 @@ PPDE_SEED_PURPOSE_BOILERPLATE = (
     "- planning_purpose is 3 to 6 sentences.\n"
     "- It must state: audience, planning horizon, and optimisation focus.\n"
     "- It must NOT restate the project goal verbatim.\n"
-    "- It must be plain language and execution-oriented.\n"
+    "- It must be plain language and planning-oriented.\n"
+    "\n"
+    + WORKING_METHOD_BLOCK
 )
 
 PPDE_STAGE_MAP_BOILERPLATE = (
@@ -90,12 +112,11 @@ PPDE_STAGE_MAP_BOILERPLATE = (
     '  "stages": [\n'
     "    {\n"
     '      "title": "string",\n'
-    '      "description": "string",\n'
     '      "purpose": "string",\n'
-    '      "entry_condition": "string",\n'
-    '      "acceptance_statement": "string",\n'
-    '      "exit_condition": "string",\n'
-    '      "key_deliverables": ["string"],\n'
+    '      "inputs": "string",\n'
+    '      "stage_process": "string",\n'
+    '      "outputs": "string",\n'
+    '      "assumptions": "string",\n'
     '      "duration_estimate": "string",\n'
     '      "risks_notes": "string"\n'
     "    }\n"
@@ -105,96 +126,18 @@ PPDE_STAGE_MAP_BOILERPLATE = (
     "Rules:\n"
     "- stages length: 3 to 8 is preferred; you may exceed only if necessary.\n"
     "- Each stage must be concrete and non-overlapping.\n"
-    "- acceptance_statement must be verifiable.\n"
-    "- key_deliverables must have at least 1 item.\n"
+    "- inputs describe material known at the start.\n"
+    "- stage_process is 1-3 sentences describing how inputs become outputs.\n"
+    "- outputs are one per line; these feed the next stage.\n"
+    "- assumptions are optional; include only if material.\n"
     "- duration_estimate is free text and may include deadlines.\n"
+    "\n"
+    + WORKING_METHOD_BLOCK
 )
 
-PPDE_PLAN_BOILERPLATE = (
-    "You are deriving a concrete project plan from the provided stages.\n"
-    "You MUST output JSON only. No prose.\n"
-    "\n"
-    "Return exactly this schema:\n"
-    "{\n"
-    '  "plan": {\n'
-    '    "milestones": [\n'
-    "      {\n"
-    '        "title": "string",\n'
-    '        "stage_title": "string",\n'
-    '        "acceptance_statement": "string",\n'
-    '        "target_date_hint": "string"\n'
-    "      }\n"
-    "    ],\n"
-    '    "actions": [\n'
-    "      {\n"
-    '        "title": "string",\n'
-    '        "stage_title": "string",\n'
-    '        "owner_role": "string",\n'
-    '        "definition_of_done": "string",\n'
-    '        "effort_hint": "string"\n'
-    "      }\n"
-    "    ],\n"
-    '    "risks": [\n'
-    "      {\n"
-    '        "title": "string",\n'
-    '        "stage_title": "string",\n'
-    '        "probability": "LOW|MED|HIGH",\n'
-    '        "impact": "LOW|MED|HIGH",\n'
-    '        "mitigation": "string"\n'
-    "      }\n"
-    "    ],\n"
-    '    "assumptions": ["string"],\n'
-    '    "dependencies": ["string"]\n'
-    "  }\n"
-    "}\n"
-    "\n"
-    "Rules:\n"
-    "- Every milestone and action must map to a stage_title.\n"
-    "- Milestones must be verifiable.\n"
-    "- Provide 5-20 actions total.\n"
-    "- Provide 3-12 risks total.\n"
-    "- Keep items concise and practical.\n"
-)
-
-PPDE_STAGE_PLAN_BOILERPLATE = (
-    "You are deriving plan items for a single stage.\n"
-    "You MUST output JSON only. No prose.\n"
-    "{\n"
-    '  "milestones": [\n'
-    "    {\n"
-    '      "title": "string",\n'
-    '      "stage_title": "string",\n'
-    '      "acceptance_statement": "string",\n'
-    '      "target_date_hint": "string"\n'
-    "    }\n"
-    "  ],\n"
-    '  "actions": [\n'
-    "    {\n"
-    '      "title": "string",\n'
-    '      "stage_title": "string",\n'
-    '      "owner_role": "string",\n'
-    '      "definition_of_done": "string",\n'
-    '      "effort_hint": "string"\n'
-    "    }\n"
-    "  ],\n"
-    '  "risks": [\n'
-    "    {\n"
-    '      "title": "string",\n'
-    '      "stage_title": "string",\n'
-    '      "probability": "LOW|MED|HIGH",\n'
-    '      "impact": "LOW|MED|HIGH",\n'
-    '      "mitigation": "string"\n'
-    "    }\n"
-    "  ]\n"
-    "}\n"
-)
 
 def _ppde_help_key(project_id: int) -> str:
     return "ppde_help_log_" + str(project_id)
-
-
-def _ppde_plan_preview_key(project_id: int) -> str:
-    return "ppde_plan_preview_" + str(project_id)
 
 
 def _ppde_stage_preview_key(project_id: int) -> str:
@@ -212,8 +155,225 @@ def _get_ppde_help_log(request, project_id: int) -> List[Dict[str, str]]:
 def _get_ppde_stage_edit_log(request, project_id: int) -> List[Dict[str, str]]:
     return list(request.session.get(_ppde_stage_edit_key(project_id)) or [])
 
+def _ckos_to_bullets(seed_snapshot: Dict[str, Any], keywords: List[str], limit: int = 6) -> str:
+    rows = []
+    for k in sorted(seed_snapshot.keys()):
+        v = (seed_snapshot.get(k) or "").strip()
+        if not v:
+            continue
+        key_l = k.lower()
+        if any(word in key_l for word in keywords):
+            rows.append("- " + k + ": " + v)
+        if len(rows) >= limit:
+            break
+    if rows:
+        return "From CKO:\n" + "\n".join(rows)
 
-def _ppde_help_answer(*, question: str, project: Project) -> str:
+    # Fallback: first few seed items.
+    for k in sorted(seed_snapshot.keys()):
+        v = (seed_snapshot.get(k) or "").strip()
+        if not v:
+            continue
+        rows.append("- " + k + ": " + v)
+        if len(rows) >= min(limit, 3):
+            break
+    return "From CKO:\n" + "\n".join(rows) if rows else ""
+
+@require_POST
+@login_required
+def ppde_topic_chat_open(request, project_id: int) -> HttpResponse:
+    project = get_object_or_404(Project, pk=project_id)
+    if not can_edit_ppde(project, request.user):
+        messages.error(request, "You do not have permission to open a topic chat for this section.")
+        return redirect("projects:ppde_detail", project_id=project.id)
+
+    structure_contract = PhaseContract.objects.filter(key="STRUCTURE_PROJECT", is_active=True).first()
+    transform_contract = PhaseContract.objects.filter(key="TRANSFORM_STAGE", is_active=True).first()
+    topic_type = (request.POST.get("topic_type") or "").strip().upper()
+    if topic_type == "EXEC_PLAN":
+        stage_id_raw = (request.POST.get("stage_id") or "").strip()
+        anchor = "#ppde-stage-" + stage_id_raw if stage_id_raw.isdigit() else ""
+        messages.info(request, "Execution planning is produced in MDE, not PPDE.")
+        return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
+    if topic_type not in ("PURPOSE", "STAGE"):
+        messages.error(request, "Invalid topic chat request.")
+        return redirect("projects:ppde_detail", project_id=project.id)
+    open_in = (request.POST.get("open_in") or "").strip().lower()
+
+    if topic_type == "PURPOSE":
+        purpose = ProjectPlanningPurpose.objects.filter(project=project).first()
+        purpose_text = (purpose.value_text or "") if purpose else ""
+        seed_snapshot = _seed_snapshot_from_cko(project)
+        seed_lines = []
+        for k in sorted(seed_snapshot.keys()):
+            v = (seed_snapshot.get(k) or "").strip()
+            if v:
+                seed_lines.append("- " + k + ": " + v)
+        seed_text = "CKO snapshot:\n" + ("\n".join(seed_lines) if seed_lines else "(none)")
+        contract_text = _contract_text(structure_contract)
+
+        can_commit = is_project_committer(project, request.user)
+        purpose_status = (purpose.status if purpose else ProjectPlanningPurpose.Status.DRAFT)
+        if purpose_status != ProjectPlanningPurpose.Status.DRAFT and not can_commit:
+            messages.error(request, "You do not have permission to open a topic chat for this section.")
+            return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + "#ppde-purpose")
+
+        seed_user_text = "\n".join(
+            [
+                "Topic chat: PPDE Purpose",
+                "Scope: PPDE",
+                "Topic key: PURPOSE",
+                "Label: Planning Purpose",
+                "",
+                "Current Planning Purpose:",
+                purpose_text or "(empty)",
+                "",
+                "Contract:",
+                contract_text or "(none)",
+                "",
+                "Required JSON schema:",
+                "{\"planning_purpose\": \"<3-6 sentences>\"}",
+                "",
+                seed_text,
+                "",
+                "Sources order: CKO -> planning_purpose -> current draft -> user clarifications.",
+                "Do not invent project facts; ask if missing.",
+                "When finalising: JSON only, no markdown, no commentary.",
+                "",
+                "Goal: Help produce a Planning Purpose (3-6 sentences).",
+                "Output: JSON only: {\"planning_purpose\": \"...\"}.",
+                "Success criteria: ready to paste into the Planning Purpose section.",
+                "",
+                WORKING_METHOD_BLOCK,
+            ]
+        )
+
+        chat = get_or_create_topic_chat(
+            project=project,
+            user=request.user,
+            scope="PPDE",
+            topic_key="PURPOSE",
+            title="PPDE-" + (project.name or "") + "-Purpose-" + request.user.username,
+            seed_user_text=seed_user_text,
+            mode="CONTROLLED",
+        )
+
+        request.session["rw_active_project_id"] = project.id
+        request.session["rw_active_chat_id"] = chat.id
+        request.session.modified = True
+
+        if open_in == "drawer":
+            base = reverse("projects:ppde_detail", kwargs={"project_id": project.id})
+            qs = urlencode({"ppde_chat_id": str(chat.id), "ppde_chat_open": "1"})
+            return redirect(base + "?" + qs + "#ppde-purpose")
+        return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+    stage_id_raw = (request.POST.get("stage_id") or "").strip()
+    try:
+        stage_id = int(stage_id_raw)
+    except Exception:
+        messages.error(request, "Invalid stage.")
+        return redirect("projects:ppde_detail", project_id=project.id)
+
+    stage = ProjectPlanningStage.objects.filter(project=project, id=stage_id).first()
+    if not stage:
+        messages.error(request, "Stage not found.")
+        return redirect("projects:ppde_detail", project_id=project.id)
+
+    can_commit = is_project_committer(project, request.user)
+    if stage.status != ProjectPlanningStage.Status.DRAFT and not can_commit:
+        messages.error(request, "You do not have permission to open a topic chat for this section.")
+        return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + "#ppde-stage-" + str(stage.id))
+
+    purpose = ProjectPlanningPurpose.objects.filter(project=project).first()
+    purpose_text = (purpose.value_text or "") if purpose else ""
+    seed_snapshot = _seed_snapshot_from_cko(project)
+    seed_lines = []
+    for k in sorted(seed_snapshot.keys()):
+        v = (seed_snapshot.get(k) or "").strip()
+        if v:
+            seed_lines.append("- " + k + ": " + v)
+    seed_text = "CKO snapshot:\n" + ("\n".join(seed_lines) if seed_lines else "(none)")
+    contract_text = _contract_text(transform_contract)
+
+    stage_payload = {
+        "title": (stage.title or "").strip(),
+        "purpose": (stage.purpose or "").strip(),
+        "inputs": (stage.inputs or "").strip(),
+        "stage_process": (stage.stage_process or "").strip(),
+        "outputs": (stage.outputs or "").strip(),
+        "assumptions": (stage.assumptions or "").strip(),
+        "duration_estimate": (stage.duration_estimate or "").strip(),
+        "risks_notes": (stage.risks_notes or "").strip(),
+    }
+
+    stage_title = (stage.title or "").strip() or ("Stage " + str(stage.order_index))
+    label = f"Stage {stage.order_index}: {stage_title}"
+
+    seed_user_text = "\n".join(
+        [
+            "Topic chat: PPDE Stage",
+            "Scope: PPDE",
+            "Topic key: STAGE:" + str(stage.id),
+            "Label: " + label,
+            "",
+            "Current Planning Purpose:",
+            purpose_text or "(empty)",
+            "",
+            "Contract:",
+            contract_text or "(none)",
+            "",
+            "Required JSON schema:",
+            "{",
+            "  \"title\": \"\",",
+            "  \"purpose\": \"\",",
+            "  \"inputs\": \"\",",
+            "  \"stage_process\": \"\",",
+            "  \"outputs\": \"\",",
+            "  \"assumptions\": \"\",",
+            "  \"duration_estimate\": \"\",",
+            "  \"risks_notes\": \"\"",
+            "}",
+            "",
+            seed_text,
+            "",
+            "Current Stage Draft (JSON):",
+            json.dumps(stage_payload, indent=2, ensure_ascii=True),
+            "",
+            "Sources order: CKO -> planning_purpose -> current stage -> user clarifications.",
+            "Do not invent project facts; ask if missing.",
+            "When finalising: JSON only, no markdown, no commentary.",
+            "",
+            "Goal: Help produce a revised Stage draft matching the stage schema.",
+            "Output: JSON only matching stage schema.",
+            "Success criteria: ready to paste into the PPDE stage section.",
+            "",
+            WORKING_METHOD_BLOCK,
+        ]
+    )
+
+    chat = get_or_create_topic_chat(
+        project=project,
+        user=request.user,
+        scope="PPDE",
+        topic_key="STAGE:" + str(stage.id),
+        title="PPDE-" + (project.name or "") + "-" + stage_title + "-" + request.user.username,
+        seed_user_text=seed_user_text,
+        mode="CONTROLLED",
+    )
+
+    request.session["rw_active_project_id"] = project.id
+    request.session["rw_active_chat_id"] = chat.id
+    request.session.modified = True
+
+    if open_in == "drawer":
+        base = reverse("projects:ppde_detail", kwargs={"project_id": project.id})
+        qs = urlencode({"ppde_chat_id": str(chat.id), "ppde_chat_open": "1"})
+        return redirect(base + "?" + qs + "#ppde-stage-" + str(stage.id))
+    return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+
+def _ppde_help_answer(*, question: str, project: Project, user) -> str:
     system_blocks = [
         "- Explain intent and meaning of PPDE blocks and validation results.\n"
         "- Keep answers short and actionable.\n"
@@ -225,6 +385,7 @@ def _ppde_help_answer(*, question: str, project: Project) -> str:
         image_parts=None,
         system_blocks=system_blocks,
         force_model="gpt-5.1",
+        user=user,
     )
     return (panes.get("output") or "").strip()
 
@@ -347,11 +508,36 @@ def _parse_seed_summary_json(raw_output: str, seed_keys: List[str]) -> Dict[str,
     return out
 
 
+def _extract_json_object(text: str) -> Dict[str, Any] | None:
+    s = (text or "").strip()
+    if not s:
+        return None
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+    try:
+        decoder = json.JSONDecoder()
+    except Exception:
+        return None
+    idx = s.find("{")
+    while idx != -1:
+        try:
+            obj, _end = decoder.raw_decode(s[idx:])
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+        idx = s.find("{", idx + 1)
+    return None
+
+
 def _parse_planning_purpose_json(raw_output: str) -> tuple[str | None, str | None]:
     raw_output = (raw_output or "").strip()
-    try:
-        data = json.loads(raw_output)
-    except Exception:
+    data = _extract_json_object(raw_output)
+    if data is None:
         return None, "Output was not valid JSON."
     if not isinstance(data, dict):
         return None, "Output JSON was not an object."
@@ -368,6 +554,7 @@ def _ppde_validate_block(
     payload: Dict[str, Any],
     seed_snapshot: Dict[str, Any],
     transform_contract: PhaseContract | None = None,
+    user = None,
 ) -> Dict[str, Any]:
     seed_lines = []
     for k in sorted(seed_snapshot.keys()):
@@ -378,17 +565,23 @@ def _ppde_validate_block(
     seed_text = "Seeded CKO context:\n" + ("\n".join(seed_lines) if seed_lines else "(none)")
 
     if block_kind == "purpose":
-        block_text = "Planning purpose:\n" + (payload.get("purpose_text") or "")
+        block_text = (
+            "Planning purpose:\n" + (payload.get("purpose_text") or "") + "\n"
+            "PDO summary:\n" + (payload.get("pdo_summary") or "") + "\n"
+            "Planning constraints:\n" + (payload.get("planning_constraints") or "") + "\n"
+            "Assumptions:\n" + (payload.get("assumptions") or "") + "\n"
+            "CKO alignment (stage 1 inputs match):\n" + (payload.get("cko_alignment_stage1_inputs_match") or "") + "\n"
+            "CKO alignment (final outputs match):\n" + (payload.get("cko_alignment_final_outputs_match") or "")
+        )
     else:
         block_text = (
             "Stage fields:\n"
             + "title: " + (payload.get("title") or "") + "\n"
-            + "description: " + (payload.get("description") or "") + "\n"
             + "purpose: " + (payload.get("purpose") or "") + "\n"
-            + "entry_condition: " + (payload.get("entry_condition") or "") + "\n"
-            + "acceptance_statement: " + (payload.get("acceptance_statement") or "") + "\n"
-            + "exit_condition: " + (payload.get("exit_condition") or "") + "\n"
-            + "key_deliverables: " + ", ".join(payload.get("key_deliverables") or []) + "\n"
+            + "inputs: " + (payload.get("inputs") or "") + "\n"
+            + "stage_process: " + (payload.get("stage_process") or "") + "\n"
+            + "outputs: " + (payload.get("outputs") or "") + "\n"
+            + "assumptions: " + (payload.get("assumptions") or "") + "\n"
             + "duration_estimate: " + (payload.get("duration_estimate") or "") + "\n"
             + "risks_notes: " + (payload.get("risks_notes") or "")
         )
@@ -404,6 +597,7 @@ def _ppde_validate_block(
         image_parts=None,
         system_blocks=system_blocks,
         force_model="gpt-5.1",
+        user=user,
     )
     raw = str(panes.get("output") or "")
     out = _parse_validation_json(raw_output=raw, block_key=block_key)
@@ -414,9 +608,8 @@ def _ppde_validate_block(
 
 def _parse_stage_map_json(raw_output: str) -> tuple[List[Dict[str, Any]], str | None]:
     raw_output = (raw_output or "").strip()
-    try:
-        data = json.loads(raw_output)
-    except Exception:
+    data = _extract_json_object(raw_output)
+    if data is None:
         return [], "Output was not valid JSON."
     if not isinstance(data, dict):
         return [], "Output JSON was not an object."
@@ -428,22 +621,30 @@ def _parse_stage_map_json(raw_output: str) -> tuple[List[Dict[str, Any]], str | 
     for item in stages:
         if not isinstance(item, dict):
             continue
-        key_deliverables = item.get("key_deliverables")
-        if isinstance(key_deliverables, list):
-            kd = [str(x).strip() for x in key_deliverables if str(x).strip()]
+        outputs_val = item.get("outputs")
+        if outputs_val is None:
+            outputs_val = item.get("key_deliverables")
+        if isinstance(outputs_val, list):
+            outputs_lines = [str(x).strip() for x in outputs_val if str(x).strip()]
+            outputs_text = "\n".join(outputs_lines)
         else:
-            kd = []
-        if not kd:
-            kd = ["TBD"]
+            outputs_text = str(outputs_val or "").strip()
+        if not outputs_text:
+            outputs_text = "TBD"
+        inputs_val = item.get("inputs")
+        if inputs_val is None:
+            inputs_val = item.get("entry_conditions", item.get("entry_condition", ""))
+        inputs_text = str(inputs_val or "").strip()
+        stage_process_text = str(item.get("stage_process") or item.get("description") or "").strip()
+        assumptions_text = str(item.get("assumptions") or item.get("key_variables") or "").strip()
         out.append(
             {
                 "title": str(item.get("title") or "").strip(),
-                "description": str(item.get("description") or "").strip(),
                 "purpose": str(item.get("purpose") or "").strip(),
-                "entry_condition": str(item.get("entry_condition") or "").strip(),
-                "acceptance_statement": str(item.get("acceptance_statement") or "").strip(),
-                "exit_condition": str(item.get("exit_condition") or "").strip(),
-                "key_deliverables": kd,
+                "inputs": inputs_text,
+                "stage_process": stage_process_text,
+                "outputs": outputs_text,
+                "assumptions": assumptions_text,
                 "duration_estimate": str(item.get("duration_estimate") or "").strip(),
                 "risks_notes": str(item.get("risks_notes") or "").strip(),
             }
@@ -453,120 +654,11 @@ def _parse_stage_map_json(raw_output: str) -> tuple[List[Dict[str, Any]], str | 
     return out, None
 
 
-def _parse_plan_json(raw_output: str, stage_titles: List[str]) -> tuple[Dict[str, Any], List[str]]:
-    warnings: List[str] = []
-    raw_output = (raw_output or "").strip()
-    try:
-        data = json.loads(raw_output)
-    except Exception:
-        return {}, ["Output was not valid JSON."]
-    if not isinstance(data, dict):
-        return {}, ["Output JSON was not an object."]
-    plan = data.get("plan") if isinstance(data.get("plan"), dict) else None
-    if not isinstance(plan, dict):
-        return {}, ["Missing plan object."]
-
-    def norm_stage_title(val: str) -> str:
-        return val.strip()
-
-    milestones = plan.get("milestones") if isinstance(plan.get("milestones"), list) else []
-    actions = plan.get("actions") if isinstance(plan.get("actions"), list) else []
-    risks = plan.get("risks") if isinstance(plan.get("risks"), list) else []
-    assumptions = plan.get("assumptions") if isinstance(plan.get("assumptions"), list) else []
-    dependencies = plan.get("dependencies") if isinstance(plan.get("dependencies"), list) else []
-
-    def fix_prob(val: str) -> str:
-        v = (val or "").strip().upper()
-        if v not in ("LOW", "MED", "HIGH"):
-            return "MED"
-        return v
-
-    def stage_ok(val: str) -> str:
-        st = norm_stage_title(val or "")
-        if st and st not in stage_titles:
-            warnings.append("Stage title not found: " + st)
-            return ""
-        return st
-
-    out_plan = {
-        "milestones": [],
-        "actions": [],
-        "risks": [],
-        "assumptions": [str(x).strip() for x in assumptions if str(x).strip()],
-        "dependencies": [str(x).strip() for x in dependencies if str(x).strip()],
-    }
-
-    for item in milestones:
-        if not isinstance(item, dict):
-            continue
-        out_plan["milestones"].append(
-            {
-                "title": str(item.get("title") or "").strip(),
-                "stage_title": stage_ok(item.get("stage_title") or ""),
-                "acceptance_statement": str(item.get("acceptance_statement") or "").strip(),
-                "target_date_hint": str(item.get("target_date_hint") or "").strip(),
-            }
-        )
-
-    for item in actions:
-        if not isinstance(item, dict):
-            continue
-        out_plan["actions"].append(
-            {
-                "title": str(item.get("title") or "").strip(),
-                "stage_title": stage_ok(item.get("stage_title") or ""),
-                "owner_role": str(item.get("owner_role") or "").strip(),
-                "definition_of_done": str(item.get("definition_of_done") or "").strip(),
-                "effort_hint": str(item.get("effort_hint") or "").strip(),
-            }
-        )
-
-    for item in risks:
-        if not isinstance(item, dict):
-            continue
-        out_plan["risks"].append(
-            {
-                "title": str(item.get("title") or "").strip(),
-                "stage_title": stage_ok(item.get("stage_title") or ""),
-                "probability": fix_prob(item.get("probability") or ""),
-                "impact": fix_prob(item.get("impact") or ""),
-                "mitigation": str(item.get("mitigation") or "").strip(),
-            }
-        )
-
-    return out_plan, warnings
-
-
-def _summarize_plan(plan_out: Dict[str, Any]) -> Dict[str, Any]:
-    def summarize_items(items: List[Dict[str, Any]]) -> Dict[str, Any]:
-        rows = []
-        for item in items[:3]:
-            title = str(item.get("title") or "").strip()
-            stage = str(item.get("stage_title") or "").strip()
-            label = title or "(untitled)"
-            if stage:
-                label += " — " + stage
-            rows.append(label)
-        return {
-            "count": len(items),
-            "top": rows,
-        }
-
-    milestones = plan_out.get("milestones") if isinstance(plan_out.get("milestones"), list) else []
-    actions = plan_out.get("actions") if isinstance(plan_out.get("actions"), list) else []
-    risks = plan_out.get("risks") if isinstance(plan_out.get("risks"), list) else []
-    return {
-        "milestones": summarize_items(milestones),
-        "actions": summarize_items(actions),
-        "risks": summarize_items(risks),
-    }
-
-
 def _summarize_stages(stages_out: List[Dict[str, Any]]) -> Dict[str, Any]:
     items = []
     for stage in stages_out[:8]:
         title = (stage.get("title") or "").strip()
-        desc = (stage.get("description") or "").strip()
+        desc = (stage.get("purpose") or "").strip()
         items.append(
             {
                 "title": title or "(untitled)",
@@ -582,16 +674,22 @@ def _summarize_stages(stages_out: List[Dict[str, Any]]) -> Dict[str, Any]:
 def _apply_stages_to_draft(*, project: Project, stages_out: List[Dict[str, Any]]) -> None:
     ProjectPlanningStage.objects.filter(project=project).delete()
     for idx, stage_data in enumerate(stages_out, start=1):
+        inputs = stage_data.get("inputs", stage_data.get("entry_conditions", stage_data.get("entry_condition", "")))
+        stage_process = stage_data.get("stage_process", stage_data.get("description", ""))
+        outputs_val = stage_data.get("outputs", stage_data.get("key_deliverables", ""))
+        if isinstance(outputs_val, list):
+            outputs_val = "\n".join([str(x).strip() for x in outputs_val if str(x).strip()])
+        else:
+            outputs_val = str(outputs_val or "")
         ProjectPlanningStage.objects.create(
             project=project,
             order_index=idx,
             title=stage_data.get("title", ""),
-            description=stage_data.get("description", ""),
             purpose=stage_data.get("purpose", ""),
-            entry_condition=stage_data.get("entry_condition", ""),
-            acceptance_statement=stage_data.get("acceptance_statement", ""),
-            exit_condition=stage_data.get("exit_condition", ""),
-            key_deliverables=stage_data.get("key_deliverables", []),
+            inputs=str(inputs or ""),
+            stage_process=str(stage_process or ""),
+            outputs=str(outputs_val or ""),
+            assumptions=str(stage_data.get("assumptions", stage_data.get("key_variables", "")) or ""),
             duration_estimate=stage_data.get("duration_estimate", ""),
             risks_notes=stage_data.get("risks_notes", ""),
             status=ProjectPlanningStage.Status.DRAFT,
@@ -603,43 +701,6 @@ def _apply_stages_to_draft(*, project: Project, stages_out: List[Dict[str, Any]]
         )
 
 
-def _apply_plan_to_draft(*, project: Project, plan_out: Dict[str, Any]) -> None:
-    ProjectPlanningMilestone.objects.filter(project=project).delete()
-    ProjectPlanningAction.objects.filter(project=project).delete()
-    ProjectPlanningRisk.objects.filter(project=project).delete()
-
-    for idx, item in enumerate(plan_out.get("milestones") or [], start=1):
-        ProjectPlanningMilestone.objects.create(
-            project=project,
-            order_index=idx,
-            title=item.get("title", ""),
-            stage_title=item.get("stage_title", ""),
-            acceptance_statement=item.get("acceptance_statement", ""),
-            target_date_hint=item.get("target_date_hint", ""),
-            status=ProjectPlanningMilestone.Status.DRAFT,
-        )
-    for idx, item in enumerate(plan_out.get("actions") or [], start=1):
-        ProjectPlanningAction.objects.create(
-            project=project,
-            order_index=idx,
-            title=item.get("title", ""),
-            stage_title=item.get("stage_title", ""),
-            owner_role=item.get("owner_role", ""),
-            definition_of_done=item.get("definition_of_done", ""),
-            effort_hint=item.get("effort_hint", ""),
-            status=ProjectPlanningAction.Status.DRAFT,
-        )
-    for idx, item in enumerate(plan_out.get("risks") or [], start=1):
-        ProjectPlanningRisk.objects.create(
-            project=project,
-            order_index=idx,
-            title=item.get("title", ""),
-            stage_title=item.get("stage_title", ""),
-            probability=item.get("probability", ""),
-            impact=item.get("impact", ""),
-            mitigation=item.get("mitigation", ""),
-            status=ProjectPlanningRisk.Status.DRAFT,
-        )
 
 
 def _ensure_ppde_blocks(project: Project) -> tuple[ProjectPlanningPurpose, List[ProjectPlanningStage]]:
@@ -657,16 +718,13 @@ def _ensure_ppde_blocks(project: Project) -> tuple[ProjectPlanningPurpose, List[
 
 
 def _stage_payload_from_request(request) -> Dict[str, Any]:
-    key_lines = (request.POST.get("key_deliverables") or "").splitlines()
-    key_deliverables = [line.strip() for line in key_lines if line.strip()]
     return {
         "title": (request.POST.get("title") or "").strip(),
-        "description": (request.POST.get("description") or "").strip(),
         "purpose": (request.POST.get("purpose") or "").strip(),
-        "entry_condition": (request.POST.get("entry_condition") or "").strip(),
-        "acceptance_statement": (request.POST.get("acceptance_statement") or "").strip(),
-        "exit_condition": (request.POST.get("exit_condition") or "").strip(),
-        "key_deliverables": key_deliverables,
+        "inputs": (request.POST.get("inputs") or "").strip(),
+        "stage_process": (request.POST.get("stage_process") or "").strip(),
+        "outputs": (request.POST.get("outputs") or "").strip(),
+        "assumptions": (request.POST.get("assumptions") or "").strip(),
         "duration_estimate": (request.POST.get("duration_estimate") or "").strip(),
         "risks_notes": (request.POST.get("risks_notes") or "").strip(),
     }
@@ -674,16 +732,13 @@ def _stage_payload_from_request(request) -> Dict[str, Any]:
 
 def _stage_payload_from_post(request, stage_id: int) -> Dict[str, Any]:
     prefix = "stage_" + str(stage_id) + "__"
-    key_lines = (request.POST.get(prefix + "key_deliverables") or "").splitlines()
-    key_deliverables = [line.strip() for line in key_lines if line.strip()]
     return {
         "title": (request.POST.get(prefix + "title") or "").strip(),
-        "description": (request.POST.get(prefix + "description") or "").strip(),
         "purpose": (request.POST.get(prefix + "purpose") or "").strip(),
-        "entry_condition": (request.POST.get(prefix + "entry_condition") or "").strip(),
-        "acceptance_statement": (request.POST.get(prefix + "acceptance_statement") or "").strip(),
-        "exit_condition": (request.POST.get(prefix + "exit_condition") or "").strip(),
-        "key_deliverables": key_deliverables,
+        "inputs": (request.POST.get(prefix + "inputs") or "").strip(),
+        "stage_process": (request.POST.get(prefix + "stage_process") or "").strip(),
+        "outputs": (request.POST.get(prefix + "outputs") or "").strip(),
+        "assumptions": (request.POST.get(prefix + "assumptions") or "").strip(),
         "duration_estimate": (request.POST.get(prefix + "duration_estimate") or "").strip(),
         "risks_notes": (request.POST.get(prefix + "risks_notes") or "").strip(),
     }
@@ -692,12 +747,11 @@ def _stage_payload_from_post(request, stage_id: int) -> Dict[str, Any]:
 def _stage_payload_from_model(stage: ProjectPlanningStage) -> Dict[str, Any]:
     return {
         "title": (stage.title or "").strip(),
-        "description": (stage.description or "").strip(),
         "purpose": (stage.purpose or "").strip(),
-        "entry_condition": (stage.entry_condition or "").strip(),
-        "acceptance_statement": (stage.acceptance_statement or "").strip(),
-        "exit_condition": (stage.exit_condition or "").strip(),
-        "key_deliverables": list(stage.key_deliverables or []),
+        "inputs": (stage.inputs or "").strip(),
+        "stage_process": (stage.stage_process or "").strip(),
+        "outputs": (stage.outputs or "").strip(),
+        "assumptions": (stage.assumptions or "").strip(),
         "duration_estimate": (stage.duration_estimate or "").strip(),
         "risks_notes": (stage.risks_notes or "").strip(),
     }
@@ -705,11 +759,7 @@ def _stage_payload_from_model(stage: ProjectPlanningStage) -> Dict[str, Any]:
 
 def _stage_payload_changed(stage: ProjectPlanningStage, payload: Dict[str, Any]) -> bool:
     prior = _stage_payload_from_model(stage)
-    if prior.get("key_deliverables") != payload.get("key_deliverables"):
-        return True
     for key in prior:
-        if key == "key_deliverables":
-            continue
         if (prior.get(key) or "") != (payload.get(key) or ""):
             return True
     return False
@@ -740,7 +790,87 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
     seed_snapshot = _seed_snapshot_from_cko(project)
     structure_contract = PhaseContract.objects.filter(key="STRUCTURE_PROJECT", is_active=True).first()
     transform_contract = PhaseContract.objects.filter(key="TRANSFORM_STAGE", is_active=True).first()
-    plan_contract = PhaseContract.objects.filter(key="PLAN_FROM_STAGES", is_active=True).first()
+
+    if request.method == "GET":
+        # Auto-prefill PDO fields from CKO if empty; auto-unlock if fields are blank.
+        needs_unlock = False
+        updates = {}
+
+        if not (purpose.pdo_summary or "").strip():
+            summary = (purpose.value_text or "").strip()
+            if summary:
+                parts = summary.split(".")
+                updates["pdo_summary"] = (parts[0] + "." + (parts[1] + "." if len(parts) > 1 else "")).strip()
+            else:
+                updates["pdo_summary"] = _ckos_to_bullets(seed_snapshot, ["summary", "goal", "objective", "purpose"])
+
+        if not (purpose.planning_constraints or "").strip():
+            updates["planning_constraints"] = _ckos_to_bullets(
+                seed_snapshot,
+                ["constraint", "limit", "policy", "compliance", "guard", "rule", "risk"],
+            )
+
+        if not (purpose.assumptions or "").strip():
+            updates["assumptions"] = _ckos_to_bullets(
+                seed_snapshot,
+                ["assumption", "assume", "dependency", "context", "environment", "audience"],
+            )
+
+        if not (purpose.cko_alignment_stage1_inputs_match or "").strip():
+            updates["cko_alignment_stage1_inputs_match"] = _ckos_to_bullets(
+                seed_snapshot,
+                ["input", "context", "scope", "resource", "constraint"],
+            )
+
+        if not (purpose.cko_alignment_final_outputs_match or "").strip():
+            updates["cko_alignment_final_outputs_match"] = _ckos_to_bullets(
+                seed_snapshot,
+                ["output", "deliverable", "goal", "success", "result"],
+            )
+
+        if any(not (getattr(purpose, k) or "").strip() for k in [
+            "pdo_summary",
+            "planning_constraints",
+            "assumptions",
+            "cko_alignment_stage1_inputs_match",
+            "cko_alignment_final_outputs_match",
+        ]):
+            needs_unlock = True
+
+        if updates:
+            for k, v in updates.items():
+                if v and not (getattr(purpose, k) or "").strip():
+                    setattr(purpose, k, v)
+
+        if needs_unlock and purpose.status == ProjectPlanningPurpose.Status.PASS_LOCKED:
+            purpose.status = ProjectPlanningPurpose.Status.DRAFT
+            purpose.proposed_by = None
+            purpose.proposed_at = None
+            purpose.locked_by = None
+            purpose.locked_at = None
+            purpose.last_validation = {}
+
+        if updates or needs_unlock:
+            purpose.last_edited_by = request.user
+            purpose.last_edited_at = timezone.now()
+            purpose.save(
+                update_fields=[
+                    "pdo_summary",
+                    "planning_constraints",
+                    "assumptions",
+                    "cko_alignment_stage1_inputs_match",
+                    "cko_alignment_final_outputs_match",
+                    "status",
+                    "proposed_by",
+                    "proposed_at",
+                    "locked_by",
+                    "locked_at",
+                    "last_validation",
+                    "last_edited_by",
+                    "last_edited_at",
+                    "updated_at",
+                ]
+            )
 
     action = (request.POST.get("action") or "").strip().lower()
     block_key = (request.POST.get("block_key") or "").strip()
@@ -767,7 +897,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             return redirect("projects:ppde_detail", project_id=project.id)
         help_log = _get_ppde_help_log(request, project.id)
         help_log.append({"role": "user", "text": question})
-        answer = _ppde_help_answer(question=question, project=project)
+        answer = _ppde_help_answer(question=question, project=project, user=request.user)
         help_log.append({"role": "assistant", "text": answer})
         request.session[_ppde_help_key(project.id)] = help_log[-20:]
         request.session["ppde_help_auto_open_" + str(project.id)] = True
@@ -801,6 +931,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             image_parts=None,
             system_blocks=[PPDE_SEED_SUMMARY_BOILERPLATE],
             force_model="gpt-5.1",
+            user=request.user,
         )
         summary = _parse_seed_summary_json(str(panes.get("output") or ""), seed_keys)
         if not summary:
@@ -812,6 +943,19 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
         request.session.modified = True
         messages.success(request, "Seed context condensed.")
         return redirect("projects:ppde_detail", project_id=project.id)
+
+    if request.method == "POST" and action in {
+        "generate_plan_from_stages",
+        "derive_stage_plan",
+        "approve_stage_plan",
+        "promote_plan_to_tasks",
+    }:
+        block_key = (request.POST.get("block_key") or "").strip()
+        anchor = ""
+        if block_key.startswith("stage:"):
+            anchor = "#ppde-stage-" + block_key.split(":", 1)[1]
+        messages.info(request, "Execution planning is produced in MDE, not PPDE.")
+        return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
     if request.method == "POST" and action == "stage_edit_ask":
         if not can_commit:
@@ -847,6 +991,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             image_parts=None,
             system_blocks=[t for t in [contract_text, PPDE_STAGE_MAP_BOILERPLATE] if t],
             force_model="gpt-5.1",
+            user=request.user,
         )
         stages_updated, err = _parse_stage_map_json(str(panes.get("output") or ""))
         if err:
@@ -905,6 +1050,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             image_parts=None,
             system_blocks=[t for t in [contract_text, PPDE_SEED_PURPOSE_BOILERPLATE] if t],
             force_model="gpt-5.1",
+            user=request.user,
         )
         purpose_text, err = _parse_planning_purpose_json(str(panes.get("output") or ""))
         if err:
@@ -960,6 +1106,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             image_parts=None,
             system_blocks=[t for t in [contract_text, PPDE_STAGE_MAP_BOILERPLATE] if t],
             force_model="gpt-5.1",
+            user=request.user,
         )
         stages_out, err = _parse_stage_map_json(str(panes.get("output") or ""))
         if err:
@@ -1020,217 +1167,25 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
         messages.info(request, "Stage preview discarded.")
         return redirect("projects:ppde_detail", project_id=project.id)
 
-    if request.method == "POST" and action == "generate_plan_from_stages":
-        if not can_commit:
-            messages.error(request, "Only the Project Committer can generate the plan.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        if not plan_contract:
-            messages.error(request, "No active contract configured. Contact administrator.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        stages_payload = list(ProjectPlanningStage.objects.filter(project=project).order_by("order_index", "id"))
-        stage_titles = [s.title.strip() for s in stages_payload if (s.title or "").strip()]
-        if not stages_payload:
-            messages.error(request, "No stages available to generate a plan.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-
-        user_text = "Planning purpose:\n" + (purpose.value_text or "").strip() + "\n\nStages:\n"
-        for s in stages_payload:
-            user_text += (
-                "- title: " + (s.title or "") + "\n"
-                + "  description: " + (s.description or "") + "\n"
-                + "  acceptance_statement: " + (s.acceptance_statement or "") + "\n"
-                + "  key_deliverables: " + ", ".join(s.key_deliverables or []) + "\n"
-                + "  duration_estimate: " + (s.duration_estimate or "") + "\n"
-                + "  risks_notes: " + (s.risks_notes or "") + "\n"
-            )
-
-        contract_text = _contract_text(plan_contract)
-        panes = generate_panes(
-            user_text,
-            image_parts=None,
-            system_blocks=[t for t in [contract_text, PPDE_PLAN_BOILERPLATE] if t],
-            force_model="gpt-5.1",
-        )
-        plan_out, warn_list = _parse_plan_json(str(panes.get("output") or ""), stage_titles)
-        if not plan_out:
-            messages.error(request, "Plan generation failed. Check the contract or try again.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-
-        request.session[_ppde_plan_preview_key(project.id)] = {
-            "plan": plan_out,
-            "summary": _summarize_plan(plan_out),
-            "warnings": warn_list,
-        }
-        request.session.modified = True
-
-        for w in warn_list:
-            messages.warning(request, w)
-        messages.success(request, "Plan generated. Review the summary before applying.")
-        return redirect("projects:ppde_detail", project_id=project.id)
-
-    if request.method == "POST" and action == "plan_preview_apply":
-        if not can_commit:
-            messages.error(request, "Only the Project Committer can apply the plan.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        payload = request.session.get(_ppde_plan_preview_key(project.id)) or {}
-        plan_out = payload.get("plan") if isinstance(payload, dict) else None
-        if not isinstance(plan_out, dict):
-            messages.error(request, "No plan preview available.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-
-        _apply_plan_to_draft(project=project, plan_out=plan_out)
-        request.session.pop(_ppde_plan_preview_key(project.id), None)
-        request.session.modified = True
-
-        apply_mode = (request.POST.get("apply_mode") or "").strip().lower()
-        if apply_mode == "edit":
-            messages.success(request, "Plan applied to draft for editing.")
-        else:
-            messages.success(request, "Plan applied.")
-        return redirect("projects:ppde_detail", project_id=project.id)
-
-    if request.method == "POST" and action == "plan_preview_discard":
-        request.session.pop(_ppde_plan_preview_key(project.id), None)
-        request.session.modified = True
-        messages.info(request, "Plan preview discarded.")
-        return redirect("projects:ppde_detail", project_id=project.id)
-
-    if request.method == "POST" and action == "derive_stage_plan":
-        if not plan_contract:
-            messages.error(request, "No active contract configured. Contact administrator.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        if not block_key.startswith("stage:"):
-            messages.error(request, "Missing stage key.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        stage_id = block_key.split(":", 1)[1]
-        stage = get_object_or_404(ProjectPlanningStage, id=stage_id, project=project)
-        stage_title = (stage.title or "").strip()
-
-        user_text = (
-            "Planning purpose:\n" + (purpose.value_text or "").strip() + "\n\n"
-            "Stage:\n"
-            "title: " + (stage.title or "") + "\n"
-            "description: " + (stage.description or "") + "\n"
-            "acceptance_statement: " + (stage.acceptance_statement or "") + "\n"
-            "key_deliverables: " + ", ".join(stage.key_deliverables or []) + "\n"
-            "duration_estimate: " + (stage.duration_estimate or "") + "\n"
-            "risks_notes: " + (stage.risks_notes or "") + "\n"
-        )
-        contract_text = _contract_text(plan_contract)
-        panes = generate_panes(
-            user_text,
-            image_parts=None,
-            system_blocks=[t for t in [contract_text, PPDE_STAGE_PLAN_BOILERPLATE] if t],
-            force_model="gpt-5.1",
-        )
-        raw = str(panes.get("output") or "")
-        try:
-            data = json.loads(raw)
-        except Exception:
-            messages.error(request, "Stage plan derivation failed: invalid JSON.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        if not isinstance(data, dict):
-            messages.error(request, "Stage plan derivation failed: invalid data.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-
-        milestones = data.get("milestones") if isinstance(data.get("milestones"), list) else []
-        actions = data.get("actions") if isinstance(data.get("actions"), list) else []
-        risks = data.get("risks") if isinstance(data.get("risks"), list) else []
-
-        ProjectPlanningMilestone.objects.filter(project=project, stage=stage).delete()
-        ProjectPlanningAction.objects.filter(project=project, stage=stage).delete()
-        ProjectPlanningRisk.objects.filter(project=project, stage=stage).delete()
-
-        status = ProjectPlanningMilestone.Status.PROPOSED
-        for idx, item in enumerate(milestones, start=1):
-            if not isinstance(item, dict):
-                continue
-            ProjectPlanningMilestone.objects.create(
-                project=project,
-                stage=stage,
-                order_index=idx,
-                title=str(item.get("title") or ""),
-                stage_title=str(item.get("stage_title") or stage_title),
-                acceptance_statement=str(item.get("acceptance_statement") or ""),
-                target_date_hint=str(item.get("target_date_hint") or ""),
-                status=status,
-                proposed_by=request.user,
-                proposed_at=timezone.now(),
-            )
-        for idx, item in enumerate(actions, start=1):
-            if not isinstance(item, dict):
-                continue
-            ProjectPlanningAction.objects.create(
-                project=project,
-                stage=stage,
-                order_index=idx,
-                title=str(item.get("title") or ""),
-                stage_title=str(item.get("stage_title") or stage_title),
-                owner_role=str(item.get("owner_role") or ""),
-                definition_of_done=str(item.get("definition_of_done") or ""),
-                effort_hint=str(item.get("effort_hint") or ""),
-                status=ProjectPlanningAction.Status.PROPOSED,
-                proposed_by=request.user,
-                proposed_at=timezone.now(),
-            )
-        for idx, item in enumerate(risks, start=1):
-            if not isinstance(item, dict):
-                continue
-            ProjectPlanningRisk.objects.create(
-                project=project,
-                stage=stage,
-                order_index=idx,
-                title=str(item.get("title") or ""),
-                stage_title=str(item.get("stage_title") or stage_title),
-                probability=str(item.get("probability") or ""),
-                impact=str(item.get("impact") or ""),
-                mitigation=str(item.get("mitigation") or ""),
-                status=ProjectPlanningRisk.Status.PROPOSED,
-                proposed_by=request.user,
-                proposed_at=timezone.now(),
-            )
-        messages.success(request, "Derived plan items for stage.")
-        return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
-
-    if request.method == "POST" and action == "approve_stage_plan":
-        if not can_commit:
-            messages.error(request, "Only the Project Committer can approve.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        if not block_key.startswith("stage:"):
-            messages.error(request, "Missing stage key.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        stage_id = block_key.split(":", 1)[1]
-        stage = get_object_or_404(ProjectPlanningStage, id=stage_id, project=project)
-
-        ProjectPlanningMilestone.objects.filter(project=project, stage=stage, status=ProjectPlanningMilestone.Status.PROPOSED).update(
-            status=ProjectPlanningMilestone.Status.PASS_LOCKED,
-            locked_by=request.user,
-            locked_at=timezone.now(),
-        )
-        ProjectPlanningAction.objects.filter(project=project, stage=stage, status=ProjectPlanningAction.Status.PROPOSED).update(
-            status=ProjectPlanningAction.Status.PASS_LOCKED,
-            locked_by=request.user,
-            locked_at=timezone.now(),
-        )
-        ProjectPlanningRisk.objects.filter(project=project, stage=stage, status=ProjectPlanningRisk.Status.PROPOSED).update(
-            status=ProjectPlanningRisk.Status.PASS_LOCKED,
-            locked_by=request.user,
-            locked_at=timezone.now(),
-        )
-        messages.success(request, "Stage plan items approved.")
-        return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
-
     if request.method == "POST" and action == "verify_all":
         if not transform_contract:
             messages.error(request, "No active contract configured. Contact administrator.")
             return redirect("projects:ppde_detail", project_id=project.id)
-        purpose_payload = {"purpose_text": (purpose.value_text or "").strip()}
+        purpose_payload = {
+            "purpose_text": (purpose.value_text or "").strip(),
+            "pdo_summary": (purpose.pdo_summary or "").strip(),
+            "planning_constraints": (purpose.planning_constraints or "").strip(),
+            "assumptions": (purpose.assumptions or "").strip(),
+            "cko_alignment_stage1_inputs_match": (purpose.cko_alignment_stage1_inputs_match or "").strip(),
+            "cko_alignment_final_outputs_match": (purpose.cko_alignment_final_outputs_match or "").strip(),
+        }
         purpose.last_validation = _ppde_validate_block(
             block_key="purpose",
             block_kind="purpose",
             payload=purpose_payload,
             seed_snapshot=seed_snapshot,
             transform_contract=transform_contract,
+            user=request.user,
         )
         purpose.save(update_fields=["last_validation", "updated_at"])
 
@@ -1242,6 +1197,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 payload=payload,
                 seed_snapshot=seed_snapshot,
                 transform_contract=transform_contract,
+                user=request.user,
             )
             stage.save(update_fields=["last_validation", "updated_at"])
 
@@ -1254,13 +1210,21 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
         if not transform_contract:
             messages.error(request, "No active contract configured. Contact administrator.")
             return redirect("projects:ppde_detail", project_id=project.id)
-        purpose_payload = {"purpose_text": (purpose.value_text or "").strip()}
+        purpose_payload = {
+            "purpose_text": (purpose.value_text or "").strip(),
+            "pdo_summary": (purpose.pdo_summary or "").strip(),
+            "planning_constraints": (purpose.planning_constraints or "").strip(),
+            "assumptions": (purpose.assumptions or "").strip(),
+            "cko_alignment_stage1_inputs_match": (purpose.cko_alignment_stage1_inputs_match or "").strip(),
+            "cko_alignment_final_outputs_match": (purpose.cko_alignment_final_outputs_match or "").strip(),
+        }
         purpose.last_validation = _ppde_validate_block(
             block_key="purpose",
             block_kind="purpose",
             payload=purpose_payload,
             seed_snapshot=seed_snapshot,
             transform_contract=transform_contract,
+            user=request.user,
         )
         purpose.save(update_fields=["last_validation", "updated_at"])
 
@@ -1272,6 +1236,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 payload=payload,
                 seed_snapshot=seed_snapshot,
                 transform_contract=transform_contract,
+                user=request.user,
             )
             stage.save(update_fields=["last_validation", "updated_at"])
 
@@ -1300,10 +1265,25 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
 
     if request.method == "POST" and action == "save_all":
         changed_blocks = 0
-        purpose_text = (request.POST.get("purpose_text") or "").strip()
-        if purpose_text:
-            prior_text = (purpose.value_text or "").strip()
-            if purpose_text != prior_text:
+        skipped_locked = 0
+        exit_after = bool((request.POST.get("exit") or "").strip())
+        purpose_updates = {
+            "value_text": (request.POST.get("purpose_text") or "").strip(),
+            "pdo_summary": (request.POST.get("pdo_summary") or "").strip(),
+            "planning_constraints": (request.POST.get("planning_constraints") or "").strip(),
+            "assumptions": (request.POST.get("assumptions") or "").strip(),
+            "cko_alignment_stage1_inputs_match": (request.POST.get("cko_alignment_stage1_inputs_match") or "").strip(),
+            "cko_alignment_final_outputs_match": (request.POST.get("cko_alignment_final_outputs_match") or "").strip(),
+        }
+        purpose_changed = False
+        for key, val in purpose_updates.items():
+            if (getattr(purpose, key) or "").strip() != val:
+                purpose_changed = True
+                break
+        if purpose_changed:
+            if exit_after and purpose.status != ProjectPlanningPurpose.Status.DRAFT:
+                skipped_locked += 1
+            else:
                 if can_commit and purpose.status in (ProjectPlanningPurpose.Status.PROPOSED, ProjectPlanningPurpose.Status.PASS_LOCKED):
                     purpose.status = ProjectPlanningPurpose.Status.DRAFT
                     purpose.proposed_by = None
@@ -1311,12 +1291,18 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                     purpose.locked_by = None
                     purpose.locked_at = None
                     purpose.last_validation = {}
-                purpose.value_text = purpose_text
+                for key, val in purpose_updates.items():
+                    setattr(purpose, key, val)
                 purpose.last_edited_by = request.user
                 purpose.last_edited_at = timezone.now()
                 purpose.save(
                     update_fields=[
                         "value_text",
+                        "pdo_summary",
+                        "planning_constraints",
+                        "assumptions",
+                        "cko_alignment_stage1_inputs_match",
+                        "cko_alignment_final_outputs_match",
                         "last_edited_by",
                         "last_edited_at",
                         "status",
@@ -1337,6 +1323,9 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             changed = _stage_payload_changed(stage, payload)
             if not changed:
                 continue
+            if exit_after and stage.status != ProjectPlanningStage.Status.DRAFT:
+                skipped_locked += 1
+                continue
             if can_commit and stage.status in (ProjectPlanningStage.Status.PROPOSED, ProjectPlanningStage.Status.PASS_LOCKED):
                 stage.status = ProjectPlanningStage.Status.DRAFT
                 stage.proposed_by = None
@@ -1351,12 +1340,11 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             stage.save(
                 update_fields=[
                     "title",
-                    "description",
                     "purpose",
-                    "entry_condition",
-                    "acceptance_statement",
-                    "exit_condition",
-                    "key_deliverables",
+                    "inputs",
+                    "stage_process",
+                    "outputs",
+                    "assumptions",
                     "duration_estimate",
                     "risks_notes",
                     "last_edited_by",
@@ -1376,8 +1364,10 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             messages.success(request, f"Saved {changed_blocks} block(s).")
         else:
             messages.info(request, "No changes to save.")
+        if skipped_locked:
+            messages.info(request, f"Skipped {skipped_locked} locked/proposed block(s).")
 
-        if (request.POST.get("exit") or "").strip():
+        if exit_after:
             return redirect("accounts:project_config_info", project_id=project.id)
         return redirect("projects:ppde_detail", project_id=project.id)
 
@@ -1389,168 +1379,6 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             title=f"Stage {max_idx + 1}",
         )
         messages.success(request, "Stage added.")
-        return redirect("projects:ppde_detail", project_id=project.id)
-
-    if request.method == "POST" and action == "revert_prepare":
-        if not can_commit:
-            messages.error(request, "Only the Project Committer can revert.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        target_id = (request.POST.get("target_wko_id") or "").strip()
-        if not target_id.isdigit():
-            messages.error(request, "Missing target version.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        target = ProjectWKO.objects.filter(project=project, id=int(target_id)).first()
-        latest = ProjectWKO.objects.filter(project=project).order_by("-version").first()
-        if not target:
-            messages.error(request, "Target version not found.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        return render(
-            request,
-            "projects/ppde_revert_confirm.html",
-            {
-                "project": project,
-                "target": target,
-                "latest": latest,
-            },
-        )
-
-    if request.method == "POST" and action == "revert_confirm":
-        if not can_commit:
-            messages.error(request, "Only the Project Committer can revert.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        target_id = (request.POST.get("target_wko_id") or "").strip()
-        if not target_id.isdigit():
-            messages.error(request, "Missing target version.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        target = ProjectWKO.objects.filter(project=project, id=int(target_id)).first()
-        if not target:
-            messages.error(request, "Target version not found.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-
-        latest = ProjectWKO.objects.filter(project=project).aggregate(Max("version")).get("version__max") or 0
-        ProjectWKO.objects.create(
-            project=project,
-            version=latest + 1,
-            status=ProjectWKO.Status.DRAFT,
-            structure_contract_key=(structure_contract.key if structure_contract else ""),
-            structure_contract_version=(structure_contract.version if structure_contract else None),
-            transform_contract_key=(transform_contract.key if transform_contract else ""),
-            transform_contract_version=(transform_contract.version if transform_contract else None),
-            seed_snapshot=seed_snapshot,
-            content_json=target.content_json or {},
-            change_summary=f"Revert fork from v{target.version}",
-            created_by=request.user,
-        )
-
-        content = target.content_json or {}
-        purpose_text = (content.get("planning_purpose") or "").strip()
-        purpose.value_text = purpose_text
-        purpose.status = ProjectPlanningPurpose.Status.DRAFT
-        purpose.proposed_by = None
-        purpose.proposed_at = None
-        purpose.locked_by = None
-        purpose.locked_at = None
-        purpose.last_validation = {}
-        purpose.last_edited_by = request.user
-        purpose.last_edited_at = timezone.now()
-        purpose.save(
-            update_fields=[
-                "value_text",
-                "status",
-                "proposed_by",
-                "proposed_at",
-                "locked_by",
-                "locked_at",
-                "last_validation",
-                "last_edited_by",
-                "last_edited_at",
-                "updated_at",
-            ]
-        )
-
-        ProjectPlanningStage.objects.filter(project=project).delete()
-        stages_payload = content.get("stages") if isinstance(content, dict) else []
-        title_map: Dict[str, ProjectPlanningStage] = {}
-        if isinstance(stages_payload, list):
-            for idx, row in enumerate(stages_payload, start=1):
-                if not isinstance(row, dict):
-                    continue
-                stage_obj = ProjectPlanningStage.objects.create(
-                    project=project,
-                    order_index=int(row.get("order_index") or idx),
-                    title=str(row.get("title") or ""),
-                    description=str(row.get("description") or ""),
-                    purpose=str(row.get("purpose") or ""),
-                    entry_condition=str(row.get("entry_condition") or ""),
-                    acceptance_statement=str(row.get("acceptance_statement") or ""),
-                    exit_condition=str(row.get("exit_condition") or ""),
-                    key_deliverables=list(row.get("key_deliverables") or []),
-                    duration_estimate=str(row.get("duration_estimate") or ""),
-                    risks_notes=str(row.get("risks_notes") or ""),
-                    status=ProjectPlanningStage.Status.DRAFT,
-                    proposed_by=None,
-                    proposed_at=None,
-                    locked_by=None,
-                    locked_at=None,
-                    last_validation={},
-                    last_edited_by=request.user,
-                    last_edited_at=timezone.now(),
-                )
-                if stage_obj.title:
-                    title_map[stage_obj.title] = stage_obj
-
-        ProjectPlanningMilestone.objects.filter(project=project).delete()
-        ProjectPlanningAction.objects.filter(project=project).delete()
-        ProjectPlanningRisk.objects.filter(project=project).delete()
-
-        plan = content.get("plan") if isinstance(content, dict) else None
-        if isinstance(plan, dict):
-            for idx, m in enumerate(plan.get("milestones") or [], start=1):
-                if not isinstance(m, dict):
-                    continue
-                st_title = str(m.get("stage_title") or "")
-                ProjectPlanningMilestone.objects.create(
-                    project=project,
-                    stage=title_map.get(st_title),
-                    order_index=idx,
-                    title=str(m.get("title") or ""),
-                    stage_title=st_title,
-                    acceptance_statement=str(m.get("acceptance_statement") or ""),
-                    target_date_hint=str(m.get("target_date_hint") or ""),
-                    status=ProjectPlanningMilestone.Status.DRAFT,
-                )
-            for idx, a in enumerate(plan.get("actions") or [], start=1):
-                if not isinstance(a, dict):
-                    continue
-                st_title = str(a.get("stage_title") or "")
-                ProjectPlanningAction.objects.create(
-                    project=project,
-                    stage=title_map.get(st_title),
-                    order_index=idx,
-                    title=str(a.get("title") or ""),
-                    stage_title=st_title,
-                    owner_role=str(a.get("owner_role") or ""),
-                    definition_of_done=str(a.get("definition_of_done") or ""),
-                    effort_hint=str(a.get("effort_hint") or ""),
-                    status=ProjectPlanningAction.Status.DRAFT,
-                )
-            for idx, r in enumerate(plan.get("risks") or [], start=1):
-                if not isinstance(r, dict):
-                    continue
-                st_title = str(r.get("stage_title") or "")
-                ProjectPlanningRisk.objects.create(
-                    project=project,
-                    stage=title_map.get(st_title),
-                    order_index=idx,
-                    title=str(r.get("title") or ""),
-                    stage_title=st_title,
-                    probability=str(r.get("probability") or ""),
-                    impact=str(r.get("impact") or ""),
-                    mitigation=str(r.get("mitigation") or ""),
-                    status=ProjectPlanningRisk.Status.DRAFT,
-                )
-
-        messages.success(request, f"Reverted from v{target.version}; new draft v{latest + 1} created.")
         return redirect("projects:ppde_detail", project_id=project.id)
 
     if request.method == "POST" and action == "stage_delete":
@@ -1580,12 +1408,11 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             project=project,
             order_index=max_idx + 1,
             title=stage.title,
-            description=stage.description,
             purpose=stage.purpose,
-            entry_condition=stage.entry_condition,
-            acceptance_statement=stage.acceptance_statement,
-            exit_condition=stage.exit_condition,
-            key_deliverables=list(stage.key_deliverables or []),
+            inputs=stage.inputs,
+            stage_process=stage.stage_process,
+            outputs=stage.outputs,
+            assumptions=stage.assumptions,
             duration_estimate=stage.duration_estimate,
             risks_notes=stage.risks_notes,
         )
@@ -1618,11 +1445,31 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
 
         if block_key == "purpose":
             block = ProjectPlanningPurpose.objects.get(project=project)
-            proposed_text = (request.POST.get("purpose_text") or "").strip()
-            if not proposed_text:
-                proposed_text = (block.value_text or "").strip()
-            prior_text = (block.value_text or "").strip()
-            changed = proposed_text != prior_text
+            def _val_or_current(field_key: str, current: str) -> str:
+                raw = request.POST.get(field_key)
+                if raw is None:
+                    return (current or "").strip()
+                return raw.strip()
+
+            proposed_fields = {
+                "value_text": _val_or_current("purpose_text", block.value_text),
+                "pdo_summary": _val_or_current("pdo_summary", block.pdo_summary),
+                "planning_constraints": _val_or_current("planning_constraints", block.planning_constraints),
+                "assumptions": _val_or_current("assumptions", block.assumptions),
+                "cko_alignment_stage1_inputs_match": _val_or_current(
+                    "cko_alignment_stage1_inputs_match",
+                    block.cko_alignment_stage1_inputs_match,
+                ),
+                "cko_alignment_final_outputs_match": _val_or_current(
+                    "cko_alignment_final_outputs_match",
+                    block.cko_alignment_final_outputs_match,
+                ),
+            }
+            changed = False
+            for key, val in proposed_fields.items():
+                if (getattr(block, key) or "").strip() != val:
+                    changed = True
+                    break
 
             if block.status in (ProjectPlanningPurpose.Status.PROPOSED, ProjectPlanningPurpose.Status.PASS_LOCKED) and not can_commit:
                 messages.error(request, "Only the Project Committer can edit this block.")
@@ -1635,9 +1482,10 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 vobj = _ppde_validate_block(
                     block_key=block_key,
                     block_kind="purpose",
-                    payload={"purpose_text": proposed_text},
+                    payload=proposed_fields,
                     seed_snapshot=seed_snapshot,
                     transform_contract=transform_contract,
+                    user=request.user,
                 )
                 block.last_validation = vobj
                 block.save(update_fields=["last_validation", "updated_at"])
@@ -1659,12 +1507,18 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                     block.locked_at = None
                     block.last_validation = {}
 
-                block.value_text = proposed_text
+                for key, val in proposed_fields.items():
+                    setattr(block, key, val)
                 block.last_edited_by = request.user
                 block.last_edited_at = timezone.now()
                 block.save(
                     update_fields=[
                         "value_text",
+                        "pdo_summary",
+                        "planning_constraints",
+                        "assumptions",
+                        "cko_alignment_stage1_inputs_match",
+                        "cko_alignment_final_outputs_match",
                         "last_edited_by",
                         "last_edited_at",
                         "status",
@@ -1680,7 +1534,8 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
             if action == "propose_lock":
-                block.value_text = proposed_text
+                for key, val in proposed_fields.items():
+                    setattr(block, key, val)
                 block.last_edited_by = request.user
                 block.last_edited_at = timezone.now()
                 block.status = ProjectPlanningPurpose.Status.PROPOSED
@@ -1689,6 +1544,11 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 block.save(
                     update_fields=[
                         "value_text",
+                        "pdo_summary",
+                        "planning_constraints",
+                        "assumptions",
+                        "cko_alignment_stage1_inputs_match",
+                        "cko_alignment_final_outputs_match",
                         "last_edited_by",
                         "last_edited_at",
                         "status",
@@ -1749,6 +1609,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                     payload=payload,
                     seed_snapshot=seed_snapshot,
                     transform_contract=transform_contract,
+                    user=request.user,
                 )
                 stage.last_validation = vobj
                 stage.save(update_fields=["last_validation", "updated_at"])
@@ -1777,12 +1638,9 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 stage.save(
                     update_fields=[
                         "title",
-                        "description",
                         "purpose",
-                        "entry_condition",
-                        "acceptance_statement",
-                        "exit_condition",
-                        "key_deliverables",
+                        "inputs",
+                        "outputs",
                         "duration_estimate",
                         "risks_notes",
                         "last_edited_by",
@@ -1810,12 +1668,9 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 stage.save(
                     update_fields=[
                         "title",
-                        "description",
                         "purpose",
-                        "entry_condition",
-                        "acceptance_statement",
-                        "exit_condition",
-                        "key_deliverables",
+                        "inputs",
+                        "outputs",
                         "duration_estimate",
                         "risks_notes",
                         "last_edited_by",
@@ -1857,189 +1712,93 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
     if request.method == "POST" and action == "commit_wko_version":
+        messages.info(request, "PPDE outputs a PDO. Use Finalise PDO.")
+        return redirect("projects:ppde_detail", project_id=project.id)
+
+    if request.method == "POST" and action == "finalise_pdo":
         if not can_commit:
-            messages.error(request, "Only the Project Committer can commit.")
+            messages.error(request, "Only the Project Committer can finalise a PDO.")
             return redirect("projects:ppde_detail", project_id=project.id)
 
         purpose, stages = _ensure_ppde_blocks(project)
-        non_locked = 0
-        if purpose.status != ProjectPlanningPurpose.Status.PASS_LOCKED:
-            non_locked += 1
-        non_locked += ProjectPlanningStage.objects.filter(
-            project=project,
-        ).exclude(status=ProjectPlanningStage.Status.PASS_LOCKED).count()
-        if non_locked:
-            messages.warning(request, "Some blocks are not locked; committing anyway.")
+        issues = []
 
-        stage_titles = [s.title.strip() for s in stages if (s.title or "").strip()]
-        if not stages:
-            messages.warning(request, "No stages present.")
-        for stage in stages:
-            if not (stage.title or "").strip():
-                messages.warning(request, f"Stage {stage.order_index} missing title.")
-            if not (stage.acceptance_statement or "").strip():
-                messages.warning(request, f"Stage {stage.order_index} missing acceptance statement.")
+        pdo_summary = (purpose.pdo_summary or "").strip()
+        if not pdo_summary:
+            issues.append("PDO summary is required.")
 
-        milestones_qs = ProjectPlanningMilestone.objects.filter(project=project).order_by("order_index", "id")
-        actions_qs = ProjectPlanningAction.objects.filter(project=project).order_by("order_index", "id")
-        risks_qs = ProjectPlanningRisk.objects.filter(project=project).order_by("order_index", "id")
+        planning_purpose = (purpose.value_text or "").strip()
+        if not planning_purpose:
+            issues.append("Planning purpose is required.")
 
-        if not milestones_qs.exists():
-            messages.warning(request, "Plan milestones are empty.")
-        if actions_qs.count() < 5:
-            messages.warning(request, "Plan has fewer than 5 actions.")
-        if not risks_qs.exists():
-            messages.warning(request, "Plan risks are empty.")
+        cko_stage1 = (purpose.cko_alignment_stage1_inputs_match or "").strip()
+        if not cko_stage1:
+            issues.append("CKO alignment (stage 1 inputs match) is required.")
 
-        for m in milestones_qs:
-            if not (m.acceptance_statement or "").strip():
-                messages.warning(request, "Milestone missing acceptance statement: " + (m.title or ""))
-            if (m.stage_title or "").strip() and m.stage_title.strip() not in stage_titles:
-                messages.warning(request, "Milestone stage title not found: " + m.stage_title)
-        for a in actions_qs:
-            if not (a.definition_of_done or "").strip():
-                messages.warning(request, "Action missing definition of done: " + (a.title or ""))
-            if (a.stage_title or "").strip() and a.stage_title.strip() not in stage_titles:
-                messages.warning(request, "Action stage title not found: " + a.stage_title)
-        for r in risks_qs:
-            if not (r.mitigation or "").strip():
-                messages.warning(request, "Risk missing mitigation: " + (r.title or ""))
-            if (r.stage_title or "").strip() and r.stage_title.strip() not in stage_titles:
-                messages.warning(request, "Risk stage title not found: " + r.stage_title)
+        cko_final = (purpose.cko_alignment_final_outputs_match or "").strip()
+        if not cko_final:
+            issues.append("CKO alignment (final outputs match) is required.")
+
+        ordered = sorted(stages, key=lambda s: (s.order_index, s.id))
+        for idx, stage in enumerate(ordered, start=1):
+            if stage.order_index != idx:
+                issues.append("Stage numbering is not sequential at stage " + str(stage.order_index) + ".")
+                break
+            if not (stage.purpose or "").strip():
+                issues.append(f"Stage {idx} is missing purpose.")
+            if not (stage.inputs or "").strip():
+                issues.append(f"Stage {idx} is missing inputs.")
+            if not (stage.stage_process or "").strip():
+                issues.append(f"Stage {idx} is missing stage process.")
+            if not (stage.outputs or "").strip():
+                issues.append(f"Stage {idx} is missing outputs.")
+
+        if issues:
+            for it in issues:
+                messages.error(request, it)
+            return redirect("projects:ppde_detail", project_id=project.id)
 
         payload = {
-            "planning_purpose": (purpose.value_text or "").strip(),
-            "stages": [],
-            "plan": {
-                "milestones": [],
-                "actions": [],
-                "risks": [],
-                "assumptions": [],
-                "dependencies": [],
+            "pdo_summary": pdo_summary,
+            "cko_alignment": {
+                "stage1_inputs_match": cko_stage1,
+                "final_outputs_match": cko_final,
             },
+            "planning_purpose": planning_purpose,
+            "planning_constraints": (purpose.planning_constraints or "").strip(),
+            "assumptions": (purpose.assumptions or "").strip(),
+            "stages": [],
         }
-        for stage in ProjectPlanningStage.objects.filter(project=project).order_by("order_index", "id"):
+
+        for idx, stage in enumerate(ordered, start=1):
             payload["stages"].append(
                 {
-                    "id": stage.id,
-                    "order_index": stage.order_index,
+                    "stage_number": idx,
+                    "status": stage.status,
                     "title": (stage.title or "").strip(),
-                    "description": (stage.description or "").strip(),
                     "purpose": (stage.purpose or "").strip(),
-                    "entry_condition": (stage.entry_condition or "").strip(),
-                    "acceptance_statement": (stage.acceptance_statement or "").strip(),
-                    "exit_condition": (stage.exit_condition or "").strip(),
-                    "key_deliverables": list(stage.key_deliverables or []),
+                    "inputs": (stage.inputs or "").strip(),
+                    "stage_process": (stage.stage_process or "").strip(),
+                    "outputs": (stage.outputs or "").strip(),
+                    "assumptions": (stage.assumptions or "").strip(),
                     "duration_estimate": (stage.duration_estimate or "").strip(),
                     "risks_notes": (stage.risks_notes or "").strip(),
                 }
             )
 
-        for m in milestones_qs:
-            payload["plan"]["milestones"].append(
-                {
-                    "title": m.title,
-                    "stage_title": m.stage_title,
-                    "acceptance_statement": m.acceptance_statement,
-                    "target_date_hint": m.target_date_hint,
-                }
-            )
-        for a in actions_qs:
-            payload["plan"]["actions"].append(
-                {
-                    "title": a.title,
-                    "stage_title": a.stage_title,
-                    "owner_role": a.owner_role,
-                    "definition_of_done": a.definition_of_done,
-                    "effort_hint": a.effort_hint,
-                }
-            )
-        for r in risks_qs:
-            payload["plan"]["risks"].append(
-                {
-                    "title": r.title,
-                    "stage_title": r.stage_title,
-                    "probability": r.probability,
-                    "impact": r.impact,
-                    "mitigation": r.mitigation,
-                }
-            )
-
-        latest = ProjectWKO.objects.filter(project=project).aggregate(Max("version")).get("version__max") or 0
-        ProjectWKO.objects.create(
+        latest = ProjectPDO.objects.filter(project=project).aggregate(Max("version")).get("version__max") or 0
+        ProjectPDO.objects.create(
             project=project,
             version=latest + 1,
-            status=ProjectWKO.Status.DRAFT,
-            structure_contract_key=(structure_contract.key if structure_contract else ""),
-            structure_contract_version=(structure_contract.version if structure_contract else None),
-            transform_contract_key=(transform_contract.key if transform_contract else ""),
-            transform_contract_version=(transform_contract.version if transform_contract else None),
+            status=ProjectPDO.Status.DRAFT,
             seed_snapshot=seed_snapshot,
             content_json=payload,
-            change_summary="Committed from PPDE working draft",
+            change_summary="Finalised from PPDE",
             created_by=request.user,
         )
-        messages.success(request, "WKO version created.")
+        messages.success(request, "PDO finalised.")
         return redirect("projects:ppde_detail", project_id=project.id)
 
-    if request.method == "POST" and action == "promote_plan_to_tasks":
-        if not can_commit:
-            messages.error(request, "Only the Project Committer can promote tasks.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        latest_wko = (
-            ProjectWKO.objects
-            .filter(project=project)
-            .order_by("-version")
-            .first()
-        )
-        if not latest_wko or not isinstance(latest_wko.content_json, dict):
-            messages.warning(request, "No Plan WKO available.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-        plan = latest_wko.content_json.get("plan") if isinstance(latest_wko.content_json, dict) else None
-        actions = plan.get("actions") if isinstance(plan, dict) else None
-        if not actions:
-            messages.warning(request, "No plan actions to promote.")
-            return redirect("projects:ppde_detail", project_id=project.id)
-
-        existing = ProjectExecutionTask.objects.filter(
-            project=project,
-            source_wko_version=latest_wko.version,
-        )
-        existing_keys = set((t.title, t.stage_title) for t in existing)
-        if existing_keys:
-            messages.warning(request, "Tasks already exist for this plan version; duplicates will be skipped.")
-
-        created = 0
-        for item in actions:
-            if not isinstance(item, dict):
-                continue
-            title = str(item.get("title") or "").strip()
-            stage_title = str(item.get("stage_title") or "").strip()
-            if not title:
-                continue
-            if (title, stage_title) in existing_keys:
-                continue
-            desc_parts = []
-            owner_role = str(item.get("owner_role") or "").strip()
-            dod = str(item.get("definition_of_done") or "").strip()
-            effort = str(item.get("effort_hint") or "").strip()
-            if owner_role:
-                desc_parts.append("Owner role: " + owner_role)
-            if dod:
-                desc_parts.append("DoD: " + dod)
-            if effort:
-                desc_parts.append("Effort: " + effort)
-            description = "\n".join(desc_parts)
-            ProjectExecutionTask.objects.create(
-                project=project,
-                title=title,
-                description=description,
-                stage_title=stage_title,
-                source_wko_version=latest_wko.version,
-            )
-            created += 1
-        messages.success(request, f"{created} tasks created from Plan v{latest_wko.version}.")
-        return redirect("projects:ppde_detail", project_id=project.id)
 
     purpose, stages = _ensure_ppde_blocks(project)
     seed_view = (request.session.get("ppde_seed_view") or "full").strip().lower()
@@ -2066,6 +1825,20 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
         request.session.pop(auto_key, None)
         request.session.modified = True
 
+    topic_chats = list(
+        ProjectTopicChat.objects.filter(project=project, user=request.user, scope="PPDE")
+        .select_related("chat")
+    )
+    topic_chat_map = {tc.topic_key: tc.chat_id for tc in topic_chats}
+    topic_chat_ids = set(topic_chat_map.values())
+    purpose_chat_id = topic_chat_map.get("PURPOSE")
+    stage_chat_ids: Dict[int, int] = {}
+    for key, cid in topic_chat_map.items():
+        if key.startswith("STAGE:"):
+            sid = key.split(":", 1)[1]
+            if sid.isdigit():
+                stage_chat_ids[int(sid)] = cid
+
     stage_specs: List[Dict[str, Any]] = []
     for stage in stages:
         stage_specs.append(
@@ -2073,12 +1846,11 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 "id": stage.id,
                 "order_index": stage.order_index,
                 "title": stage.title,
-                "description": stage.description,
                 "purpose": stage.purpose,
-                "entry_condition": stage.entry_condition,
-                "acceptance_statement": stage.acceptance_statement,
-                "exit_condition": stage.exit_condition,
-                "key_deliverables": "\n".join(stage.key_deliverables or []),
+                "inputs": stage.inputs,
+                "stage_process": stage.stage_process,
+                "outputs": stage.outputs,
+                "assumptions": stage.assumptions,
                 "duration_estimate": stage.duration_estimate,
                 "risks_notes": stage.risks_notes,
                 "status": stage.status,
@@ -2086,15 +1858,9 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 "locked_by": (getattr(stage.locked_by, "username", "") or ""),
                 "last_validation": stage.last_validation or {},
                 "validation_key": "stage:" + str(stage.id),
+                "topic_chat_id": stage_chat_ids.get(stage.id),
             }
         )
-
-    wko_versions = (
-        ProjectWKO.objects
-        .filter(project=project)
-        .order_by("-version")
-    )
-    latest_wko = wko_versions.first()
 
     all_locked = (
         purpose.status == ProjectPlanningPurpose.Status.PASS_LOCKED
@@ -2109,15 +1875,59 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
     if has_proposed:
         ppde_status_badge = {"text": "Proposed", "class": "bg-warning text-dark"}
     elif all_locked:
-        ppde_status_badge = {"text": "Ready to Commit", "class": "bg-success"}
+        ppde_status_badge = {"text": "Ready to Finalise", "class": "bg-success"}
 
-    milestones = list(ProjectPlanningMilestone.objects.filter(project=project).order_by("order_index", "id"))
-    actions = list(ProjectPlanningAction.objects.filter(project=project).order_by("order_index", "id"))
-    risks = list(ProjectPlanningRisk.objects.filter(project=project).order_by("order_index", "id"))
-    plan_preview = request.session.get(_ppde_plan_preview_key(project.id))
     stage_preview = request.session.get(_ppde_stage_preview_key(project.id))
     stage_edit_log = _get_ppde_stage_edit_log(request, project.id)
     stage_edit_auto_open = bool(request.session.get("ppde_stage_edit_auto_open_" + str(project.id)))
+
+    ppde_chat_id_raw = (request.GET.get("ppde_chat_id") or "").strip()
+    if not ppde_chat_id_raw:
+        ppde_chat_id_raw = str(request.session.get("ppde_drawer_chat_id") or "")
+
+    open_param = (request.GET.get("ppde_chat_open") or "").strip()
+    if open_param in ("0", "1"):
+        request.session["ppde_drawer_open"] = (open_param == "1")
+        request.session.modified = True
+
+    selected_chat_id = int(ppde_chat_id_raw) if ppde_chat_id_raw.isdigit() else None
+    if selected_chat_id is not None:
+        request.session["ppde_drawer_chat_id"] = selected_chat_id
+        request.session.modified = True
+
+    chat_ids = set()
+    if purpose_chat_id:
+        chat_ids.add(purpose_chat_id)
+    for s in stage_specs:
+        if s.get("topic_chat_id"):
+            chat_ids.add(s["topic_chat_id"])
+
+    chat_ctx_map = {}
+    if chat_ids:
+        chats = {c.id: c for c in ChatWorkspace.objects.filter(id__in=chat_ids)}
+        for chat_id, chat in chats.items():
+            ctx = build_chat_turn_context(request, chat)
+            qs = request.GET.copy()
+            qs["ppde_chat_id"] = str(chat.id)
+            qs["ppde_chat_open"] = "1"
+            qs.pop("turn", None)
+            qs.pop("system", None)
+            ctx["chat"] = chat
+            if purpose_chat_id and chat.id == purpose_chat_id:
+                ctx["apply_target"] = "ppde_purpose"
+            ctx["qs_base"] = qs.urlencode()
+            if selected_chat_id == chat.id:
+                if open_param in ("0", "1"):
+                    ctx["is_open"] = (open_param == "1")
+                else:
+                    ctx["is_open"] = bool(request.session.get("ppde_drawer_open"))
+            else:
+                ctx["is_open"] = False
+            chat_ctx_map[chat.id] = ctx
+
+    purpose_chat_ctx = chat_ctx_map.get(purpose_chat_id)
+    for s in stage_specs:
+        s["topic_chat_ctx"] = chat_ctx_map.get(s.get("topic_chat_id"))
 
     context = {
         "project": project,
@@ -2136,9 +1946,6 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
         "ppde_status_badge": ppde_status_badge,
         "structure_contract": structure_contract,
         "transform_contract": transform_contract,
-        "plan_contract": plan_contract,
-        "wko_versions": wko_versions,
-        "latest_wko": latest_wko,
         "seed_context": seed_context,
         "seed_view": seed_view,
         "seed_has_summary": bool(isinstance(project.ppde_seed_summary, dict) and project.ppde_seed_summary),
@@ -2147,6 +1954,11 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
         "ppde_help_auto_open": ppde_help_auto_open,
         "purpose": {
             "value_text": purpose.value_text,
+            "pdo_summary": purpose.pdo_summary,
+            "planning_constraints": purpose.planning_constraints,
+            "assumptions": purpose.assumptions,
+            "cko_alignment_stage1_inputs_match": purpose.cko_alignment_stage1_inputs_match,
+            "cko_alignment_final_outputs_match": purpose.cko_alignment_final_outputs_match,
             "status": purpose.status,
             "proposed_by": (getattr(purpose.proposed_by, "username", "") or ""),
             "locked_by": (getattr(purpose.locked_by, "username", "") or ""),
@@ -2154,10 +1966,8 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
         },
         "stages": stage_specs,
         "show_validation_key": show_validation_key,
-        "plan_milestones": milestones,
-        "plan_actions": actions,
-        "plan_risks": risks,
-        "plan_preview": plan_preview,
+        "purpose_chat_id": purpose_chat_id,
+        "purpose_chat_ctx": purpose_chat_ctx,
         "stage_preview": stage_preview,
         "stage_edit_log": stage_edit_log,
         "stage_edit_auto_open": stage_edit_auto_open,

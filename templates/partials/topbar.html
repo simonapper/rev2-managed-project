@@ -75,9 +75,9 @@
           <div class="rw-status-value">
             {% if rw_projects and rw_projects.active %}
               {% if rw_projects.active.kind == "SANDBOX" %}
-                <span class="text-warning fw-semibold" style="font-size:.7rem;">Sandbox</span>
+                <span class="text-warning fw-semibold" style="font-size:.7rem;" title="Sandbox">Sandbox</span>
               {% else %}
-                <span class="text-success fw-semibold" style="font-size:.7rem;">Controlled</span>
+                <span class="text-success fw-semibold" style="font-size:.7rem;" title="Controlled">Controlled</span>
               {% endif %}
               <div class="rw-status-value" title="{{ rw_projects.active.name }}">
                 {{ rw_projects.active.name }}
@@ -110,6 +110,18 @@
               {{ rw_chat.turn_count|default:0 }}
             {% else %}
               0
+            {% endif %}
+          </div>
+        </div>
+
+        {# BOTTOM ROW: Active Model #}
+        <div class="rw-status">
+          <div class="rw-status-label">Model</div>
+          <div class="rw-status-value">
+            {% if rw_llm_model %}
+              <span class="badge text-bg-light border">{{ rw_llm_model }}</span>
+            {% else %}
+              —
             {% endif %}
           </div>
         </div>

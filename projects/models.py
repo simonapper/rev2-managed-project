@@ -513,6 +513,179 @@ class ProjectTopicChat(models.Model):
     def __str__(self) -> str:
         return f"{self.project_id}:{self.user_id}:{self.scope}:{self.topic_key}"
 
+class ProjectAnchor(models.Model):
+    class Marker(models.TextChoices):
+        INTENT = "INTENT", "Intent"
+        ROUTE = "ROUTE", "Route"
+        EXECUTE = "EXECUTE", "Execute"
+        COMPLETE = "COMPLETE", "Complete"
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        PROPOSED = "PROPOSED", "Proposed"
+        PASS_LOCKED = "PASS_LOCKED", "Locked"
+
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="anchors",
+    )
+    marker = models.CharField(max_length=16, choices=Marker.choices)
+    content = models.TextField(blank=True, default="")
+    content_json = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
+    proposed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="anchor_proposals",
+    )
+    proposed_at = models.DateTimeField(null=True, blank=True)
+    locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="anchor_locks",
+    )
+    locked_at = models.DateTimeField(null=True, blank=True)
+    last_edited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="anchor_edits",
+    )
+    last_edited_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["project", "marker"], name="uq_project_anchor"),
+        ]
+        indexes = [
+            models.Index(fields=["project", "marker"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.marker}:{self.status}"
+
+
+class ProjectAnchorAudit(models.Model):
+    class ChangeType(models.TextChoices):
+        UPDATE = "UPDATE", "Update"
+        STATUS = "STATUS", "Status"
+        RESEED = "RESEED", "Reseed"
+
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="anchor_audits",
+    )
+    anchor = models.ForeignKey(
+        "projects.ProjectAnchor",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_rows",
+    )
+    marker = models.CharField(max_length=16, choices=ProjectAnchor.Marker.choices)
+    change_type = models.CharField(max_length=16, choices=ChangeType.choices, default=ChangeType.UPDATE)
+    summary = models.CharField(max_length=255, blank=True, default="")
+
+    status_before = models.CharField(max_length=16, blank=True, default="")
+    status_after = models.CharField(max_length=16, blank=True, default="")
+
+    before_content = models.TextField(blank=True, default="")
+    after_content = models.TextField(blank=True, default="")
+    before_content_json = models.JSONField(default=dict, blank=True)
+    after_content_json = models.JSONField(default=dict, blank=True)
+
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="project_anchor_audits",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "marker", "created_at"]),
+            models.Index(fields=["project", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.marker}:{self.change_type}@{self.created_at.isoformat()}"
+
+
+class ProjectReviewChat(models.Model):
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="review_chats",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="review_chats",
+    )
+    marker = models.CharField(max_length=16)
+    chat = models.OneToOneField(
+        "chats.ChatWorkspace",
+        on_delete=models.CASCADE,
+        related_name="review_binding",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["project", "user", "marker"], name="uq_project_review_chat"),
+        ]
+        indexes = [
+            models.Index(fields=["project", "user", "marker"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.user_id}:{self.marker}"
+
+class ProjectReviewStageChat(models.Model):
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="review_stage_chats",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="review_stage_chats",
+    )
+    marker = models.CharField(max_length=16)
+    stage_number = models.IntegerField()
+    chat = models.OneToOneField(
+        "chats.ChatWorkspace",
+        on_delete=models.CASCADE,
+        related_name="review_stage_binding",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "user", "marker", "stage_number"],
+                name="uq_project_review_stage_chat",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["project", "user", "marker"], name="ix_review_stage_p_u_m"),
+            models.Index(fields=["project", "marker", "stage_number"], name="ix_review_stage_p_m_s"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.user_id}:{self.marker}:S{self.stage_number}"
+
 class ProjectCKO(models.Model):
     """
     Versioned Canonical Knowledge Object for a Project.
@@ -560,6 +733,12 @@ class ProjectCKO(models.Model):
         help_text="Plain text shadow of the CKO (export/diff/search).",
     )
 
+    content_json = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Structured JSON view of the CKO.",
+    )
+
 
     field_snapshot = models.JSONField(
         default=dict,
@@ -599,6 +778,122 @@ class ProjectCKO(models.Model):
     def __str__(self) -> str:
         return f"CKO:{self.project_id}:v{self.version}:{self.status}"
         return f"CKO:{self.project_id}:v{self.version}:{self.status}"
+
+
+class ProjectTKO(models.Model):
+    """
+    Versioned Transfer Knowledge Object for a Project.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        SUPERSEDED = "SUPERSEDED", "Superseded"
+
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="tko_versions",
+    )
+    version = models.IntegerField(default=1)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+
+    content_text = models.TextField(blank=True, default="")
+    content_json = models.JSONField(default=dict, blank=True)
+    content_html = models.TextField(blank=True, default="")
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="project_tkos_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    accepted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="project_tkos_accepted",
+    )
+    accepted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "version"]),
+            models.Index(fields=["project", "status"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "version"],
+                name="uniq_project_tko_version",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"TKO:{self.project_id}:v{self.version}:{self.status}"
+
+
+class ProjectPKO(models.Model):
+    """
+    Versioned Policy Knowledge Object for a Project.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        SUPERSEDED = "SUPERSEDED", "Superseded"
+
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="pko_versions",
+    )
+    version = models.IntegerField(default=1)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+
+    content_text = models.TextField(blank=True, default="")
+    content_json = models.JSONField(default=dict, blank=True)
+    content_html = models.TextField(blank=True, default="")
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="project_pkos_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    accepted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="project_pkos_accepted",
+    )
+    accepted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "version"]),
+            models.Index(fields=["project", "status"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "version"],
+                name="uniq_project_pko_version",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"PKO:{self.project_id}:v{self.version}:{self.status}"
 
 
 class ProjectPDESnapshot(models.Model):
@@ -660,6 +955,11 @@ class ProjectPlanningPurpose(models.Model):
     )
 
     value_text = models.TextField(blank=True, default="")
+    pdo_summary = models.TextField(blank=True, default="")
+    planning_constraints = models.TextField(blank=True, default="")
+    assumptions = models.TextField(blank=True, default="")
+    cko_alignment_stage1_inputs_match = models.TextField(blank=True, default="")
+    cko_alignment_final_outputs_match = models.TextField(blank=True, default="")
     last_validation = models.JSONField(blank=True, default=dict)
 
     status = models.CharField(
@@ -726,12 +1026,11 @@ class ProjectPlanningStage(models.Model):
     order_index = models.IntegerField(default=1)
 
     title = models.CharField(max_length=200, blank=True, default="")
-    description = models.TextField(blank=True, default="")
     purpose = models.TextField(blank=True, default="")
-    entry_condition = models.TextField(blank=True, default="")
-    acceptance_statement = models.TextField(blank=True, default="")
-    exit_condition = models.TextField(blank=True, default="")
-    key_deliverables = models.JSONField(default=list, blank=True)
+    inputs = models.TextField(blank=True, default="")
+    stage_process = models.TextField(blank=True, default="")
+    outputs = models.TextField(blank=True, default="")
+    assumptions = models.TextField(blank=True, default="")
     duration_estimate = models.TextField(blank=True, default="")
     risks_notes = models.TextField(blank=True, default="")
     last_validation = models.JSONField(blank=True, default=dict)
@@ -781,6 +1080,57 @@ class ProjectPlanningStage(models.Model):
 
     def __str__(self) -> str:
         return f"PPDE:stage:{self.project_id}:{self.id}"
+
+
+class ProjectPDO(models.Model):
+    """
+    Versioned Planning Direction Object (PDO) for a Project (PPDE output).
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        ACTIVE = "ACTIVE", "Active"
+        SUPERSEDED = "SUPERSEDED", "Superseded"
+
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="pdo_versions",
+    )
+
+    version = models.IntegerField(default=1)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+
+    content_json = models.JSONField(default=dict, blank=True)
+    seed_snapshot = models.JSONField(default=dict, blank=True)
+    change_summary = models.CharField(max_length=300, blank=True, default="")
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="project_pdos_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "version"]),
+            models.Index(fields=["project", "status"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "version"],
+                name="uniq_project_pdo_version",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"PDO:{self.project_id}:v{self.version}:{self.status}"
 
 
 class ProjectWKO(models.Model):

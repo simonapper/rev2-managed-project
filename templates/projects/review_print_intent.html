@@ -1,0 +1,97 @@
+{# templates/projects/review_print_intent.html #}
+{# 7-bit ASCII only. #}
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Intent print - {{ project.name }}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 14mm 12mm;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      color: #111;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      line-height: 1.45;
+      font-size: 11pt;
+    }
+
+    .page {
+      max-width: 190mm;
+      margin: 0 auto;
+      padding: 4mm 0;
+    }
+
+    .meta {
+      margin-bottom: 6mm;
+      border-bottom: 1px solid #d9d9d9;
+      padding-bottom: 4mm;
+    }
+
+    .title {
+      font-size: 16pt;
+      font-weight: 700;
+      margin: 0 0 1mm;
+    }
+
+    .sub {
+      font-size: 10pt;
+      color: #444;
+      margin: 0;
+    }
+
+    .actions {
+      margin-top: 4mm;
+    }
+
+    .btn {
+      display: inline-block;
+      border: 1px solid #999;
+      padding: 1.5mm 3mm;
+      font-size: 9pt;
+      background: #f6f6f6;
+      color: #111;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    @media print {
+      .actions {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="meta">
+      <h1 class="title">Intent - Print view</h1>
+      <p class="sub">{{ project.name }}</p>
+      {% if anchor %}
+        <p class="sub">Status: {{ anchor.status }}</p>
+      {% endif %}
+      <div class="actions">
+        <button type="button" class="btn" onclick="window.print();">Print</button>
+      </div>
+    </header>
+
+    {% if content_html %}
+      <div class="rw-artefact-doc">
+        {{ content_html|safe }}
+      </div>
+    {% elif content_text %}
+      <div style="white-space:pre-wrap;">{{ content_text }}</div>
+    {% else %}
+      <div style="color:#666;font-size:10pt;">No intent content yet.</div>
+    {% endif %}
+
+  </main>
+</body>
+</html>

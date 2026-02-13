@@ -9,6 +9,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.db.models import Q
 
 from accounts.models_avatars import Avatar
+from config.models import SystemConfigPointers
 from projects.models import Project, UserProjectPrefs
 from projects.services_project_membership import accessible_projects_qs
 from chats.models import ChatMessage, ChatWorkspace
@@ -20,6 +21,23 @@ def topbar_context(request) -> Dict[str, Any]:
     user = getattr(request, "user", None)
     if not user or isinstance(user, AnonymousUser) or not user.is_authenticated:
         return ctx
+
+    profile = getattr(user, "profile", None)
+    provider = (getattr(profile, "llm_provider", "") or "openai").strip().lower()
+    pointers = SystemConfigPointers.objects.first()
+    if provider == "anthropic":
+        model_name = (
+            (getattr(profile, "anthropic_model_default", "") or "").strip()
+            or (getattr(pointers, "anthropic_model_default", "") or "").strip()
+            or "claude-sonnet-4-5-20250929"
+        )
+    else:
+        model_name = (
+            (getattr(profile, "openai_model_default", "") or "").strip()
+            or (getattr(pointers, "openai_model_default", "") or "").strip()
+            or "gpt-5.1"
+        )
+    ctx["rw_llm_model"] = model_name
 
     # ------------------------------------------------------------
     # Active project (session -> URL fallback)

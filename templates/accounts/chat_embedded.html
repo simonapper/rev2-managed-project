@@ -1,0 +1,365 @@
+<div id="rw-embedded-chat-{{ chat_ctx.chat.id }}">
+  <form method="post" action="{% url 'accounts:chat_message_create' %}">
+    {% csrf_token %}
+    <input type="hidden" name="chat_id" value="{{ chat_ctx.chat.id }}">
+    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+
+    <div class="d-flex align-items-start gap-2 mb-2">
+      <div class="flex-grow-1">
+        <textarea id="rw-chat-input-{{ chat_ctx.chat.id }}" name="content" class="form-control" rows="2" placeholder="Type message..."></textarea>
+      </div>
+      <div class="d-flex flex-column align-items-end gap-1" style="min-width: 120px;">
+        <button type="submit" class="btn btn-sm btn-success">Send</button>
+      </div>
+    </div>
+  </form>
+
+  <div class="d-flex align-items-center gap-2 mb-2">
+    <form method="post" action="{% url 'accounts:chat_use_selected' %}" id="rw-use-selected-form-{{ chat_ctx.chat.id }}" class="d-flex gap-2 m-0" data-use-selected-form="1">
+      {% csrf_token %}
+      <input type="hidden" name="chat_id" value="{{ chat_ctx.chat.id }}">
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <input type="hidden" name="selected_text" id="rw-selected-text-{{ chat_ctx.chat.id }}" value="">
+      <input type="hidden" name="apply_mode" id="rw-selected-mode-{{ chat_ctx.chat.id }}" value="replace">
+      <button type="button" class="btn btn-sm btn-outline-primary" data-apply-mode="replace">Use selected (replace)</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-mode="append">Use selected (append)</button>
+      <button type="button" class="btn btn-sm btn-outline-primary" data-apply-mode="replace" data-source="input">Use input (replace)</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-mode="append" data-source="input">Use input (append)</button>
+    </form>
+    {% if chat_ctx.show_system %}
+      <a class="btn btn-sm btn-outline-secondary" href="?{{ chat_ctx.qs_base }}&system=0">Hide system</a>
+    {% else %}
+      <a class="btn btn-sm btn-outline-secondary" href="?{{ chat_ctx.qs_base }}&system=1">Show system</a>
+    {% endif %}
+  </div>
+  {% if chat_ctx.apply_target == "ppde_purpose" %}
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <button type="button" class="btn btn-sm btn-outline-primary" data-apply-json="ppde_purpose:all">
+        Use JSON -> Planning purpose (all)
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-json="ppde_purpose:pdo_summary">
+        Apply PDO summary
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-json="ppde_purpose:cko_stage1">
+        Apply CKO alignment (stage 1)
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-json="ppde_purpose:cko_final">
+        Apply CKO alignment (final)
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-json="ppde_purpose:planning_constraints">
+        Apply planning constraints
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-json="ppde_purpose:assumptions">
+        Apply assumptions
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-json="ppde_purpose:planning_purpose">
+        Apply planning purpose
+      </button>
+    </div>
+  {% endif %}
+
+  {% if chat_ctx.turn_items %}
+    <div class="rw-turn-split">
+      <div class="rw-turn-list">
+        <table class="rw-turn-table">
+          <thead>
+            <tr>
+              <th style="width:70px;">Turn</th>
+              <th>Title</th>
+              <th style="width:140px;">Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in chat_ctx.turn_items %}
+              {% if t.kind != "system" or chat_ctx.show_system %}
+                <tr class="{% if chat_ctx.active_turn and t.turn_id == chat_ctx.active_turn.turn_id %}rw-turn-row-active{% endif %}">
+                  <td>
+                    <a class="rw-turn-rowlink" href="?{{ chat_ctx.qs_base }}&turn={{ t.turn_id }}">{{ t.number }}</a>
+                  </td>
+                  <td>
+                    <a class="rw-turn-rowlink" href="?{{ chat_ctx.qs_base }}&turn={{ t.turn_id }}">{{ t.title|default:"(no input)"|truncatechars:60 }}</a>
+                  </td>
+                  <td>
+                    <a class="rw-turn-rowlink" href="?{{ chat_ctx.qs_base }}&turn={{ t.turn_id }}">{{ t.created_at|date:"Y-m-d H:i" }}</a>
+                  </td>
+                </tr>
+              {% endif %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="rw-turn-detail">
+        {% if not chat_ctx.active_turn %}
+          <div class="alert alert-secondary mb-0">Select a turn to view its panes.</div>
+        {% else %}
+          {% with pane=chat_ctx.active_turn %}
+            <textarea id="rw-active-answer-{{ chat_ctx.chat.id }}" class="d-none" aria-hidden="true">{{ pane.answer|default:"" }}</textarea>
+            <textarea id="rw-active-output-{{ chat_ctx.chat.id }}" class="d-none" aria-hidden="true">{{ pane.output|default:"" }}</textarea>
+            <div class="d-flex flex-column gap-2">
+              {% if not chat_ctx.is_system_turn %}
+                <details open class="rw-channel">
+                  <summary class="fw-semibold">INPUT</summary>
+                  <div class="pt-2">
+                    {% if pane.input %}
+                      <div class="rw-message">
+                        <div class="rw-message-body">{{ pane.input.raw_text|linebreaksbr }}</div>
+                      </div>
+                    {% else %}
+                      <div class="text-secondary small">No input.</div>
+                    {% endif %}
+                  </div>
+                </details>
+                <details open class="rw-channel">
+                  <summary class="fw-semibold">ANSWER</summary>
+                  <div class="pt-2">
+                    {% if pane.answer %}
+                      <div class="rw-message">
+                        <div class="rw-message-body">{{ pane.answer|linebreaksbr }}</div>
+                      </div>
+                    {% else %}
+                      <div class="text-secondary small">No ANSWER.</div>
+                    {% endif %}
+                  </div>
+                </details>
+                <details class="rw-channel">
+                  <summary class="fw-semibold">OUTPUT</summary>
+                  <div class="pt-2">
+                    {% if pane.output %}
+                      <div class="rw-message">
+                        <div class="rw-message-body">{{ pane.output|linebreaksbr }}</div>
+                      </div>
+                    {% else %}
+                      <div class="text-secondary small">No OUTPUT.</div>
+                    {% endif %}
+                  </div>
+                </details>
+              {% else %}
+                <details open class="rw-channel">
+                  <summary class="fw-semibold">SYSTEM</summary>
+                  <div class="pt-2">
+                    <div class="rw-message">
+                      <div class="rw-message-body">{{ pane.output|linebreaksbr }}</div>
+                    </div>
+                  </div>
+                </details>
+              {% endif %}
+            </div>
+          {% endwith %}
+        {% endif %}
+      </div>
+    </div>
+
+    <details class="rw-channel mt-3">
+      <summary class="fw-semibold">Transcript</summary>
+      <div class="pt-2">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-transcript-copy="1">Copy transcript</button>
+        </div>
+        <div class="border rounded p-2 bg-white" style="max-height: 320px; overflow: auto;">
+          {% for t in chat_ctx.turn_items_rev %}
+            {% if t.kind == "turn" %}
+              <div class="mb-3" data-transcript-item="1">
+                <div class="fw-semibold">User</div>
+                <div class="rw-message-body" style="white-space:pre-wrap;">{{ t.input.raw_text|default:"" }}</div>
+                <div class="fw-semibold mt-2">Answer</div>
+                <div class="rw-message-body" style="white-space:pre-wrap;">{{ t.answer|default:"" }}</div>
+                <div class="fw-semibold mt-2">Output</div>
+                <div class="rw-message-body" style="white-space:pre-wrap;">{{ t.output|default:"" }}</div>
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </div>
+    </details>
+  {% else %}
+    <div class="alert alert-secondary mb-3">No messages yet.</div>
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  var root = document.getElementById("rw-embedded-chat-{{ chat_ctx.chat.id }}");
+  if (!root) return;
+  var draftKey = "rw_chat_draft_{{ chat_ctx.chat.id }}";
+  var inputEl = root.querySelector("#rw-chat-input-{{ chat_ctx.chat.id }}");
+  var formEl = inputEl ? inputEl.closest("form") : null;
+  if (inputEl) {
+    try {
+      var saved = localStorage.getItem(draftKey) || "";
+      if (saved && !inputEl.value) {
+        inputEl.value = saved;
+      }
+    } catch (e) {}
+    var saveDraft = function () {
+      try {
+        localStorage.setItem(draftKey, inputEl.value || "");
+      } catch (e) {}
+    };
+    inputEl.addEventListener("input", saveDraft);
+    inputEl.addEventListener("blur", saveDraft);
+  }
+  if (formEl) {
+    formEl.addEventListener("submit", function () {
+      try {
+        localStorage.removeItem(draftKey);
+      } catch (e) {}
+    });
+  }
+  var form = root.querySelector("form[data-use-selected-form]");
+  if (!form) return;
+  var textInput = root.querySelector("#rw-selected-text-{{ chat_ctx.chat.id }}");
+  var modeInput = root.querySelector("#rw-selected-mode-{{ chat_ctx.chat.id }}");
+  var buttons = form.querySelectorAll("button[data-apply-mode]");
+  if (!textInput || !modeInput || !buttons.length) return;
+
+  function getSelectedText() {
+    var sel = window.getSelection ? window.getSelection() : null;
+    if (!sel) return "";
+    return String(sel).trim();
+  }
+
+  function getInputText() {
+    var el = root.querySelector("#rw-chat-input-{{ chat_ctx.chat.id }}");
+    if (el && String(el.value || "").trim()) {
+      return String(el.value || "").trim();
+    }
+    var ansEl = root.querySelector("#rw-active-answer-{{ chat_ctx.chat.id }}");
+    if (ansEl && String(ansEl.value || "").trim()) {
+      return String(ansEl.value || "").trim();
+    }
+    var outEl = root.querySelector("#rw-active-output-{{ chat_ctx.chat.id }}");
+    if (outEl && String(outEl.value || "").trim()) {
+      return String(outEl.value || "").trim();
+    }
+    return "";
+  }
+
+  function applyPurposeJson(txt, target) {
+    var payload = null;
+    try {
+      payload = JSON.parse(txt);
+    } catch (e) {
+      alert("Could not parse JSON. Paste valid JSON into the message box or select a turn with JSON output.");
+      return;
+    }
+    if (!payload || typeof payload !== "object") {
+      alert("JSON must be an object.");
+      return;
+    }
+    var applied = false;
+    function setField(field, value) {
+      var el = document.querySelector("[data-ppde-block='purpose'][data-ppde-field='" + field + "']");
+      if (!el) return;
+      el.value = String(value || "").trim();
+      applied = true;
+    }
+    var applyAll = (!target || target === "all");
+    function pickValue(key) {
+      if (key === "pdo_summary" && typeof payload.pdo_summary === "string") return payload.pdo_summary;
+      if (key === "planning_constraints" && typeof payload.planning_constraints === "string") return payload.planning_constraints;
+      if (key === "assumptions" && typeof payload.assumptions === "string") return payload.assumptions;
+      if (key === "planning_purpose" && typeof payload.planning_purpose === "string") return payload.planning_purpose;
+      if (key === "cko_stage1") {
+        if (payload.cko_alignment && typeof payload.cko_alignment.stage1_inputs_match === "string") return payload.cko_alignment.stage1_inputs_match;
+        if (typeof payload.cko_alignment_stage1_inputs_match === "string") return payload.cko_alignment_stage1_inputs_match;
+      }
+      if (key === "cko_final") {
+        if (payload.cko_alignment && typeof payload.cko_alignment.final_outputs_match === "string") return payload.cko_alignment.final_outputs_match;
+        if (typeof payload.cko_alignment_final_outputs_match === "string") return payload.cko_alignment_final_outputs_match;
+      }
+      return null;
+    }
+    function applyKey(key) {
+      var val = pickValue(key);
+      if (val === null) return false;
+      if (key === "planning_purpose") {
+        setField("purpose_text", val);
+      } else if (key === "cko_stage1") {
+        setField("cko_alignment_stage1_inputs_match", val);
+      } else if (key === "cko_final") {
+        setField("cko_alignment_final_outputs_match", val);
+      } else {
+        setField(key, val);
+      }
+      return true;
+    }
+    if (applyAll) {
+      applyKey("pdo_summary");
+      applyKey("cko_stage1");
+      applyKey("cko_final");
+      applyKey("planning_constraints");
+      applyKey("assumptions");
+      applyKey("planning_purpose");
+    } else {
+      var ok = applyKey(target);
+      if (!ok) {
+        alert("JSON parsed but the selected field was not found.");
+      }
+    }
+    if (!applied) {
+      alert("JSON parsed but no recognised Planning Purpose fields were found.");
+    }
+  }
+
+  buttons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var src = btn.getAttribute("data-source") || "selected";
+      var txt = (src === "input") ? getInputText() : getSelectedText();
+      if (!txt) {
+        alert(src === "input" ? "Type/paste JSON or select a turn with OUTPUT first." : "Select text in the chat first.");
+        return;
+      }
+      var mode = btn.getAttribute("data-apply-mode") || "replace";
+      textInput.value = txt;
+      modeInput.value = mode;
+      form.submit();
+    });
+  });
+
+  var jsonButtons = root.querySelectorAll("button[data-apply-json]");
+  jsonButtons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var txt = getInputText();
+      if (!txt) {
+        alert("Type/paste JSON or select a turn with OUTPUT first.");
+        return;
+      }
+      var target = btn.getAttribute("data-apply-json") || "";
+      if (target.indexOf("ppde_purpose:") === 0) {
+        var key = target.split(":", 2)[1] || "all";
+        applyPurposeJson(txt, key);
+      }
+    });
+  });
+
+  var copyBtn = root.querySelector("button[data-transcript-copy]");
+  if (copyBtn) {
+    copyBtn.addEventListener("click", function () {
+      var blocks = [];
+      var items = root.querySelectorAll("[data-transcript-item]");
+      items.forEach(function (el) {
+        var text = el.innerText || "";
+        if (text.trim()) {
+          blocks.push(text.trim());
+        }
+      });
+      var full = blocks.join("\n\n---\n\n");
+      if (!full) {
+        alert("Transcript is empty.");
+        return;
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(full);
+      } else {
+        var ta = document.createElement("textarea");
+        ta.value = full;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+    });
+  }
+})();
+</script>

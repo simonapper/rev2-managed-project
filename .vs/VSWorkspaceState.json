@@ -4,13 +4,12 @@
     "\\chats",
     "\\chats\\services",
     "\\navigator",
+    "\\projects",
+    "\\projects\\services",
     "\\templates",
     "\\templates\\accounts",
-    "\\templates\\partials",
-    "\\templates\\projects",
-    "\\templates\\projects\\cko",
     "\\workbench"
   ],
-  "SelectedNode": "\\projects\\views_ppde_ui.py",
+  "SelectedNode": "\\chats\\services\\chat_bootstrap.py",
   "PreviewInSolutionExplorer": false
 }

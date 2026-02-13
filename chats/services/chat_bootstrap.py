@@ -65,17 +65,25 @@ def bootstrap_chat(
     }
 
     if cde_mode_u == "LOOSE":
+        def _generate_panes_for_user(*args, **kwargs):
+            kwargs.setdefault("user", user)
+            return generate_panes_func(*args, **kwargs)
+
         cde_result = run_cde(
             chat=chat,
-            generate_panes_func=generate_panes_func,
+            generate_panes_func=_generate_panes_for_user,
             user_inputs=cde_inputs,
             mode="LOOSE",
             save_loose_partials=True,
         )
     elif cde_mode_u == "CONTROLLED":
+        def _generate_panes_for_user(*args, **kwargs):
+            kwargs.setdefault("user", user)
+            return generate_panes_func(*args, **kwargs)
+
         cde_result = run_cde(
             chat=chat,
-            generate_panes_func=generate_panes_func,
+            generate_panes_func=_generate_panes_for_user,
             user_inputs=cde_inputs,
             mode="CONTROLLED",
             save_loose_partials=True,

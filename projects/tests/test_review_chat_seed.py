@@ -41,3 +41,4 @@ class ReviewChatSeedTests(TestCase):
         msg = ChatMessage.objects.filter(chat=chat, role=ChatMessage.Role.USER).order_by("id").first()
         self.assertIsNotNone(msg)
         self.assertIn("CKO (Canonical Knowledge Object)", msg.raw_text or "")
+        self.assertIn("blank line", msg.raw_text or "")

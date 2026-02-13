@@ -21,11 +21,11 @@
         Viewer
       {% endif %}
       {% if ppde_can_commit and not ppde_progress.all_locked %}
-        <div class="text-muted">Commit available after Verify/Propose.</div>
+        <div class="text-muted">Finalise available after Verify/Propose.</div>
       {% endif %}
     </div>
     {% if ppde_status_badge %}
-      <span class="badge {{ ppde_status_badge.class }}">{{ ppde_status_badge.text }}</span>
+      <span class="badge {{ ppde_status_badge.class }}" title="{{ ppde_status_badge.text }}">{{ ppde_status_badge.text }}</span>
     {% endif %}
   </div>
 
@@ -58,12 +58,12 @@
     {% if ppde_can_commit and ppde_progress.all_locked %}
       <form method="post" class="m-0 d-inline">
         {% csrf_token %}
-        <input type="hidden" name="action" value="commit_wko_version" />
-        <button type="submit" class="btn btn-sm btn-success rw-topbar-btn rw-btn-xs">Commit WKO Version</button>
+        <input type="hidden" name="action" value="finalise_pdo" />
+        <button type="submit" class="btn btn-sm btn-success rw-topbar-btn rw-btn-xs">Finalise PDO</button>
       </form>
     {% endif %}
 
-    <button type="button" class="btn btn-sm btn-secondary rw-topbar-btn rw-btn-xs" id="ppdeSaveExitBtn">
+    <button type="button" class="btn btn-sm btn-secondary rw-topbar-btn rw-btn-xs" id="ppdeSaveExitBtn" onclick="return window.ppdeSaveExit && window.ppdeSaveExit();">
       Save &amp; exit
     </button>
 

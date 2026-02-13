@@ -70,6 +70,21 @@ class UserProfile(models.Model):
 
     language_switching_permitted = models.BooleanField(default=True)
     persist_language_switch_for_session = models.BooleanField(default=True)
+    llm_provider = models.CharField(
+        max_length=20,
+        choices=[("openai", "OpenAI"), ("anthropic", "Anthropic"), ("copilot", "Copilot")],
+        default="openai",
+    )
+    openai_model_default = models.CharField(
+        max_length=80,
+        blank=True,
+        default="gpt-5.1",
+    )
+    anthropic_model_default = models.CharField(
+        max_length=80,
+        blank=True,
+        default="claude-sonnet-4-5-20250929",
+    )
 
     # -------- Legacy avatar fields (unchanged) --------
 
@@ -155,3 +170,4 @@ class UserProfile(models.Model):
 
     def __str__(self) -> str:
         return f"Profile:{self.user_id}"
+

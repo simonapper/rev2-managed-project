@@ -12,6 +12,7 @@ from projects import views
 from projects import views_project
 from projects import views_pde_ui
 from projects import views_ppde_ui
+from projects import views_review
 from projects import views_wko
 from projects import views_execution
 from projects.views_pde import pde_create_project_cko, pde_field_lock, pde_field_verify, pde_home, pde_commit
@@ -30,10 +31,21 @@ urlpatterns = [
     path("<int:project_id>/pde/commit/", pde_commit, name="pde_commit"),
     path("<int:project_id>/pde/ui/", views_pde_ui.pde_detail, name="pde_detail"),
     path("<int:project_id>/ppde/ui/", views_ppde_ui.ppde_detail, name="ppde_detail"),
+    path("<int:project_id>/review/", views_review.project_review, name="project_review"),
+    path("<int:project_id>/review/open-chat/", views_review.project_review_chat_open, name="project_review_chat_open"),
+    path("<int:project_id>/review/print/intent/", views_review.project_review_print_intent, name="project_review_print_intent"),
+    path("<int:project_id>/review/print/route/", views_review.project_review_print_route, name="project_review_print_route"),
+    path("<int:project_id>/review/open-stage-chat/", views_review.project_review_stage_chat_open, name="project_review_stage_chat_open"),
+    path("<int:project_id>/review/update-anchor/", views_review.project_review_anchor_update, name="project_review_anchor_update"),
+    path("<int:project_id>/review/anchor-status/", views_review.project_review_anchor_status, name="project_review_anchor_status"),
+    path("<int:project_id>/review/execute-reseed/", views_review.project_review_execute_reseed, name="project_review_execute_reseed"),
+    path("<int:project_id>/ppde/topic-chat/", views_ppde_ui.ppde_topic_chat_open, name="ppde_topic_chat_open"),
+    path("<int:project_id>/pde/topic-chat/", views_pde_ui.pde_topic_chat_open, name="pde_topic_chat_open"),
     path("<int:project_id>/wko/preview/", views_wko.wko_preview, name="wko_preview"),
     path("<int:project_id>/execution/", views_execution.execution_board, name="execution_board"),
     path("<int:project_id>/home/", views_project.project_home, name="project_home"),
     path("<int:project_id>/cko/preview/", views_cko.cko_preview, name="cko_preview"),
+    path("<int:project_id>/cko/print/", views_cko.cko_print, name="cko_print"),
     path("<int:project_id>/cko/<int:cko_id>/accept/", views_cko.cko_accept, name="cko_accept"),
 
 

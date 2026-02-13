@@ -17,6 +17,7 @@ from django.utils import timezone
 from django.utils.html import strip_tags
 
 from projects.models import Project, ProjectPolicy, ProjectDefinitionField, ProjectCKO
+from projects.services.artefact_render import build_cko_payload
 
 
 def _safe_enum(value: str) -> str:
@@ -171,6 +172,7 @@ def commit_project_definition(
             rel_path=rel_path,
             content_html=html,
             content_text=text,
+            content_json=build_cko_payload(locked),
             field_snapshot=dict(locked),
             created_by=project.owner,
         )

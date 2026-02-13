@@ -189,7 +189,9 @@ def pde_field_verify(request):
     rubric = _rubric_for_field(field_key)
 
     result = validate_field(
-        generate_panes_func=generate_panes,
+        generate_panes_func=lambda *args, **kwargs: generate_panes(
+            *args, user=request.user, **kwargs
+        ),
         field_key=field_key,
         value_text=value_text,
         locked_fields=locked_fields,

@@ -1,0 +1,8 @@
+{% if chat_ctx %}
+  <details class="rw-drawer mt-3" data-ppde-detail-key="ppde-chat-{{ chat_ctx.chat.id }}" {% if chat_ctx.is_open %}open{% endif %}>
+    <summary class="fw-semibold text-primary">{{ chat_ctx.chat.title }}</summary>
+    <div class="mt-2">
+      {% include "accounts/chat_embedded.html" with chat_ctx=chat_ctx %}
+    </div>
+  </details>
+{% endif %}

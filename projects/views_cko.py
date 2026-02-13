@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404
@@ -12,8 +14,9 @@ from django.views.decorators.http import require_http_methods
 from django.shortcuts import get_object_or_404, redirect, render
 from projects.models import Project, ProjectCKO
 from projects.services.cko import accept_project_cko, ProjectCKOAcceptError
+from projects.services.artefact_render import render_artefact_html
 from projects.services.pde_commit import _render_project_cko_html
-from projects.services_project_membership import is_project_committer
+from projects.services_project_membership import accessible_projects_qs, is_project_committer
 
 
 from django.http import Http404, HttpResponseRedirect
@@ -75,6 +78,12 @@ def cko_preview(request, project_id: int):
     # Render body live from field snapshot (do NOT trust stored content_html for chrome/meta)
     locked_fields = cko.field_snapshot or {}
     cko_body_html = _render_project_cko_html(project=project, locked_fields=locked_fields)
+    content_json = cko.content_json or {}
+    content_json_text = ""
+    content_json_html = ""
+    if content_json:
+        content_json_text = json.dumps(content_json, indent=2, ensure_ascii=True)
+        content_json_html = render_artefact_html("CKO", content_json)
 
     cko_help_auto_open = bool(request.session.get(auto_key))
     if cko_help_auto_open:
@@ -88,6 +97,8 @@ def cko_preview(request, project_id: int):
             "project": project,
             "cko": cko,
             "cko_body_html": cko_body_html,
+            "content_json_text": content_json_text,
+            "content_json_html": content_json_html,
             "viewing_accepted": accepted_flag,
             "can_accept": is_project_committer(project, request.user),
             "rw_help_enabled": True,
@@ -99,6 +110,46 @@ def cko_preview(request, project_id: int):
         },
     )
 
+
+
+@login_required
+def cko_print(request, project_id: int):
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+
+    accepted_flag = (request.GET.get("accepted") or "").strip().lower() in ("1", "true", "yes")
+    if accepted_flag:
+        if not project.defined_cko_id:
+            raise Http404("No accepted CKO for this project.")
+        cko = ProjectCKO.objects.filter(id=project.defined_cko_id, project=project).first()
+        if not cko:
+            raise Http404("No accepted CKO found for this project.")
+    else:
+        cko = (
+            ProjectCKO.objects.filter(project=project, status=ProjectCKO.Status.DRAFT)
+            .order_by("-version")
+            .first()
+        )
+        if not cko:
+            raise Http404("No draft CKO to preview.")
+
+    locked_fields = cko.field_snapshot or {}
+    cko_body_html = _render_project_cko_html(project=project, locked_fields=locked_fields)
+    content_json = cko.content_json or {}
+    content_json_html = ""
+    if content_json:
+        content_json_html = render_artefact_html("CKO", content_json)
+
+    return render(
+        request,
+        "projects/cko_print.html",
+        {
+            "project": project,
+            "cko": cko,
+            "cko_body_html": cko_body_html,
+            "content_json_html": content_json_html,
+            "viewing_accepted": accepted_flag,
+        },
+    )
 
 
 @login_required

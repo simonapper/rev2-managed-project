@@ -150,6 +150,21 @@
                         Reopen
                       </button>
                     {% endif %}
+
+                    {% if spec.status != "PASS_LOCKED" %}
+                      {% if spec.status != "PROPOSED" or pde_can_commit %}
+                        {% if spec.topic_chat_id %}
+                          <a class="btn btn-sm btn-outline-primary"
+                             href="?pde_chat_id={{ spec.topic_chat_id }}&pde_chat_open=1#pde-field-{{ spec.key }}">Open topic chat</a>
+                        {% else %}
+                          <button class="btn btn-sm btn-outline-primary rw-topic-chat-btn"
+                                  type="button"
+                                  data-spec-key="{{ spec.key }}">
+                            Topic chat
+                          </button>
+                        {% endif %}
+                      {% endif %}
+                    {% endif %}
                   </div>
 
                   <!-- Validation output -->
@@ -201,11 +216,19 @@
                     {% endif %}
                   {% endif %}
 
+                  {% include "projects/ppde_inline_chat.html" with chat_ctx=spec.topic_chat_ctx %}
+
                   <hr class="mt-3" />
                 </div>
                 {% endwith %}
                 {% endwith %}
               {% endfor %}
+            </form>
+
+            <form method="post" action="{% url 'projects:pde_topic_chat_open' project.id %}" id="pdeTopicChatForm" class="d-none">
+              {% csrf_token %}
+              <input type="hidden" name="spec_key" id="pdeTopicChatSpecKey" value="" />
+              <input type="hidden" name="open_in" value="drawer" />
             </form>
 
           </div>
@@ -219,6 +242,17 @@
 <script>
 (function () {
   document.addEventListener('click', function (ev) {
+    var topicBtn = ev.target && ev.target.closest ? ev.target.closest(".rw-topic-chat-btn") : null;
+    if (topicBtn) {
+      var specKey = topicBtn.getAttribute("data-spec-key") || "";
+      var form = document.getElementById("pdeTopicChatForm");
+      var input = document.getElementById("pdeTopicChatSpecKey");
+      if (form && input && specKey) {
+        input.value = specKey;
+        form.submit();
+      }
+      return;
+    }
     var btn = ev.target.closest('.rw-suggest-btn');
     if (!btn) return;
 
@@ -275,6 +309,29 @@
     var actionEl = document.getElementById('pdeAction');
     if (actionEl) actionEl.value = 'validate_lock';
     form.submit();
+  });
+})();
+</script>
+
+<script>
+(function () {
+  var key = "pde_scroll_" + "{{ project.id }}";
+  if (window.location.hash) {
+    return;
+  }
+  var saved = sessionStorage.getItem(key);
+  if (saved !== null) {
+    var y = parseInt(saved, 10);
+    if (!isNaN(y)) {
+      window.scrollTo(0, y);
+    }
+  }
+
+  var forms = document.querySelectorAll("form");
+  forms.forEach(function (f) {
+    f.addEventListener("submit", function () {
+      sessionStorage.setItem(key, String(window.scrollY || 0));
+    });
   });
 })();
 </script>

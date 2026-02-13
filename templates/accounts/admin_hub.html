@@ -10,11 +10,18 @@
       <div class="card-body p-2">
         <form method="post" class="card rw-compact-card">
           {% csrf_token %}
-            <div class="col-md-4 col-lg-3">
-            <label class="form-label small text-secondary mb-1">Default LLM model</label>
+            <div class="col-md-4 col-lg-3 mb-2">
+            <label class="form-label small text-secondary mb-1">Default OpenAI model</label>
             {{ form.openai_model_default }}
+          </div>
 
-              <button class="btn btn-sm btn-primary" type="submit">Save</button>
+          <div class="col-md-4 col-lg-3 mb-2">
+            <label class="form-label small text-secondary mb-1">Default Anthropic model</label>
+            {{ form.anthropic_model_default }}
+          </div>
+
+          <div class="col-md-4 col-lg-3">
+            <button class="btn btn-sm btn-primary" type="submit">Save</button>
           </div>
         </form>
       </div>
