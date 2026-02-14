@@ -42,12 +42,21 @@ from django.views.decorators.http import require_POST
 
 from accounts.forms import ProjectOperatingProfileForm, UserProfileDefaultsForm
 from accounts.models_avatars import Avatar
-from chats.models import ChatMessage, ChatWorkspace
+from chats.models import ChatMessage, ChatRollupEvent, ChatWorkspace
 from chats.services.cde_injection import build_cde_system_blocks
 from chats.services.cde_loop import validate_cde_inputs
 from chats.services.chat_bootstrap import bootstrap_chat
 from chats.services.llm import _get_default_model_key, generate_panes, generate_text
 from chats.services.llm import build_image_parts_from_attachments
+from chats.services.pinning import (
+    build_history_messages,
+    build_pinned_system_block,
+    count_active_window_messages,
+    count_active_window_turns,
+    rollup_segment,
+    should_auto_rollup,
+    undo_last_rollup,
+)
 from chats.services.turns import build_chat_turn_context
 from config.models import SystemConfigPointers
 from projects.models import (
@@ -497,6 +506,9 @@ def chat_delete(request, chat_id: int):
 def chat_message_create(request):
     chat_id = request.POST.get("chat_id")
     content = (request.POST.get("content") or "").strip()
+    answer_mode = (request.POST.get("answer_mode") or "quick").strip().lower()
+    if answer_mode not in {"quick", "full"}:
+        answer_mode = "quick"
     next_url = (request.POST.get("next") or "").strip()
 
     if not chat_id:
@@ -550,6 +562,9 @@ def chat_message_create(request):
         chat_overrides=chat_overrides,
     )
     system_blocks = build_system_messages(resolved)
+    pinned_block = build_pinned_system_block(chat)
+    if pinned_block:
+        system_blocks.append(pinned_block)
     system_blocks.extend(build_cde_system_blocks(chat))
 
     request.session["rw_last_system_preview"] = "\n\n".join(system_blocks)
@@ -607,28 +622,11 @@ def chat_message_create(request):
             segment_meta={"parser_version": "system_v1", "confidence": "N/A"},
         )
 
-    history_qs = (
-        ChatMessage.objects
-        .filter(chat=chat)
-        .exclude(id=user_msg.id)
-        .order_by("created_at", "id")
+    history_messages = build_history_messages(
+        chat,
+        answer_mode=answer_mode,
+        exclude_message_ids=[user_msg.id],
     )
-
-    history_messages = []
-    for m in history_qs:
-        role = (m.role or "").upper().strip()
-        if role == "USER":
-            text = (m.raw_text or m.answer_text or "").strip()
-            if text:
-                history_messages.append(
-                    {"role": "user", "content": [{"type": "input_text", "text": text}]}
-                )
-        elif role == "ASSISTANT":
-            text = (m.answer_text or m.raw_text or "").strip()
-            if text:
-                history_messages.append(
-                    {"role": "assistant", "content": [{"type": "output_text", "text": text}]}
-                )
 
     if history_messages:
         last_roles = [m.get("role") for m in history_messages[-5:]]
@@ -664,6 +662,9 @@ def chat_message_create(request):
     chat.last_output_at = timezone.now()
     chat.save(update_fields=["last_answer_snippet", "last_output_snippet", "last_output_at", "updated_at"])
 
+    if should_auto_rollup(chat):
+        rollup_segment(chat, user=request.user, trigger=ChatRollupEvent.Trigger.AUTO)
+
     if next_url and url_has_allowed_host_and_scheme(
         url=next_url,
         allowed_hosts={request.get_host()},
@@ -671,6 +672,72 @@ def chat_message_create(request):
     ):
         return redirect(next_url)
 
+    return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+
+@require_POST
+@login_required
+def message_set_importance(request, message_id: int):
+    msg = get_object_or_404(ChatMessage.objects.select_related("chat", "chat__project"), pk=message_id)
+    chat = msg.chat
+    project = chat.project
+
+    if not accessible_projects_qs(request.user).filter(id=project.id).exists():
+        messages.error(request, "No permission for this project.")
+        return redirect("accounts:chat_browse")
+
+    target = (request.POST.get("importance") or "").strip().upper()
+    allowed = {
+        ChatMessage.Importance.NORMAL,
+        ChatMessage.Importance.PINNED,
+        ChatMessage.Importance.IGNORE,
+    }
+    if target not in allowed:
+        messages.error(request, "Invalid importance value.")
+        return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+    msg.importance = target
+    msg.save(update_fields=["importance"])
+
+    if target == ChatMessage.Importance.PINNED:
+        rollup_segment(
+            chat,
+            upto_message_id=msg.id,
+            user=request.user,
+            trigger=ChatRollupEvent.Trigger.PIN,
+        )
+
+    next_url = (request.POST.get("next") or "").strip()
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return redirect(next_url)
+    return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+
+@require_POST
+@login_required
+def chat_rollup_undo(request, chat_id: int):
+    chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=chat_id)
+    if not accessible_projects_qs(request.user).filter(id=chat.project_id).exists():
+        messages.error(request, "No permission for this project.")
+        return redirect("accounts:chat_browse")
+
+    res = undo_last_rollup(chat, user=request.user)
+    if res.get("undone"):
+        messages.success(request, "Last roll-up undone.")
+    else:
+        messages.info(request, "No roll-up to undo.")
+
+    next_url = (request.POST.get("next") or "").strip()
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return redirect(next_url)
     return redirect(reverse("accounts:chat_detail", args=[chat.id]))
 
 
@@ -1430,6 +1497,9 @@ def chat_detail(request, chat_id: int):
     atts = ctx.get("attachments") or []
     has_last_image = any((getattr(a, "source", "") or "").lower() == "paste" for a in atts)
     has_last_file = any((getattr(a, "source", "") or "").lower() == "filepicker" for a in atts)
+    active_window_turns = count_active_window_turns(chat)
+    active_window_messages = count_active_window_messages(chat)
+    can_undo_rollup = ChatRollupEvent.objects.filter(chat=chat, reverted_at__isnull=True).exists()
 
     ppde_return_url = ""
     topic_chat_return_url = ""
@@ -1467,6 +1537,11 @@ def chat_detail(request, chat_id: int):
             "system_latest": {},
             "has_last_image": has_last_image,
             "has_last_file": has_last_file,
+            "active_window_turns": active_window_turns,
+            "active_window_messages": active_window_messages,
+            "pinned_cursor_message_id": chat.pinned_cursor_message_id,
+            "pinned_updated_at": chat.pinned_updated_at,
+            "can_undo_rollup": can_undo_rollup,
             "ppde_return_url": ppde_return_url,
             "topic_chat_return_url": topic_chat_return_url,
             **ctx,

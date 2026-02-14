@@ -318,20 +318,9 @@ def active_chat_bar(request) -> Dict[str, Any]:
         request.session.modified = True
         return {"rw_chat": {"active_id": None, "chat_title": "", "turn_count": 0}}
 
-    msgs = ChatMessage.objects.filter(
-        chat_id=chat.id
-    ).order_by("sequence", "id").values_list("role", flat=True)
+    from chats.services.pinning import count_active_window_turns
 
-    pending_user = 0
-    turn_count = 0
-
-    for role in msgs:
-        r = (role or "").upper()
-        if r == "USER":
-            pending_user += 1
-        elif r == "ASSISTANT" and pending_user > 0:
-            turn_count += 1
-            pending_user -= 1
+    turn_count = count_active_window_turns(chat)
 
     return {
         "rw_chat": {

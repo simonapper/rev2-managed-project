@@ -67,6 +67,10 @@ class ChatWorkspace(models.Model):
     non_goals_text = models.TextField(blank=True, default="")
     cde_is_locked = models.BooleanField(default=False)
     cde_json = models.JSONField(default=dict, blank=True)
+    pinned_summary = models.TextField(blank=True, default="")
+    pinned_conclusion = models.TextField(blank=True, default="")
+    pinned_cursor_message_id = models.BigIntegerField(null=True, blank=True)
+    pinned_updated_at = models.DateTimeField(null=True, blank=True)
 
 
     def __str__(self) -> str:
@@ -84,6 +88,11 @@ class ChatMessage(models.Model):
         ASSISTANT = "ASSISTANT", "Assistant"
         SYSTEM = "SYSTEM", "System"
 
+    class Importance(models.TextChoices):
+        NORMAL = "NORMAL", "Normal"
+        PINNED = "PINNED", "Pinned"
+        IGNORE = "IGNORE", "Ignore"
+
     chat = models.ForeignKey(
         "chats.ChatWorkspace",
         on_delete=models.CASCADE,
@@ -97,6 +106,12 @@ class ChatMessage(models.Model):
     role = models.CharField(
         max_length=20,
         choices=Role.choices,
+    )
+    importance = models.CharField(
+        max_length=20,
+        choices=Importance.choices,
+        default=Importance.NORMAL,
+        db_index=True,
     )
 
     # Authoritative transcript payload
@@ -156,6 +171,58 @@ class ChatMessage(models.Model):
 
     def __str__(self) -> str:
         return f"{self.chat_id}:{self.sequence}:{self.role}"
+
+
+class ChatRollupEvent(models.Model):
+    class Trigger(models.TextChoices):
+        AUTO = "AUTO", "Auto"
+        PIN = "PIN", "Pin"
+
+    chat = models.ForeignKey(
+        "chats.ChatWorkspace",
+        on_delete=models.CASCADE,
+        related_name="rollup_events",
+    )
+    trigger = models.CharField(max_length=16, choices=Trigger.choices, default=Trigger.AUTO)
+    trigger_message = models.ForeignKey(
+        "chats.ChatMessage",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rollup_triggers",
+    )
+
+    prev_summary = models.TextField(blank=True, default="")
+    prev_conclusion = models.TextField(blank=True, default="")
+    prev_cursor_message_id = models.BigIntegerField(null=True, blank=True)
+
+    new_summary = models.TextField(blank=True, default="")
+    new_conclusion = models.TextField(blank=True, default="")
+    new_cursor_message_id = models.BigIntegerField(null=True, blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="chat_rollup_events_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    reverted_at = models.DateTimeField(null=True, blank=True)
+    reverted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="chat_rollup_events_reverted",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["chat", "created_at"]),
+            models.Index(fields=["chat", "reverted_at"]),
+        ]
 
 """
 ChatSnapshot

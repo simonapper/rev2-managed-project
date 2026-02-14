@@ -4,6 +4,41 @@
 {% block title %}{{ chat.title }} — Reasoning Workbench{% endblock %}
 
 {% block content %}
+<style>
+  .msg-rolled-up { opacity: 0.65; }
+  .msg-pinned {
+    background-color: #fff3cd !important;
+    border: 1px solid #f0c36d !important;
+    border-radius: 6px;
+  }
+  tr.msg-pinned {
+    background-color: #fff3cd !important;
+  }
+  tr.msg-pinned .rw-turn-rowlink {
+    background-color: #fff3cd !important;
+  }
+  tr.msg-pinned > td,
+  tr.msg-pinned > th {
+    background-color: #fff3cd !important;
+  }
+  tr.msg-pinned.rw-turn-row-active > td,
+  tr.msg-pinned.rw-turn-row-active > th {
+    background-color: #fff3cd !important;
+  }
+  tr.msg-pinned.rw-turn-row-active {
+    background-color: #fff3cd !important;
+  }
+  tr[data-pinned="1"],
+  tr[data-pinned="1"] > td,
+  tr[data-pinned="1"] > th,
+  tr[data-pinned="1"] .rw-turn-rowlink,
+  tr[data-pinned="1"].rw-turn-row-active,
+  tr[data-pinned="1"].rw-turn-row-active > td,
+  tr[data-pinned="1"].rw-turn-row-active > th {
+    background-color: #fff3cd !important;
+  }
+  .msg-ignored { opacity: 0.45; filter: grayscale(0.25); }
+</style>
 <div class="rw-main-inner">
   <div class="rw-workarea">
     <div class="rw-pane">
@@ -40,6 +75,24 @@
   {% csrf_token %}
   <input type="hidden" name="chat_id" value="{{ chat.id }}">
   <input type="hidden" name="next" value="{{ request.get_full_path }}">
+  <input type="hidden" name="answer_mode" id="rw-answer-mode" value="quick">
+
+  <div class="d-flex align-items-center justify-content-between mb-2">
+    <div class="d-flex align-items-center gap-2">
+      <div class="btn-group btn-group-sm" role="group" aria-label="Answer mode">
+        <button type="button" class="btn btn-outline-secondary active" data-answer-mode="quick">Quick</button>
+        <button type="button" class="btn btn-outline-secondary" data-answer-mode="full">Full</button>
+      </div>
+      {% if can_undo_rollup %}
+        <button type="submit" form="rw-undo-rollup-form" class="btn btn-sm btn-outline-warning">Undo roll-up</button>
+      {% endif %}
+    </div>
+  </div>
+  <div class="small text-secondary mb-2">
+    Summary state: cursor {{ pinned_cursor_message_id|default:"none" }},
+    updated {% if pinned_updated_at %}{{ pinned_updated_at|date:"Y-m-d H:i" }}{% else %}never{% endif %},
+    pending {{ active_window_messages|default:0 }} messages ({{ active_window_turns|default:0 }} turns).
+  </div>
 
   <div class="d-flex align-items-start gap-2 mb-2">
     <div class="flex-grow-1">
@@ -87,6 +140,12 @@
   {% endif %}
 
 </form>
+{% if can_undo_rollup %}
+  <form id="rw-undo-rollup-form" method="post" action="{% url 'accounts:chat_rollup_undo' chat.id %}" class="d-none">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+  </form>
+{% endif %}
 
         <div class="d-flex align-items-center gap-2 mb-2">
           <form method="post" action="{% url 'accounts:chat_use_selected' %}" id="rw-use-selected-form" class="d-flex gap-2 m-0">
@@ -152,7 +211,7 @@
 
                 <tbody>
                   {% for t in turn_items %}
-                    <tr class="{% if active_turn and t.turn_id == active_turn.turn_id %}rw-turn-row-active{% endif %}">
+                    <tr data-pinned="{% if t.is_pinned %}1{% else %}0{% endif %}" class="{% if active_turn and t.turn_id == active_turn.turn_id %}rw-turn-row-active{% endif %}{% if t.is_rolled_up %} msg-rolled-up{% endif %}{% if t.is_pinned %} msg-pinned{% endif %}{% if t.is_ignored %} msg-ignored{% endif %}">
                       <td>
                         <a class="rw-turn-rowlink"
                            href="?{% if fullscreen %}fullscreen=1&{% endif %}turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}{% if show_system %}&system=1{% endif %}">
@@ -190,7 +249,7 @@
                         <summary class="fw-semibold">INPUT</summary>
                         <div class="pt-2">
                           {% if pane.input %}
-                            <div class="rw-message">
+                            <div class="rw-message{% if pane.input.importance == 'PINNED' %} msg-pinned{% endif %}{% if pane.input.importance == 'IGNORE' %} msg-ignored{% endif %}{% if chat.pinned_cursor_message_id and pane.input.id <= chat.pinned_cursor_message_id %} msg-rolled-up{% endif %}">
                               <div class="rw-message-body">{{ pane.input.raw_text|linebreaksbr }}</div>
                             </div>
                           {% else %}
@@ -203,9 +262,50 @@
                           <summary class="fw-semibold">ANSWER</summary>
                           <div class="pt-2">
                             {% if pane.answer %}
-                              <div class="rw-message">
+                              <div class="rw-message{% if pane.assistant and pane.assistant.importance == 'PINNED' %} msg-pinned{% endif %}{% if pane.assistant and pane.assistant.importance == 'IGNORE' %} msg-ignored{% endif %}{% if pane.assistant and chat.pinned_cursor_message_id and pane.assistant.id <= chat.pinned_cursor_message_id %} msg-rolled-up{% endif %}">
                                 <div class="rw-message-body">{{ pane.answer|linebreaksbr }}</div>
                               </div>
+                              {% if pane.assistant %}
+                                <div class="d-flex gap-1 mt-2">
+                                  {% if pane.assistant.importance == 'PINNED' %}
+                                    <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0">
+                                      {% csrf_token %}
+                                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                      <input type="hidden" name="importance" value="NORMAL">
+                                      <button type="submit" class="btn btn-sm btn-outline-primary">Unpin</button>
+                                    </form>
+                                  {% elif pane.input and pane.input.importance == 'PINNED' %}
+                                    <form method="post" action="{% url 'accounts:message_set_importance' pane.input.id %}" class="m-0">
+                                      {% csrf_token %}
+                                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                      <input type="hidden" name="importance" value="NORMAL">
+                                      <button type="submit" class="btn btn-sm btn-outline-primary">Unpin</button>
+                                    </form>
+                                  {% else %}
+                                    <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0">
+                                      {% csrf_token %}
+                                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                      <input type="hidden" name="importance" value="PINNED">
+                                      <button type="submit" class="btn btn-sm btn-outline-primary">Pin</button>
+                                    </form>
+                                  {% endif %}
+                                  {% if pane.assistant.importance == 'IGNORE' %}
+                                    <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0">
+                                      {% csrf_token %}
+                                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                      <input type="hidden" name="importance" value="NORMAL">
+                                      <button type="submit" class="btn btn-sm btn-outline-secondary">Unignore</button>
+                                    </form>
+                                  {% else %}
+                                    <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0">
+                                      {% csrf_token %}
+                                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                      <input type="hidden" name="importance" value="IGNORE">
+                                      <button type="submit" class="btn btn-sm btn-outline-secondary">Ignore</button>
+                                    </form>
+                                  {% endif %}
+                                </div>
+                              {% endif %}
                             {% else %}
                               <div class="text-secondary small">No ANSWER.</div>
                             {% endif %}
@@ -309,6 +409,27 @@
     list.addEventListener("scroll", function () {
       sessionStorage.setItem(key, list.scrollTop);
     });
+  })();
+  (function () {
+    var modeInput = document.getElementById("rw-answer-mode");
+    var buttons = document.querySelectorAll("button[data-answer-mode]");
+    if (!modeInput || !buttons.length) return;
+
+    function setMode(mode) {
+      modeInput.value = mode;
+      buttons.forEach(function (b) {
+        var active = (b.getAttribute("data-answer-mode") === mode);
+        b.classList.toggle("active", active);
+        b.classList.toggle("btn-primary", active);
+        b.classList.toggle("btn-outline-secondary", !active);
+      });
+    }
+    buttons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        setMode(btn.getAttribute("data-answer-mode") || "quick");
+      });
+    });
+    setMode(modeInput.value || "quick");
   })();
 
   // ------------------------------------------------------------

@@ -19,6 +19,7 @@ def build_chat_turn_context(request, chat):
     """
     attachments = list(ChatAttachment.objects.filter(chat=chat))
     show_system = request.GET.get("system") in ("1", "true", "yes")
+    cursor_id = int(getattr(chat, "pinned_cursor_message_id", 0) or 0)
 
     msg_list = list(
         ChatMessage.objects.filter(chat=chat).order_by("sequence", "id")
@@ -44,17 +45,24 @@ def build_chat_turn_context(request, chat):
 
         if role == "SYSTEM":
             if show_system:
+                is_rolled_up = bool(cursor_id and m.id <= cursor_id)
                 system_items.append({
                     "turn_id": f"sys-{m.id}",
                     "kind": "system",
                     "number": "",
                     "input": None,
                     "assistant": None,
+                    "input_message_id": None,
+                    "assistant_message_id": None,
                     "answer": "",
                     "reasoning": "",
                     "output": (m.raw_text or "").strip(),
                     "created_at": m.created_at,
                     "title": _preview(m.raw_text or "(system)"),
+                    "importance": getattr(m, "importance", "NORMAL"),
+                    "is_pinned": getattr(m, "importance", "") == "PINNED",
+                    "is_ignored": getattr(m, "importance", "") == "IGNORE",
+                    "is_rolled_up": is_rolled_up,
                 })
             continue
 
@@ -81,11 +89,23 @@ def build_chat_turn_context(request, chat):
                 "kind": "turn",
                 "input": pending_user,
                 "assistant": m,
+                "input_message_id": pending_user.id if pending_user else None,
+                "assistant_message_id": m.id,
                 "answer": answer,
                 "reasoning": reasoning,
                 "output": output,
                 "created_at": pending_user.created_at if pending_user else m.created_at,
                 "title": _preview((pending_user.raw_text if pending_user else "") or "(no input)"),
+                "importance": getattr(m, "importance", "NORMAL"),
+                "is_pinned": (
+                    getattr(m, "importance", "") == "PINNED"
+                    or (pending_user is not None and getattr(pending_user, "importance", "") == "PINNED")
+                ),
+                "is_ignored": (
+                    getattr(m, "importance", "") == "IGNORE"
+                    or (pending_user is not None and getattr(pending_user, "importance", "") == "IGNORE")
+                ),
+                "is_rolled_up": bool(cursor_id and m.id <= cursor_id),
             })
 
             pending_user = None
@@ -97,11 +117,17 @@ def build_chat_turn_context(request, chat):
             "kind": "turn",
             "input": pending_user,
             "assistant": None,
+            "input_message_id": pending_user.id,
+            "assistant_message_id": None,
             "answer": "",
             "reasoning": "",
             "output": "",
             "created_at": pending_user.created_at,
             "title": _preview(pending_user.raw_text or "(no input)"),
+            "importance": getattr(pending_user, "importance", "NORMAL"),
+            "is_pinned": getattr(pending_user, "importance", "") == "PINNED",
+            "is_ignored": getattr(pending_user, "importance", "") == "IGNORE",
+            "is_rolled_up": bool(cursor_id and pending_user.id <= cursor_id),
         })
         pending_user = None
 
