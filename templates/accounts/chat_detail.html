@@ -68,6 +68,7 @@
     {% else %}
       <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_with_system }}">Show system</a>
     {% endif %}
+    <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="{% url 'accounts:chat_detail_print' chat.id %}?{{ request.GET.urlencode }}" target="_blank" rel="noopener">Print</a>
   </div>
 </div>
 
@@ -75,7 +76,7 @@
   {% csrf_token %}
   <input type="hidden" name="chat_id" value="{{ chat.id }}">
   <input type="hidden" name="next" value="{{ request.get_full_path }}">
-  <input type="hidden" name="answer_mode" id="rw-answer-mode" value="quick">
+  <input type="hidden" name="answer_mode" id="rw-answer-mode" value="{{ answer_mode_default|default:'quick' }}">
 
   <div class="d-flex align-items-center justify-content-between mb-2">
     <div class="d-flex align-items-center gap-2">
@@ -414,6 +415,32 @@
     var modeInput = document.getElementById("rw-answer-mode");
     var buttons = document.querySelectorAll("button[data-answer-mode]");
     if (!modeInput || !buttons.length) return;
+    var modeEndpoint = "{% url 'accounts:session_overrides_update' %}";
+
+    function getCsrfToken() {
+      var parts = ("; " + document.cookie).split("; csrftoken=");
+      if (parts.length < 2) return "";
+      return parts.pop().split(";").shift();
+    }
+
+    function persistMode(mode) {
+      return fetch(modeEndpoint, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": getCsrfToken()
+        },
+        body: JSON.stringify({ axis: "answer_mode", value: mode })
+      }).then(function (resp) {
+        return resp.json().then(function (data) {
+          if (!resp.ok || !data || !data.ok) {
+            throw new Error((data && data.error) ? data.error : "Failed to save answer mode.");
+          }
+          return data;
+        });
+      });
+    }
 
     function setMode(mode) {
       modeInput.value = mode;
@@ -426,7 +453,11 @@
     }
     buttons.forEach(function (btn) {
       btn.addEventListener("click", function () {
-        setMode(btn.getAttribute("data-answer-mode") || "quick");
+        var selectedMode = btn.getAttribute("data-answer-mode") || "quick";
+        setMode(selectedMode);
+        persistMode(selectedMode).catch(function (err) {
+          alert("Could not save mode: " + (err && err.message ? err.message : String(err)));
+        });
       });
     });
     setMode(modeInput.value || "quick");

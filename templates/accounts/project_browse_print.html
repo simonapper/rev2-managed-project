@@ -1,0 +1,57 @@
+{# -*- coding: utf-8 -*- #}
+{# 7-bit ASCII only. #}
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project browse print</title>
+  <style>
+    @page { size: A4; margin: 12mm; }
+    body { font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; font-size: 10pt; color: #111; }
+    h1 { margin: 0 0 4px; font-size: 16pt; }
+    .meta { margin-bottom: 12px; border-bottom: 1px solid #ddd; padding-bottom: 8px; }
+    .small { color: #555; font-size: 9pt; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 6px; text-align: left; vertical-align: top; }
+    .actions { margin-top: 8px; }
+    .btn { border: 1px solid #999; background: #f6f6f6; padding: 3px 8px; font-size: 9pt; cursor: pointer; }
+    @media print { .actions { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="meta">
+    <h1>Browse projects</h1>
+    <div class="small">Generated: {{ generated_at|date:"Y-m-d H:i" }}</div>
+    <div class="small">Sort: {{ sort }} ({{ dir }})</div>
+    <div class="actions">
+      <button type="button" class="btn" onclick="window.print();">Print</button>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Project</th>
+        <th>Owner</th>
+        <th>Updated</th>
+        <th>Can edit</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p, can_rename in projects_with_permissions %}
+        <tr>
+          <td>{{ p.name }}</td>
+          <td>{{ p.owner.username }}</td>
+          <td>{{ p.updated_at|date:"Y-m-d H:i" }}</td>
+          <td>{% if can_rename %}Yes{% else %}No{% endif %}</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="4">No projects available.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

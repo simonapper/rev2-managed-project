@@ -384,7 +384,6 @@ def _ppde_help_answer(*, question: str, project: Project, user) -> str:
         user_text,
         image_parts=None,
         system_blocks=system_blocks,
-        force_model="gpt-5.1",
         user=user,
     )
     return (panes.get("output") or "").strip()
@@ -596,7 +595,6 @@ def _ppde_validate_block(
         user_text,
         image_parts=None,
         system_blocks=system_blocks,
-        force_model="gpt-5.1",
         user=user,
     )
     raw = str(panes.get("output") or "")
@@ -930,7 +928,6 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             user_text,
             image_parts=None,
             system_blocks=[PPDE_SEED_SUMMARY_BOILERPLATE],
-            force_model="gpt-5.1",
             user=request.user,
         )
         summary = _parse_seed_summary_json(str(panes.get("output") or ""), seed_keys)
@@ -990,7 +987,6 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             user_text,
             image_parts=None,
             system_blocks=[t for t in [contract_text, PPDE_STAGE_MAP_BOILERPLATE] if t],
-            force_model="gpt-5.1",
             user=request.user,
         )
         stages_updated, err = _parse_stage_map_json(str(panes.get("output") or ""))
@@ -1049,7 +1045,6 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             user_text,
             image_parts=None,
             system_blocks=[t for t in [contract_text, PPDE_SEED_PURPOSE_BOILERPLATE] if t],
-            force_model="gpt-5.1",
             user=request.user,
         )
         purpose_text, err = _parse_planning_purpose_json(str(panes.get("output") or ""))
@@ -1105,7 +1100,6 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             user_text,
             image_parts=None,
             system_blocks=[t for t in [contract_text, PPDE_STAGE_MAP_BOILERPLATE] if t],
-            force_model="gpt-5.1",
             user=request.user,
         )
         stages_out, err = _parse_stage_map_json(str(panes.get("output") or ""))

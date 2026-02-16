@@ -11,6 +11,7 @@ from projects.models import Project
 
 _SELECT_SM = forms.Select(attrs={"class": "form-select form-select-sm"})
 _TEXT_SM = forms.TextInput(attrs={"class": "form-control form-control-sm"})
+_NUMBER_SM = forms.NumberInput(attrs={"class": "form-control form-control-sm", "min": "2"})
 _CHECK_SM = forms.CheckboxInput(attrs={"class": "form-check-input"})
 
 
@@ -48,6 +49,7 @@ class UserProfileDefaultsForm(forms.ModelForm):
             "language_switching_permitted",
             "llm_provider",
             "persist_language_switch_for_session",
+            "summary_rollup_trigger_message_count",
             "tone_avatar",
             "reasoning_avatar",
             "approach_avatar",
@@ -59,11 +61,13 @@ class UserProfileDefaultsForm(forms.ModelForm):
             "llm_provider": _SELECT_SM,
             "language_switching_permitted": _CHECK_SM,
             "persist_language_switch_for_session": _CHECK_SM,
+            "summary_rollup_trigger_message_count": _NUMBER_SM,
         }
         labels = {
             "default_language": "Preferred language",
             "default_language_variant": "Preferred language variant",
             "llm_provider": "LLM provider",
+            "summary_rollup_trigger_message_count": "Auto-summary trigger (messages)",
         }
 
 

@@ -159,6 +159,30 @@
     max-width: 100%;
 }
 
+.rw-status-select {
+    width: 100%;
+    max-width: 100%;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    font-weight: inherit;
+    text-align: center;
+    text-align-last: center;
+    padding: 0;
+    margin: 0;
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+}
+
+.rw-status-select:focus {
+    box-shadow: none;
+}
+
 /* ============================================================
    5) Buttons & forms (topbar actions)
    ============================================================ */
@@ -723,6 +747,10 @@ This prevents SYSTEM blocks expanding rows.
         font-size: 0.7rem;
     }
 
+    .rw-status-select {
+        font-size: 0.7rem;
+    }
+
     /* Buttons shrink */
     .rw-topbar-btn {
         padding: 0.28rem 0.7rem;
@@ -849,6 +877,18 @@ This prevents SYSTEM blocks expanding rows.
     height: 30px;
     display: inline-flex;
     align-items: center;
+}
+
+/* Project browse actions: compact and equal width */
+.rw-project-action {
+    width: 64px;
+    height: 24px;
+    padding: 0.08rem 0.35rem;
+    font-size: 0.72rem;
+    line-height: 1.1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 /* Chat browse table header tidy */

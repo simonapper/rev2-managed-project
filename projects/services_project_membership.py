@@ -95,6 +95,7 @@ def accessible_projects_qs(user: AbstractUser):
                 memberships__effective_to__isnull=True,
             )
         )
+        .filter(status=Project.Status.ACTIVE)
         .distinct()
     )
 

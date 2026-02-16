@@ -45,8 +45,23 @@ def count_active_window_turns(chat: ChatWorkspace) -> int:
     return turns
 
 
-def should_auto_rollup(chat: ChatWorkspace) -> bool:
-    return count_active_window_messages(chat) >= 20
+def should_auto_rollup(chat: ChatWorkspace, *, user: Any = None) -> bool:
+    trigger_count = 20
+    try:
+        profile = None
+        if user is not None:
+            profile = getattr(user, "profile", None)
+        if profile is None and getattr(chat, "created_by", None) is not None:
+            profile = getattr(chat.created_by, "profile", None)
+        raw = getattr(profile, "summary_rollup_trigger_message_count", None)
+        if raw is not None:
+            trigger_count = int(raw)
+    except Exception:
+        trigger_count = 20
+
+    if trigger_count < 2:
+        trigger_count = 2
+    return count_active_window_messages(chat) >= trigger_count
 
 
 def build_history_messages(

@@ -1,0 +1,95 @@
+{# -*- coding: utf-8 -*- #}
+{# 7-bit ASCII only. #}
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project detail print - {{ project.name }}</title>
+  <style>
+    @page { size: A4; margin: 12mm; }
+    body { font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; font-size: 10pt; color: #111; }
+    h1 { margin: 0 0 4px; font-size: 16pt; }
+    h2 { margin: 12px 0 4px; font-size: 12pt; }
+    .meta { margin-bottom: 12px; border-bottom: 1px solid #ddd; padding-bottom: 8px; }
+    .small { color: #555; font-size: 9pt; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { border: 1px solid #ddd; padding: 6px; text-align: left; vertical-align: top; }
+    ul { margin: 6px 0 0 18px; }
+    .actions { margin-top: 8px; }
+    .btn { border: 1px solid #999; background: #f6f6f6; padding: 3px 8px; font-size: 9pt; cursor: pointer; }
+    .block { break-inside: avoid-page; }
+    @media print { .actions { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="meta">
+    <h1>{{ project.name }}</h1>
+    <div class="small">Owner: {{ project.owner.username }}</div>
+    <div class="small">Kind: {{ project.kind }}</div>
+    <div class="small">Status: {% if project.defined_cko_id %}DEFINED{% else %}UNDEFINED{% endif %}</div>
+    <div class="small">Generated: {{ generated_at|date:"Y-m-d H:i" }}</div>
+    <div class="actions">
+      <button type="button" class="btn" onclick="window.print();">Print</button>
+    </div>
+  </div>
+
+  <section class="block">
+    <h2>Project identity</h2>
+    <table>
+      <tbody>
+        <tr><th>Name</th><td>{{ project.name }}</td></tr>
+        <tr><th>Owner</th><td>{{ project.owner.username }}</td></tr>
+        <tr><th>Kind</th><td>{{ project.kind }}</td></tr>
+        <tr><th>Primary type</th><td>{{ project.primary_type }}</td></tr>
+        <tr><th>Mode</th><td>{{ project.mode }}</td></tr>
+        <tr><th>Created</th><td>{{ project.created_at|date:"Y-m-d H:i" }}</td></tr>
+        <tr><th>Updated</th><td>{{ project.updated_at|date:"Y-m-d H:i" }}</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="block">
+    <h2>Core team</h2>
+    <table>
+      <thead>
+        <tr><th>User</th><th>Role</th></tr>
+      </thead>
+      <tbody>
+        {% for row in member_rows %}
+          <tr><td>{{ row.user.username }}</td><td>{{ row.role_label }}</td></tr>
+        {% empty %}
+          <tr><td colspan="2">No active members.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="block">
+    <h2>Canonical definition</h2>
+    {% if accepted_cko %}
+      <div>Current accepted CKO: version {{ accepted_cko.version }} ({{ accepted_cko.created_at|date:"Y-m-d" }})</div>
+      <div>Status: {{ accepted_cko.status }}</div>
+      {% if cko_history %}
+        <div class="small">History:</div>
+        <ul>
+          {% for cko in cko_history %}
+            <li>V{{ cko.version }} - {{ cko.status }} - {{ cko.created_at|date:"Y-m-d" }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% else %}
+      <div>No accepted CKO.</div>
+    {% endif %}
+  </section>
+
+  <section class="block">
+    <h2>Accepted WKO</h2>
+    {% if active_wko %}
+      <div>Version {{ active_wko.version }} created {{ active_wko.created_at|date:"Y-m-d" }}</div>
+    {% else %}
+      <div>No accepted WKO.</div>
+    {% endif %}
+  </section>
+</body>
+</html>

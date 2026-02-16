@@ -38,6 +38,7 @@ def topbar_context(request) -> Dict[str, Any]:
             or "gpt-5.1"
         )
     ctx["rw_llm_model"] = model_name
+    ctx["rw_topbar_controls"] = {"enabled": False}
 
     # ------------------------------------------------------------
     # Active project (session -> URL fallback)
@@ -72,9 +73,17 @@ def topbar_context(request) -> Dict[str, Any]:
         ctx["rw_projects"] = {"active": active_project}
 
     # ------------------------------------------------------------
-    # Active chat (optional)
+    # Active chat (session -> URL fallback)
     # ------------------------------------------------------------
     chat_id = request.session.get("rw_active_chat_id")
+    if hasattr(request, "resolver_match"):
+        kwargs = request.resolver_match.kwargs or {}
+        chat_id_from_url = kwargs.get("chat_id")
+        if chat_id_from_url is not None and str(chat_id_from_url).isdigit():
+            chat_id = int(chat_id_from_url)
+            request.session["rw_active_chat_id"] = chat_id
+            request.session.modified = True
+
     if not chat_id:
         return ctx
 
@@ -102,7 +111,11 @@ def topbar_context(request) -> Dict[str, Any]:
 
     # ---- Language override: ONLY show if this chat explicitly set one ----
     rw_chat_overrides = request.session.get("rw_chat_overrides", {}) or {}
-    per_chat = rw_chat_overrides.get(str(chat.id), {}) or {}
+    per_chat = (
+        rw_chat_overrides.get(str(chat.id), {})
+        or (getattr(chat, "chat_overrides", {}) or {})
+        or {}
+    )
 
     lang_name = (per_chat.get("LANGUAGE_NAME") or "").strip()
     if lang_name:
@@ -113,6 +126,54 @@ def topbar_context(request) -> Dict[str, Any]:
         }
     else:
         ctx["rw_language"] = None
+
+    default_language_name = (getattr(profile, "default_language", "") or "English").strip() or "English"
+    default_language_variant = (getattr(profile, "default_language_variant", "") or "British English").strip() or "British English"
+    default_language_label = f"{default_language_name[:3].upper()}/{default_language_variant[:3].upper()}"
+
+    language_values = [
+        "English",
+        "British English",
+        "American English",
+        "French",
+        "German",
+        "Spanish",
+        "Italian",
+        "Portuguese",
+    ]
+    if lang_name and lang_name not in language_values:
+        language_values.append(lang_name)
+
+    language_options = [
+        {"value": v, "label": f"{v[:3].upper()}/AUTO"}
+        for v in language_values
+    ]
+
+    axis_defs = [
+        ("tone", "TONE"),
+        ("reasoning", "REASONING"),
+        ("approach", "APPROACH"),
+        ("control", "CONTROL"),
+    ]
+    axes: Dict[str, Any] = {}
+    for key, category in axis_defs:
+        qs = Avatar.objects.filter(category=category, is_active=True).order_by("name").only("id", "name")
+        axes[key] = {
+            "current": str(per_chat.get(key) or ""),
+            "overridden": bool(per_chat.get(key)),
+            "choices": [{"id": str(a.id), "name": a.name} for a in qs],
+        }
+
+    ctx["rw_topbar_controls"] = {
+        "enabled": True,
+        "axes": axes,
+        "language": {
+            "current": lang_name,
+            "overridden": bool(lang_name),
+            "default_label": default_language_label,
+            "options": language_options,
+        },
+    }
 
     return ctx
 
@@ -146,10 +207,21 @@ def session_overrides_bar(request) -> Dict[str, Any]:
     #   rw_chat_overrides = { "<chat_id>": { "COGNITIVE": "<avatar_id>", ... } }
     # ------------------------------------------------------------
     active_chat_id = request.session.get("rw_active_chat_id")
+    if hasattr(request, "resolver_match"):
+        kwargs = request.resolver_match.kwargs or {}
+        chat_id_from_url = kwargs.get("chat_id")
+        if chat_id_from_url is not None and str(chat_id_from_url).isdigit():
+            active_chat_id = int(chat_id_from_url)
+            request.session["rw_active_chat_id"] = active_chat_id
+            request.session.modified = True
     chat_overrides = request.session.get("rw_chat_overrides", {}) or {}
     chat_current = {}
     if active_chat_id:
         chat_current = chat_overrides.get(str(active_chat_id), {}) or {}
+        if not chat_current and str(active_chat_id).isdigit():
+            chat_obj = ChatWorkspace.objects.filter(pk=int(active_chat_id)).only("chat_overrides").first()
+            if chat_obj is not None:
+                chat_current = (getattr(chat_obj, "chat_overrides", {}) or {})
 
     # Chat-scoped overrides stored as str(Avatar.id) or None
     current: Dict[str, Optional[str]] = {}
@@ -249,6 +321,10 @@ def session_overrides_bar(request) -> Dict[str, Any]:
         chat_overrides_for_active = {}
         if active_chat_id:
             chat_overrides_for_active = chat_overrides.get(str(active_chat_id), {}) or {}
+            if not chat_overrides_for_active and str(active_chat_id).isdigit():
+                chat_obj = ChatWorkspace.objects.filter(pk=int(active_chat_id)).only("chat_overrides").first()
+                if chat_obj is not None:
+                    chat_overrides_for_active = (getattr(chat_obj, "chat_overrides", {}) or {})
 
         if pid is not None:
             effective = resolve_effective_context(
@@ -295,6 +371,13 @@ def active_chat_bar(request) -> Dict[str, Any]:
         return {"rw_chat": None}
 
     chat_id = request.session.get("rw_active_chat_id")
+    if hasattr(request, "resolver_match"):
+        kwargs = request.resolver_match.kwargs or {}
+        chat_id_from_url = kwargs.get("chat_id")
+        if chat_id_from_url is not None and str(chat_id_from_url).isdigit():
+            chat_id = int(chat_id_from_url)
+            request.session["rw_active_chat_id"] = chat_id
+            request.session.modified = True
     if not chat_id:
         return {"rw_chat": {"active_id": None, "chat_title": "", "turn_count": 0}}
 

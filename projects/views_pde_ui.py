@@ -124,7 +124,6 @@ def _pde_help_answer(*, question: str, project: Project, generate_panes_func) ->
         user_text,
         image_parts=None,
         system_blocks=system_blocks,
-        force_model="gpt-5.1",
     )
     return (str(panes.get("output") or "")).strip() or "No answer returned."
 

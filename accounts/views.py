@@ -10,8 +10,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import re
+import zipfile
 
 from django import forms
 from django.conf import settings
@@ -22,10 +25,11 @@ from django.contrib.auth.forms import SetPasswordForm
 from django.contrib.auth.tokens import default_token_generator
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import UploadedFile
+from django.core.files.base import ContentFile
 from django.core.paginator import Paginator
 from django.db.models import Count, Exists, OuterRef, Q, Case, When, Value, IntegerField
 from django.db.models.functions import Coalesce
-from django.http import Http404, JsonResponse
+from django.http import Http404, JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -487,18 +491,220 @@ def chat_delete(request, chat_id: int):
         messages.error(request, "No permission to delete this chat.")
         return redirect("accounts:project_chat_list", p.id)
 
-    user_n = ChatMessage.objects.filter(chat=chat, role__iexact="USER").count()
-    asst_qs = ChatMessage.objects.filter(chat=chat, role__iexact="ASSISTANT")
-    handshake_qs = asst_qs.filter(raw_text__startswith="Hello")
-    asst_real_n = asst_qs.count() - handshake_qs.count()
-
-    if user_n > 0 or asst_real_n > 0:
-        messages.error(request, "Chat contains messages and cannot be deleted.")
-        return redirect("accounts:project_chat_list", p.id)
-
     chat.delete()
-    messages.success(request, "Empty chat deleted.")
+    messages.success(request, "Chat deleted permanently.")
     return redirect("accounts:chat_browse")
+
+
+@require_POST
+@login_required
+def chat_archive(request, chat_id: int):
+    chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=chat_id)
+    p = chat.project
+    if not (request.user.is_superuser or p.owner_id == request.user.id):
+        messages.error(request, "No permission to archive this chat.")
+        return redirect("accounts:chat_browse")
+
+    if chat.status != ChatWorkspace.Status.ARCHIVED:
+        chat.status = ChatWorkspace.Status.ARCHIVED
+        chat.save(update_fields=["status", "updated_at"])
+
+    active_chat_id = request.session.get("rw_active_chat_id")
+    if str(active_chat_id) == str(chat.id):
+        request.session.pop("rw_active_chat_id", None)
+        request.session.modified = True
+
+    messages.success(request, "Chat archived.")
+    return redirect("accounts:chat_browse")
+
+
+def _safe_zip_name(name: str) -> str:
+    s = (name or "item").strip()
+    s = re.sub(r"[^A-Za-z0-9._-]+", "_", s)
+    return s[:80] or "item"
+
+
+@require_POST
+@login_required
+def chat_export(request, chat_id: int):
+    chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=chat_id)
+    p = chat.project
+    if not (request.user.is_superuser or p.owner_id == request.user.id):
+        messages.error(request, "No permission to export this chat.")
+        return redirect("accounts:chat_browse")
+
+    messages_qs = ChatMessage.objects.filter(chat=chat).order_by("id")
+    atts_qs = ChatAttachment.objects.filter(chat=chat).order_by("id")
+
+    payload = {
+        "type": "chat_export_v1",
+        "chat": {
+            "title": chat.title,
+            "status": chat.status,
+            "goal_text": chat.goal_text,
+            "success_text": chat.success_text,
+            "constraints_text": chat.constraints_text,
+            "non_goals_text": chat.non_goals_text,
+            "cde_is_locked": chat.cde_is_locked,
+            "cde_json": chat.cde_json or {},
+            "chat_overrides": chat.chat_overrides or {},
+            "pinned_summary": chat.pinned_summary or "",
+            "pinned_conclusion": chat.pinned_conclusion or "",
+            "pinned_cursor_message_id": chat.pinned_cursor_message_id,
+        },
+        "project": {
+            "name": p.name,
+            "kind": p.kind,
+        },
+        "messages": [],
+        "attachments": [],
+    }
+
+    for m in messages_qs:
+        payload["messages"].append(
+            {
+                "role": m.role,
+                "importance": m.importance,
+                "raw_text": m.raw_text or "",
+                "answer_text": m.answer_text or "",
+                "reasoning_text": m.reasoning_text or "",
+                "output_text": m.output_text or "",
+                "segment_meta": m.segment_meta or {},
+                "created_at": m.created_at.isoformat() if m.created_at else "",
+            }
+        )
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for a in atts_qs:
+            base = _safe_zip_name(a.original_name or f"attachment_{a.id}")
+            arc_path = f"attachments/{a.id}_{base}"
+            try:
+                with a.file.open("rb") as fh:
+                    zf.writestr(arc_path, fh.read())
+            except Exception:
+                continue
+            payload["attachments"].append(
+                {
+                    "path": arc_path,
+                    "original_name": a.original_name or "",
+                    "content_type": a.content_type or "",
+                    "size_bytes": int(a.size_bytes or 0),
+                    "created_at": a.created_at.isoformat() if a.created_at else "",
+                }
+            )
+        zf.writestr("chat.json", json.dumps(payload, ensure_ascii=True, indent=2))
+
+    chat_title = chat.title
+    chat.delete()
+    messages.success(request, "Chat exported and deleted.")
+
+    filename = _safe_zip_name(chat_title or "chat") + ".zip"
+    resp = HttpResponse(zip_buffer.getvalue(), content_type="application/zip")
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
+
+
+@require_POST
+@login_required
+def chat_import(request):
+    f = request.FILES.get("chat_file")
+    project_id = request.POST.get("project_id")
+
+    if not f:
+        messages.error(request, "Choose a chat export ZIP to import.")
+        return redirect("accounts:chat_browse")
+    if not str(project_id).isdigit():
+        messages.error(request, "Select a target project for chat import.")
+        return redirect("accounts:chat_browse")
+
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=int(project_id))
+
+    try:
+        zf = zipfile.ZipFile(f)
+        raw = zf.read("chat.json")
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        messages.error(request, f"Invalid chat export: {exc}")
+        return redirect("accounts:chat_browse")
+
+    if payload.get("type") != "chat_export_v1":
+        messages.error(request, "Unsupported chat export format.")
+        return redirect("accounts:chat_browse")
+
+    chat_data = payload.get("chat") or {}
+    title = (chat_data.get("title") or "Imported chat").strip()[:250] or "Imported chat"
+
+    chat = ChatWorkspace.objects.create(
+        project=project,
+        title=title,
+        status=ChatWorkspace.Status.ACTIVE,
+        created_by=request.user,
+        goal_text=str(chat_data.get("goal_text") or ""),
+        success_text=str(chat_data.get("success_text") or ""),
+        constraints_text=str(chat_data.get("constraints_text") or ""),
+        non_goals_text=str(chat_data.get("non_goals_text") or ""),
+        cde_is_locked=bool(chat_data.get("cde_is_locked")),
+        cde_json=chat_data.get("cde_json") if isinstance(chat_data.get("cde_json"), dict) else {},
+        chat_overrides=chat_data.get("chat_overrides") if isinstance(chat_data.get("chat_overrides"), dict) else {},
+        pinned_summary=str(chat_data.get("pinned_summary") or ""),
+        pinned_conclusion=str(chat_data.get("pinned_conclusion") or ""),
+        pinned_cursor_message_id=chat_data.get("pinned_cursor_message_id"),
+        pinned_updated_at=timezone.now(),
+    )
+
+    for m in payload.get("messages") or []:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "").upper()
+        if role not in {ChatMessage.Role.USER, ChatMessage.Role.ASSISTANT, ChatMessage.Role.SYSTEM}:
+            continue
+        importance = str(m.get("importance") or ChatMessage.Importance.NORMAL).upper()
+        if importance not in {
+            ChatMessage.Importance.NORMAL,
+            ChatMessage.Importance.PINNED,
+            ChatMessage.Importance.IGNORE,
+        }:
+            importance = ChatMessage.Importance.NORMAL
+        ChatMessage.objects.create(
+            chat=chat,
+            role=role,
+            importance=importance,
+            raw_text=str(m.get("raw_text") or ""),
+            answer_text=str(m.get("answer_text") or ""),
+            reasoning_text=str(m.get("reasoning_text") or ""),
+            output_text=str(m.get("output_text") or ""),
+            segment_meta=m.get("segment_meta") if isinstance(m.get("segment_meta"), dict) else {},
+        )
+
+    for a in payload.get("attachments") or []:
+        if not isinstance(a, dict):
+            continue
+        arc_path = str(a.get("path") or "")
+        if not arc_path:
+            continue
+        try:
+            blob = zf.read(arc_path)
+        except Exception:
+            continue
+        original_name = str(a.get("original_name") or "attachment.bin")
+        cf = ContentFile(blob, name=original_name)
+        ChatAttachment.objects.create(
+            project=project,
+            chat=chat,
+            uploaded_by=request.user,
+            file=cf,
+            original_name=original_name,
+            content_type=str(a.get("content_type") or ""),
+            size_bytes=int(a.get("size_bytes") or len(blob)),
+        )
+
+    request.session["rw_active_project_id"] = project.id
+    request.session["rw_active_chat_id"] = chat.id
+    request.session.modified = True
+
+    messages.success(request, "Chat imported.")
+    return redirect("accounts:chat_detail", chat_id=chat.id)
 
 
 @require_POST
@@ -529,6 +735,20 @@ def chat_message_create(request):
     project = chat.project
     user = request.user
 
+    persisted_overrides = (getattr(chat, "chat_overrides", {}) or {}).copy()
+    if persisted_overrides.get("answer_mode") != answer_mode:
+        persisted_overrides["answer_mode"] = answer_mode
+        chat.chat_overrides = persisted_overrides
+        chat.save(update_fields=["chat_overrides"])
+
+    session_chat_overrides = request.session.get("rw_chat_overrides", {}) or {}
+    session_per_chat = session_chat_overrides.get(str(chat.id), {}) or {}
+    if session_per_chat.get("answer_mode") != answer_mode:
+        session_per_chat["answer_mode"] = answer_mode
+        session_chat_overrides[str(chat.id)] = session_per_chat
+        request.session["rw_chat_overrides"] = session_chat_overrides
+        request.session.modified = True
+
     request.session["rw_active_chat_id"] = chat.id
     request.session["rw_active_project_id"] = chat.project_id
     request.session.modified = True
@@ -552,7 +772,10 @@ def chat_message_create(request):
             size_bytes=getattr(f, "size", 0) or 0,
         )
 
-    chat_overrides = (request.session.get("rw_chat_overrides", {}).get(str(chat.id), {}) or {})
+    chat_overrides = (
+        request.session.get("rw_chat_overrides", {}).get(str(chat.id), {})
+        or (getattr(chat, "chat_overrides", {}) or {})
+    )
     session_overrides = request.session.get("rw_session_overrides", {}) or {}
 
     resolved = resolve_effective_context(
@@ -662,7 +885,7 @@ def chat_message_create(request):
     chat.last_output_at = timezone.now()
     chat.save(update_fields=["last_answer_snippet", "last_output_snippet", "last_output_at", "updated_at"])
 
-    if should_auto_rollup(chat):
+    if should_auto_rollup(chat, user=request.user):
         rollup_segment(chat, user=request.user, trigger=ChatRollupEvent.Trigger.AUTO)
 
     if next_url and url_has_allowed_host_and_scheme(
@@ -1307,47 +1530,39 @@ def chat_topic_delete(request, chat_id: int):
 def chat_browse(request):
     user = request.user
 
-    # Accessible projects (single canonical rule)
     projects = (
         accessible_projects_qs(user)
         .select_related("owner", "active_l4_config")
         .order_by("name")
     )
 
-    # Project filter: default is ALL projects.
-    # Only filter when a valid numeric project id is provided.
     project_param = (request.GET.get("project") or "").strip()
-
-    # If your UI uses "all" explicitly, treat it as no filter.
     if project_param.lower() == "all":
         project_param = ""
 
-    selected_project_id = None
     active_project = None
     project_filter_active = False
     pid_int = _safe_int(project_param)
     if pid_int is not None:
-        selected_project_id = pid_int
-        active_project = projects.filter(pk=selected_project_id).first()
+        active_project = projects.filter(pk=pid_int).first()
         project_filter_active = True
 
-    # If no explicit filter, fall back to session active project for highlighting
     if not project_filter_active:
         pid = request.session.get("rw_active_project_id")
         pid_int = _safe_int(pid)
         if pid_int is not None:
             active_project = projects.filter(pk=pid_int).first()
 
-    # Keep global active project (topbar) in sync with the browse filter
     if project_filter_active and active_project is not None:
         request.session["rw_active_project_id"] = active_project.id
         request.session.modified = True
 
-
     qs = (
         ChatWorkspace.objects.select_related("project", "created_by")
         .filter(project__in=projects)
+        .filter(status=ChatWorkspace.Status.ACTIVE)
         .annotate(turn_count=Count("messages", filter=Q(messages__role=ChatMessage.Role.USER)))
+        .annotate(attachment_count=Count("attachments", distinct=True))
     )
 
     if active_project is not None and not project_param:
@@ -1359,15 +1574,11 @@ def chat_browse(request):
             )
         )
 
-    # Apply project filter only when explicitly selected
     if project_filter_active and active_project is not None:
         qs = qs.filter(project=active_project)
 
-    status = (request.GET.get("status") or "").strip()
+    status = ChatWorkspace.Status.ACTIVE
     q = (request.GET.get("q") or "").strip()
-
-    if status in (ChatWorkspace.Status.ACTIVE, ChatWorkspace.Status.ARCHIVED):
-        qs = qs.filter(status=status)
 
     if q:
         qs = qs.filter(
@@ -1428,8 +1639,115 @@ def chat_browse(request):
             "dir": direction,
         },
     )
+@login_required
+def dashboard_print(request):
+    user = request.user
+
+    projects = (
+        accessible_projects_qs(user)
+        .select_related("owner", "active_l4_config")
+        .order_by("name")
+    )
+
+    active_project_id = request.session.get("rw_active_project_id")
+    active_project = projects.filter(id=active_project_id).first() if active_project_id else None
+
+    recent_projects = list(projects.order_by("-updated_at")[:25])
+    recent_chats = list(
+        ChatWorkspace.objects.filter(project__in=projects)
+        .select_related("project")
+        .order_by("-updated_at")[:25]
+    )
+
+    return render(
+        request,
+        "accounts/dashboard_print.html",
+        {
+            "active_project": active_project,
+            "recent_projects": recent_projects,
+            "recent_chats": recent_chats,
+            "generated_at": timezone.now(),
+        },
+    )
 
 
+@login_required
+def chat_browse_print(request):
+    user = request.user
+
+    projects = (
+        accessible_projects_qs(user)
+        .select_related("owner", "active_l4_config")
+        .order_by("name")
+    )
+
+    project_param = (request.GET.get("project") or "").strip()
+    if project_param.lower() == "all":
+        project_param = ""
+
+    active_project = None
+    project_filter_active = False
+    pid_int = _safe_int(project_param)
+    if pid_int is not None:
+        active_project = projects.filter(pk=pid_int).first()
+        project_filter_active = True
+
+    if not project_filter_active:
+        pid = request.session.get("rw_active_project_id")
+        pid_int = _safe_int(pid)
+        if pid_int is not None:
+            active_project = projects.filter(pk=pid_int).first()
+
+    qs = (
+        ChatWorkspace.objects.select_related("project", "created_by")
+        .filter(project__in=projects)
+        .filter(status=ChatWorkspace.Status.ACTIVE)
+        .annotate(turn_count=Count("messages", filter=Q(messages__role=ChatMessage.Role.USER)))
+    )
+
+    if project_filter_active and active_project is not None:
+        qs = qs.filter(project=active_project)
+
+    status = ChatWorkspace.Status.ACTIVE
+    q = (request.GET.get("q") or "").strip()
+
+    if q:
+        qs = qs.filter(
+            Q(title__icontains=q)
+            | Q(last_output_snippet__icontains=q)
+            | Q(project__name__icontains=q)
+            | Q(created_by__username__icontains=q)
+        )
+
+    sort = request.GET.get("sort", "updated")
+    direction = request.GET.get("dir", "desc")
+
+    sort_map = {
+        "title": "title",
+        "project": "project__name",
+        "owner": "created_by__username",
+        "updated": "updated_at",
+        "turns": "turn_count",
+    }
+
+    order_field = sort_map.get(sort, "updated_at")
+    if direction == "desc":
+        order_field = f"-{order_field}"
+
+    chats = list(qs.order_by(order_field, "-created_at"))
+
+    return render(
+        request,
+        "accounts/chat_browse_print.html",
+        {
+            "active_project": active_project,
+            "filters": {"project": project_param, "status": status, "q": q},
+            "sort": sort,
+            "dir": direction,
+            "chats": chats,
+            "generated_at": timezone.now(),
+        },
+    )
 @login_required
 def chat_select(request, chat_id: int):
     chat = get_object_or_404(ChatWorkspace.objects.only("id", "project_id"), pk=chat_id)
@@ -1519,6 +1837,16 @@ def chat_detail(request, chat_id: int):
         if field_key:
             topic_chat_return_url = reverse("projects:pde_detail", kwargs={"project_id": chat.project_id}) + "#pde-field-" + field_key
 
+    session_chat_overrides = request.session.get("rw_chat_overrides", {}) or {}
+    session_per_chat = session_chat_overrides.get(str(chat.id), {}) or {}
+    persisted_answer_mode = (
+        str(session_per_chat.get("answer_mode") or "").strip().lower()
+        or str((getattr(chat, "chat_overrides", {}) or {}).get("answer_mode") or "").strip().lower()
+        or "quick"
+    )
+    if persisted_answer_mode not in {"quick", "full"}:
+        persisted_answer_mode = "quick"
+
     return render(
         request,
         "accounts/chat_detail.html",
@@ -1544,7 +1872,31 @@ def chat_detail(request, chat_id: int):
             "can_undo_rollup": can_undo_rollup,
             "ppde_return_url": ppde_return_url,
             "topic_chat_return_url": topic_chat_return_url,
+            "answer_mode_default": persisted_answer_mode,
             **ctx,
+        },
+    )
+
+
+@login_required
+def chat_detail_print(request, chat_id: int):
+    chat = get_object_or_404(ChatWorkspace, id=chat_id)
+    get_object_or_404(accessible_projects_qs(request.user), pk=chat.project_id)
+
+    request.session["rw_active_chat_id"] = chat.id
+    request.session.modified = True
+
+    ctx = build_chat_turn_context(request, chat)
+    show_system = request.GET.get("system") in ("1", "true", "yes")
+
+    return render(
+        request,
+        "accounts/chat_detail_print.html",
+        {
+            "chat": chat,
+            "turn_items": ctx.get("turn_items") or [],
+            "show_system": show_system,
+            "generated_at": timezone.now(),
         },
     )
 
@@ -1739,19 +2091,147 @@ def _build_language_block(*, language: str, variant: str | None, code: str | Non
     return "\n".join(lines)
 
 
+def _build_rw_v2_payload(*, user_id: int, project_id: int, session_overrides: dict, chat_overrides: dict) -> dict:
+    rw_v2 = {
+        "tone": "Brief",
+        "reasoning": "Careful",
+        "approach": "Step-by-step",
+        "control": "User",
+    }
+    try:
+        effective = resolve_effective_context(
+            project_id=project_id,
+            user_id=user_id,
+            session_overrides=session_overrides,
+            chat_overrides=chat_overrides,
+        )
+        l4 = effective.get("level4") or {}
+        rw_v2 = {
+            "tone": l4.get("tone") or rw_v2["tone"],
+            "reasoning": l4.get("reasoning") or rw_v2["reasoning"],
+            "approach": l4.get("approach") or rw_v2["approach"],
+            "control": l4.get("control") or rw_v2["control"],
+        }
+    except Exception:
+        pass
+    return rw_v2
+
+
+def _push_override_update(request, chat, changed_axes: list[tuple[str, str, str]]):
+    if not changed_axes:
+        return
+
+    lines = ["[CONFIG_CHANGE] V2 overrides updated", ""]
+    for axis, old_name, new_name in changed_axes:
+        lines.append(f"- {axis}: {old_name} -> {new_name}")
+    lines.append("")
+    lines.append("These settings are now authoritative and override the current settings.")
+    audit_system_text = "\n".join(lines)
+
+    ChatMessage.objects.create(
+        chat=chat,
+        role=ChatMessage.Role.SYSTEM,
+        raw_text=audit_system_text,
+    )
+
+    sig_src = f"{chat.id}|{audit_system_text}"
+    push_sig = hashlib.sha1(sig_src.encode("utf-8")).hexdigest()
+
+    last_sig = request.session.get("rw_last_override_push_sig")
+    last_at_iso = request.session.get("rw_last_override_push_at")
+    allow_push = True
+
+    if last_sig == push_sig and last_at_iso:
+        try:
+            last_dt = timezone.datetime.fromisoformat(last_at_iso)
+            if timezone.now() - last_dt < timezone.timedelta(seconds=10):
+                allow_push = False
+        except Exception:
+            pass
+
+    if not allow_push:
+        return
+
+    chat_overrides_now = (
+        request.session.get("rw_chat_overrides", {}).get(str(chat.id), {})
+        or (getattr(chat, "chat_overrides", {}) or {})
+    )
+    session_overrides_now = request.session.get("rw_session_overrides", {}) or {}
+
+    resolved_now = resolve_effective_context(
+        project_id=chat.project_id,
+        user_id=request.user.id,
+        session_overrides=session_overrides_now,
+        chat_overrides=chat_overrides_now,
+    )
+
+    system_blocks = build_system_messages(resolved_now)
+
+    internal_user = "Internal: acknowledge the override is active. Say: Ready."
+    panes = generate_panes(
+        "\n\n".join(system_blocks) + "\n\n" + "User:\n" + internal_user,
+        user=request.user,
+    )
+
+    assistant_raw = (
+        "ANSWER:\n"
+        + str(panes.get("answer", ""))
+        + "\n\nREASONING:\n"
+        + str(panes.get("reasoning", ""))
+        + "\n\nOUTPUT:\n"
+        + str(panes.get("output", ""))
+        + "\n"
+    )
+
+    out_msg = ChatMessage.objects.create(
+        chat=chat,
+        role=ChatMessage.Role.ASSISTANT,
+        raw_text=assistant_raw,
+        answer_text=panes.get("answer", ""),
+        reasoning_text=panes.get("reasoning", ""),
+        output_text=panes.get("output", ""),
+        segment_meta={
+            "parser_version": "llm_v1",
+            "confidence": "HIGH",
+            "override_push": True,
+        },
+    )
+
+    chat.last_output_snippet = (out_msg.output_text or "")[:280]
+    chat.last_output_at = timezone.now()
+    chat.save(update_fields=["last_output_snippet", "last_output_at", "updated_at"])
+
+    request.session["rw_last_override_push_sig"] = push_sig
+    request.session["rw_last_override_push_at"] = timezone.now().isoformat()
+
+    request.session["rw_last_system_preview"] = "\n\n".join(system_blocks)
+    request.session["rw_last_system_preview_chat_id"] = chat.id
+    request.session["rw_last_system_preview_at"] = timezone.now().isoformat()
+
+    request.session.modified = True
+
+
 @login_required
 def chat_config_overrides(request):
-    import hashlib
-
-    chat_overrides = request.session.get("rw_chat_overrides", {}) or {}
     active_chat_id = request.session.get("rw_active_chat_id")
     key = str(active_chat_id) if active_chat_id else None
-    per_chat = chat_overrides.get(key, {}) if key else {}
+    chat = ChatWorkspace.objects.filter(pk=int(active_chat_id)).first() if str(active_chat_id).isdigit() else None
+    chat_overrides = request.session.get("rw_chat_overrides", {}) or {}
+    per_chat = {}
+    if key:
+        per_chat = (
+            chat_overrides.get(key, {})
+            or (getattr(chat, "chat_overrides", {}) if chat else {})
+            or {}
+        )
 
     if request.method == "POST" and request.POST.get("reset"):
         if key:
             chat_overrides.pop(key, None)
             request.session["rw_chat_overrides"] = chat_overrides
+            if chat:
+                chat.chat_overrides = {}
+                chat.save(update_fields=["chat_overrides"])
 
         for k in [
             "rw_l4_override_COGNITIVE",
@@ -1785,6 +2265,9 @@ def chat_config_overrides(request):
         if changed:
             chat_overrides[key] = per_chat
             request.session["rw_chat_overrides"] = chat_overrides
+            if chat:
+                chat.chat_overrides = per_chat
+                chat.save(update_fields=["chat_overrides"])
             request.session.modified = True
 
     def _choices(cat: str):
@@ -1834,9 +2317,11 @@ def chat_config_overrides(request):
         per_chat.update(new_vals)
         chat_overrides[key] = per_chat
         request.session["rw_chat_overrides"] = chat_overrides
+        if chat:
+            chat.chat_overrides = per_chat
+            chat.save(update_fields=["chat_overrides"])
         request.session.modified = True
 
-        chat = ChatWorkspace.objects.filter(pk=int(active_chat_id)).first() if active_chat_id else None
         if chat:
             changed_axes = []
             for axis in ("tone", "reasoning", "approach", "control"):
@@ -1882,7 +2367,10 @@ def chat_config_overrides(request):
 
                 if allow_push:
                     try:
-                        chat_overrides_now = request.session.get("rw_chat_overrides", {}).get(str(chat.id), {}) or {}
+                        chat_overrides_now = (
+                            request.session.get("rw_chat_overrides", {}).get(str(chat.id), {})
+                            or (getattr(chat, "chat_overrides", {}) or {})
+                        )
                         session_overrides_now = request.session.get("rw_session_overrides", {}) or {}
 
                         resolved_now = resolve_effective_context(
@@ -2033,4 +2521,131 @@ def chat_attachment_delete(request, attachment_id: int):
 def session_overrides_update(request):
     if request.method != "POST":
         return JsonResponse({"ok": False, "error": "POST required"}, status=405)
-    return JsonResponse({"ok": True})
+
+    try:
+        payload = json.loads((request.body or b"{}").decode("utf-8"))
+    except Exception:
+        payload = request.POST
+
+    axis = str(payload.get("axis") or "").strip().lower()
+    value_raw = payload.get("value")
+    value = str(value_raw).strip() if value_raw is not None else ""
+
+    allowed_avatar_axes = {
+        "tone": "TONE",
+        "reasoning": "REASONING",
+        "approach": "APPROACH",
+        "control": "CONTROL",
+    }
+
+    active_chat_id = payload.get("chat_id") or request.session.get("rw_active_chat_id")
+    if not str(active_chat_id).isdigit():
+        return JsonResponse({"ok": False, "error": "No active chat selected."}, status=400)
+
+    chat = (
+        ChatWorkspace.objects.filter(pk=int(active_chat_id), project__in=accessible_projects_qs(request.user))
+        .select_related("project")
+        .first()
+    )
+    if not chat:
+        return JsonResponse({"ok": False, "error": "Active chat not found."}, status=404)
+
+    chat_overrides = request.session.get("rw_chat_overrides", {}) or {}
+    key = str(chat.id)
+    per_chat = (
+        chat_overrides.get(key, {})
+        or (getattr(chat, "chat_overrides", {}) or {})
+        or {}
+    )
+
+    changed_axes = []
+    did_change = False
+
+    if axis in allowed_avatar_axes:
+        old_id = per_chat.get(axis)
+        new_id = None
+        new_name = "Default"
+
+        if value:
+            if not value.isdigit():
+                return JsonResponse({"ok": False, "error": "Invalid avatar id."}, status=400)
+            av = Avatar.objects.filter(
+                id=int(value),
+                category=allowed_avatar_axes[axis],
+                is_active=True,
+            ).only("id", "name").first()
+            if not av:
+                return JsonResponse({"ok": False, "error": "Avatar not available for axis."}, status=400)
+            new_id = str(av.id)
+            new_name = av.name
+
+        if str(old_id or "") != str(new_id or ""):
+            old_name = _safe_avatar_name(old_id) or "Default"
+            per_chat[axis] = new_id
+            changed_axes.append((axis, old_name, new_name))
+            did_change = True
+
+    elif axis == "language":
+        old_language = (per_chat.get("LANGUAGE_NAME") or "").strip() or None
+        new_language = value or None
+        if old_language != new_language:
+            per_chat["LANGUAGE_NAME"] = new_language
+            changed_axes.append(("language_name", old_language or "Default", new_language or "Default"))
+            did_change = True
+    elif axis == "answer_mode":
+        new_mode = value.lower() if value else "quick"
+        if new_mode not in {"quick", "full"}:
+            return JsonResponse({"ok": False, "error": "Invalid answer mode."}, status=400)
+        old_mode = str(per_chat.get("answer_mode") or "quick").strip().lower()
+        if old_mode not in {"quick", "full"}:
+            old_mode = "quick"
+        if old_mode != new_mode:
+            per_chat["answer_mode"] = new_mode
+            did_change = True
+    else:
+        return JsonResponse({"ok": False, "error": "Invalid axis."}, status=400)
+
+    if did_change:
+        chat_overrides[key] = per_chat
+        request.session["rw_chat_overrides"] = chat_overrides
+        chat.chat_overrides = per_chat
+        chat.save(update_fields=["chat_overrides"])
+        request.session.modified = True
+
+    if changed_axes:
+        try:
+            _push_override_update(request, chat, changed_axes)
+        except Exception as e:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": f"Override saved, but LLM push failed: {e}",
+                },
+                status=500,
+            )
+
+    session_overrides_now = request.session.get("rw_session_overrides", {}) or {}
+    chat_overrides_now = (
+        request.session.get("rw_chat_overrides", {}).get(str(chat.id), {})
+        or (getattr(chat, "chat_overrides", {}) or {})
+    )
+
+    rw_v2 = _build_rw_v2_payload(
+        user_id=request.user.id,
+        project_id=chat.project_id,
+        session_overrides=session_overrides_now,
+        chat_overrides=chat_overrides_now,
+    )
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "changed": did_change,
+            "rw_v2": rw_v2,
+            "language_name": (chat_overrides_now.get("LANGUAGE_NAME") or "").strip(),
+            "answer_mode": str(chat_overrides_now.get("answer_mode") or "quick"),
+        }
+    )
+
+
+

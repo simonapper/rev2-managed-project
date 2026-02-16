@@ -21,11 +21,15 @@ urlpatterns = [
 
     # Dashboard
     path("dashboard/", views.dashboard, name="dashboard"),
+    path("dashboard/print/", views.dashboard_print, name="dashboard_print"),
     path("projects/create/", views_project.project_create, name="project_create"),
 
     # Project chats
     path("projects/<int:project_id>/chats/", views_project.project_chat_list, name="project_chat_list"),
     path("projects/<int:project_id>/delete/", views_project.project_delete, name="project_delete"),
+    path("projects/<int:project_id>/archive/", views_project.project_archive, name="project_archive"),
+    path("projects/<int:project_id>/export/", views_project.project_export, name="project_export"),
+    path("projects/import/", views_project.project_import, name="project_import"),
     path("projects/<int:project_id>/home/", views_project.project_home, name="project_home"),
 
 
@@ -37,13 +41,18 @@ urlpatterns = [
     path("chats/messages/<int:message_id>/importance/", views.message_set_importance, name="message_set_importance"),
     path("chats/use-selected/", views.chat_use_selected, name="chat_use_selected"),
     path("chats/browse/", views.chat_browse, name="chat_browse"),
+    path("chats/browse/print/", views.chat_browse_print, name="chat_browse_print"),
     path("chats/<int:chat_id>/", views.chat_detail, name="chat_detail"),
+    path("chats/<int:chat_id>/print/", views.chat_detail_print, name="chat_detail_print"),
     path("chats/<int:chat_id>/rollup-undo/", views.chat_rollup_undo, name="chat_rollup_undo"),
     path("chats/<int:chat_id>/topic-delete/", views.chat_topic_delete, name="chat_topic_delete"),
     path("chats/new/", views.chat_create, name="chat_create"),
     path("chats/<int:chat_id>/rename/", views.chat_rename, name="chat_rename"),
     path("chats/<int:chat_id>/select/", views.chat_select, name="chat_select"),
     path("chats/<int:chat_id>/delete/", views.chat_delete, name="chat_delete"),
+    path("chats/<int:chat_id>/archive/", views.chat_archive, name="chat_archive"),
+    path("chats/<int:chat_id>/export/", views.chat_export, name="chat_export"),
+    path("chats/import/", views.chat_import, name="chat_import"),
     path("chats/<int:chat_id>/attachments/paste/", views.chat_attachment_upload, name="chat_attachment_upload",),
     path(
         "chats/attachments/<int:attachment_id>/delete/",
@@ -94,7 +103,9 @@ urlpatterns = [
 
     # Project (L4)
     path("config/projects/", views_project.project_config_list, name="project_config_list"),
+    path("config/projects/print/", views_project.project_browse_print, name="project_browse_print"),
     path("config/projects/<int:project_id>/", views_project.project_config_edit, name="project_config_edit"),
+    path("config/projects/<int:project_id>/print/", views_project.project_detail_print, name="project_detail_print"),
     path("projects/<int:project_id>/select/", views_project.project_select, name="project_select"),
     path(
         "config/projects/<int:project_id>/definitions/",

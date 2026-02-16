@@ -46,6 +46,18 @@ class PinningRollupTests(TestCase):
             self._mk_turn(i)
         self.assertTrue(should_auto_rollup(self.chat))
 
+    def test_auto_rollup_uses_user_threshold(self):
+        profile = self.user.profile
+        profile.summary_rollup_trigger_message_count = 6
+        profile.save(update_fields=["summary_rollup_trigger_message_count"])
+
+        for i in range(2):
+            self._mk_turn(i)
+        self.assertFalse(should_auto_rollup(self.chat, user=self.user))
+
+        self._mk_turn(3)
+        self.assertTrue(should_auto_rollup(self.chat, user=self.user))
+
     def test_manual_pin_advances_cursor_immediately(self):
         u1, a1 = self._mk_turn(1)
         u2, a2 = self._mk_turn(2)

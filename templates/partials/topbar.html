@@ -27,16 +27,24 @@
       <div class="rw-status-grid" aria-label="Active configuration status">
 
         {# TOP ROW (left): Language #}
-        <div class="rw-status {% if rw_language %}rw-status--overridden{% endif %}">
+        <div class="rw-status {% if rw_topbar_controls.enabled and rw_topbar_controls.language.overridden %}rw-status--overridden{% elif rw_language %}rw-status--overridden{% endif %}">
           <div class="rw-status-label">Language</div>
           <div class="rw-status-value">
-            {% if rw_language %}
-              {{ rw_language.name|default:"English"|slice:":3"|upper }}
-              {% if rw_language.variant %}
-                /{{ rw_language.variant|slice:":3"|upper }}
-              {% else %}
-                /AUTO
-              {% endif %}
+            {% if rw_topbar_controls.enabled %}
+              <select class="rw-status-select rw-topbar-select"
+                      data-axis="language"
+                      aria-label="Language override">
+                <option value="" {% if not rw_topbar_controls.language.current %}selected{% endif %}>
+                  {{ rw_topbar_controls.language.default_label }}
+                </option>
+                {% for opt in rw_topbar_controls.language.options %}
+                  <option value="{{ opt.value }}" {% if rw_topbar_controls.language.current == opt.value %}selected{% endif %}>
+                    {{ opt.label }}
+                  </option>
+                {% endfor %}
+              </select>
+            {% elif rw_language %}
+              {{ rw_language.name|default:"English"|slice:":3"|upper }}{% if rw_language.variant %}/{{ rw_language.variant|slice:":3"|upper }}{% else %}/AUTO{% endif %}
             {% else %}
               {% with p=request.user.profile %}
                 {{ p.default_language|default:"English"|slice:":3"|upper }}/{{ p.default_language_variant|default:"British English"|slice:":3"|upper }}
@@ -46,24 +54,84 @@
         </div>
 
         {# ---------- V2 AVATAR TILES (CANONICAL) ---------- #}
-        <div class="rw-status">
+        <div class="rw-status {% if rw_topbar_controls.enabled and rw_topbar_controls.axes.tone.overridden %}rw-status--overridden{% endif %}">
           <div class="rw-status-label">Tone</div>
-          <div class="rw-status-value">{% if rw_v2 %}{{ rw_v2.tone }}{% else %}—{% endif %}</div>
+          <div class="rw-status-value">
+            {% if rw_topbar_controls.enabled %}
+              <select class="rw-status-select rw-topbar-select"
+                      data-axis="tone"
+                      aria-label="Tone override">
+                <option value="" {% if not rw_topbar_controls.axes.tone.current %}selected{% endif %}>
+                  {% if rw_v2 %}{{ rw_v2.tone }}{% else %}-{% endif %}
+                </option>
+                {% for opt in rw_topbar_controls.axes.tone.choices %}
+                  <option value="{{ opt.id }}" {% if rw_topbar_controls.axes.tone.current == opt.id %}selected{% endif %}>{{ opt.name }}</option>
+                {% endfor %}
+              </select>
+            {% else %}
+              {% if rw_v2 %}{{ rw_v2.tone }}{% else %}—{% endif %}
+            {% endif %}
+          </div>
         </div>
 
-        <div class="rw-status">
+        <div class="rw-status {% if rw_topbar_controls.enabled and rw_topbar_controls.axes.reasoning.overridden %}rw-status--overridden{% endif %}">
           <div class="rw-status-label">Reasoning</div>
-          <div class="rw-status-value">{% if rw_v2 %}{{ rw_v2.reasoning }}{% else %}—{% endif %}</div>
+          <div class="rw-status-value">
+            {% if rw_topbar_controls.enabled %}
+              <select class="rw-status-select rw-topbar-select"
+                      data-axis="reasoning"
+                      aria-label="Reasoning override">
+                <option value="" {% if not rw_topbar_controls.axes.reasoning.current %}selected{% endif %}>
+                  {% if rw_v2 %}{{ rw_v2.reasoning }}{% else %}-{% endif %}
+                </option>
+                {% for opt in rw_topbar_controls.axes.reasoning.choices %}
+                  <option value="{{ opt.id }}" {% if rw_topbar_controls.axes.reasoning.current == opt.id %}selected{% endif %}>{{ opt.name }}</option>
+                {% endfor %}
+              </select>
+            {% else %}
+              {% if rw_v2 %}{{ rw_v2.reasoning }}{% else %}—{% endif %}
+            {% endif %}
+          </div>
         </div>
 
-        <div class="rw-status">
+        <div class="rw-status {% if rw_topbar_controls.enabled and rw_topbar_controls.axes.approach.overridden %}rw-status--overridden{% endif %}">
           <div class="rw-status-label">Approach</div>
-          <div class="rw-status-value">{% if rw_v2 %}{{ rw_v2.approach }}{% else %}—{% endif %}</div>
+          <div class="rw-status-value">
+            {% if rw_topbar_controls.enabled %}
+              <select class="rw-status-select rw-topbar-select"
+                      data-axis="approach"
+                      aria-label="Approach override">
+                <option value="" {% if not rw_topbar_controls.axes.approach.current %}selected{% endif %}>
+                  {% if rw_v2 %}{{ rw_v2.approach }}{% else %}-{% endif %}
+                </option>
+                {% for opt in rw_topbar_controls.axes.approach.choices %}
+                  <option value="{{ opt.id }}" {% if rw_topbar_controls.axes.approach.current == opt.id %}selected{% endif %}>{{ opt.name }}</option>
+                {% endfor %}
+              </select>
+            {% else %}
+              {% if rw_v2 %}{{ rw_v2.approach }}{% else %}—{% endif %}
+            {% endif %}
+          </div>
         </div>
 
-        <div class="rw-status">
+        <div class="rw-status {% if rw_topbar_controls.enabled and rw_topbar_controls.axes.control.overridden %}rw-status--overridden{% endif %}">
           <div class="rw-status-label">Control</div>
-          <div class="rw-status-value">{% if rw_v2 %}{{ rw_v2.control }}{% else %}—{% endif %}</div>
+          <div class="rw-status-value">
+            {% if rw_topbar_controls.enabled %}
+              <select class="rw-status-select rw-topbar-select"
+                      data-axis="control"
+                      aria-label="Control override">
+                <option value="" {% if not rw_topbar_controls.axes.control.current %}selected{% endif %}>
+                  {% if rw_v2 %}{{ rw_v2.control }}{% else %}-{% endif %}
+                </option>
+                {% for opt in rw_topbar_controls.axes.control.choices %}
+                  <option value="{{ opt.id }}" {% if rw_topbar_controls.axes.control.current == opt.id %}selected{% endif %}>{{ opt.name }}</option>
+                {% endfor %}
+              </select>
+            {% else %}
+              {% if rw_v2 %}{{ rw_v2.control }}{% else %}—{% endif %}
+            {% endif %}
+          </div>
         </div>
 
         {# --- Row break: bottom row is Project, Chat, Current Turn --- #}
@@ -168,3 +236,65 @@
 </header>
 
 {% include "partials/rw_help_offcanvas.html" %}
+
+{% if rw_topbar_controls.enabled %}
+<script>
+(function () {
+  var selects = document.querySelectorAll(".rw-topbar-select[data-axis]");
+  if (!selects.length) return;
+
+  function getCsrfToken() {
+    var parts = ("; " + document.cookie).split("; csrftoken=");
+    if (parts.length < 2) return "";
+    return parts.pop().split(";").shift();
+  }
+
+  var endpoint = "{% url 'accounts:session_overrides_update' %}";
+
+  function setTileHighlight(select) {
+    var tile = select.closest(".rw-status");
+    if (!tile) return;
+    tile.classList.toggle("rw-status--overridden", !!String(select.value || "").trim());
+  }
+
+  selects.forEach(function (select) {
+    var previous = select.value;
+    select.addEventListener("focus", function () {
+      previous = select.value;
+    });
+    select.addEventListener("change", function () {
+      var payload = {
+        axis: select.getAttribute("data-axis") || "",
+        value: select.value || "",
+        chat_id: "{{ active_chat.id|default:'' }}"
+      };
+
+      select.disabled = true;
+      fetch(endpoint, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": getCsrfToken()
+        },
+        body: JSON.stringify(payload)
+      })
+      .then(function (resp) { return resp.json(); })
+      .then(function (data) {
+        if (!data || !data.ok) {
+          throw new Error((data && data.error) ? data.error : "Override update failed.");
+        }
+        setTileHighlight(select);
+      })
+      .catch(function (err) {
+        select.value = previous;
+        alert("Override update failed: " + (err && err.message ? err.message : String(err)));
+      })
+      .finally(function () {
+        select.disabled = false;
+      });
+    });
+  });
+})();
+</script>
+{% endif %}

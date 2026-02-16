@@ -15,7 +15,28 @@
       <h5 class="mb-1">Browse Chats</h5>
       <div class="text-secondary small">Fast list view across accessible projects</div>
     </div>
+    <a class="btn btn-sm rw-btn-xs btn-outline-secondary" href="{% url 'accounts:chat_browse_print' %}?{{ request.GET.urlencode }}" target="_blank" rel="noopener">Print</a>
   </div>
+
+  <form method="post" action="{% url 'accounts:chat_import' %}" enctype="multipart/form-data" class="row g-2 align-items-end mb-3">
+    {% csrf_token %}
+    <div class="col-sm-4 col-md-3">
+      <label class="form-label small text-secondary mb-1">Import chat to project</label>
+      <select name="project_id" class="form-select form-select-sm" required>
+        <option value="">Select project</option>
+        {% for p in projects %}
+          <option value="{{ p.id }}" {% if active_project and active_project.id == p.id %}selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-sm-5 col-md-6">
+      <label class="form-label small text-secondary mb-1">Chat export ZIP</label>
+      <input type="file" name="chat_file" class="form-control form-control-sm" accept=".zip" required>
+    </div>
+    <div class="col-sm-3 col-md-3">
+      <button class="btn btn-sm rw-btn-xs btn-outline-primary w-100" type="submit">Import chat</button>
+    </div>
+  </form>
 
   <form method="get" class="row g-2 align-items-end mb-3">
   <div class="col-sm-4 col-md-3">
@@ -33,9 +54,7 @@
   <div class="col-sm-3 col-md-2">
     <label class="form-label small text-secondary mb-1">Status</label>
     <select name="status" class="form-select form-select-sm">
-      <option value="" {% if not filters.status %}selected{% endif %}>All</option>
       <option value="ACTIVE" {% if filters.status == "ACTIVE" %}selected{% endif %}>Active</option>
-      <option value="ARCHIVED" {% if filters.status == "ARCHIVED" %}selected{% endif %}>Archived</option>
     </select>
   </div>
 
@@ -46,7 +65,7 @@
     </div>
 
     <div class="col-sm-12 col-md-2">
-      <button class="btn btn-sm btn-primary w-100" type="submit">Filter</button>
+      <button class="btn btn-sm rw-btn-xs btn-primary w-100" type="submit">Filter</button>
     </div>
   </form>
 
@@ -108,8 +127,8 @@
                   <td class="text-center text-secondary small" style="background-color: {{ row_color }};">{{ c.turn_count }}</td>
                   <td class="text-secondary rw-updated-col" style="background-color: {{ row_color }};">{{ c.updated_at }}</td>
                  <td class="text-secondary small" style="background-color: {{ row_color }};">
-                   {% if c.last_output_snippet %}
-                     {{ c.last_output_answer|truncatechars:150|default:"(empty)" }}
+                   {% if c.last_answer_snippet or c.last_output_snippet %}
+                     {{ c.last_answer_snippet|default:c.last_output_snippet|truncatechars:150 }}
                    {% else %}
                      (empty)
                    {% endif %}
@@ -117,18 +136,40 @@
                   <td class="text-end" style="background-color: {{ row_color }};">
                     <div class="d-inline-flex gap-1">
 
-                    <a class="btn btn-sm btn-outline-secondary rw-chat-action"
+                    <a class="btn btn-sm rw-btn-xs btn-outline-secondary rw-chat-action"
                        href="{% url 'accounts:chat_detail' c.id %}">
                       Open
                     </a>
-                    {% if c.turn_count == 0 %}
+                    {% if request.user.is_superuser or c.project.owner_id == request.user.id %}
+                        <form method="post"
+                            action="{% url 'accounts:chat_archive' c.id %}"
+                            class="d-inline">
+                        {% csrf_token %}
+                        <button type="submit"
+                                class="btn btn-sm rw-btn-xs btn-outline-warning rw-chat-action"
+                                onclick="return confirm('Archive this chat?');">
+                          Archive
+                        </button>
+                        </form>
+
+                        <form method="post"
+                            action="{% url 'accounts:chat_export' c.id %}"
+                            class="d-inline">
+                        {% csrf_token %}
+                        <button type="submit"
+                                class="btn btn-sm rw-btn-xs btn-outline-primary rw-chat-action"
+                                onclick="return confirm('Export and permanently delete this chat?');">
+                          Export
+                        </button>
+                        </form>
+
                         <form method="post"
                             action="{% url 'accounts:chat_delete' c.id %}"
                             class="d-inline">
                         {% csrf_token %}
                         <button type="submit"
-                                class="btn btn-sm btn-outline-danger rw-chat-action"
-                                onclick="return confirm('Delete this empty chat?');">
+                                class="btn btn-sm rw-btn-xs btn-outline-danger rw-chat-action"
+                                onclick="return confirm('Permanently delete this chat?');">
                           Delete
                         </button>
                         </form>
@@ -153,13 +194,13 @@
 
          <div class="btn-group">
           {% if page_obj.has_previous %}
-            <a class="btn btn-sm btn-outline-secondary"
+            <a class="btn btn-sm rw-btn-xs btn-outline-secondary"
                href="?project={{ filters.project }}&status={{ filters.status }}&q={{ filters.q }}&sort={{ sort }}&dir={{ dir }}&page={{ page_obj.previous_page_number }}">
               Prev
             </a>
           {% endif %}
           {% if page_obj.has_next %}
-            <a class="btn btn-sm btn-outline-secondary"
+            <a class="btn btn-sm rw-btn-xs btn-outline-secondary"
                href="?project={{ filters.project }}&status={{ filters.status }}&q={{ filters.q }}&sort={{ sort }}&dir={{ dir }}&page={{ page_obj.next_page_number }}">
               Next
             </a>

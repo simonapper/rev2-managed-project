@@ -4,14 +4,19 @@
 from __future__ import annotations
 
 from django import forms
+import io
+import json
+import re
+import zipfile
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
+from django.core.files.base import ContentFile
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, Q
 from django.db.models.functions import Coalesce
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -25,6 +30,7 @@ from config.models import ConfigRecord, ConfigScope, ConfigVersion
 from projects.models import Project, ProjectCKO, ProjectMembership, ProjectWKO
 from projects.services.project_bootstrap import bootstrap_project
 from projects.services_project_membership import accessible_projects_qs, is_project_manager, can_edit_committee
+from uploads.models import ChatAttachment
 
 
 @login_required
@@ -171,29 +177,14 @@ def project_create(request):
 def project_delete(request, project_id: int):
     p = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
 
-    if p.kind != "SANDBOX":
-        messages.error(request, "Only SANDBOX projects can be deleted.")
-        return redirect("accounts:project_config_list")
-
     if not (request.user.is_superuser or p.owner_id == request.user.id):
         messages.error(request, "You do not have permission to delete this project.")
-        return redirect("accounts:project_config_list")
-
-    has_real_msgs = ChatMessage.objects.filter(
-        chat__project=p,
-        role__iexact="USER",
-    ).exists()
-
-    if has_real_msgs:
-        messages.error(request, "Project contains chats with messages and cannot be deleted.")
         return redirect("accounts:project_config_list")
 
     name = p.name or "(unnamed project)"
 
     with transaction.atomic():
         Project.objects.filter(pk=p.pk).update(active_l4_config=None)
-
-        delete_empty_sandbox_chats(project=p)
 
         scopes = ConfigScope.objects.filter(project=p)
         ConfigVersion.objects.filter(config__scope__in=scopes).delete()
@@ -202,7 +193,250 @@ def project_delete(request, project_id: int):
 
         p.delete()
 
-    messages.success(request, f"Deleted SANDBOX project: {name}")
+    if str(request.session.get("rw_active_project_id")) == str(project_id):
+        request.session.pop("rw_active_project_id", None)
+        request.session.pop("rw_active_chat_id", None)
+        request.session.modified = True
+
+    messages.success(request, f"Project deleted permanently: {name}")
+    return redirect("accounts:project_config_list")
+
+
+@require_POST
+@login_required
+def project_archive(request, project_id: int):
+    p = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+    if not (request.user.is_superuser or p.owner_id == request.user.id):
+        messages.error(request, "You do not have permission to archive this project.")
+        return redirect("accounts:project_config_list")
+
+    if p.status != Project.Status.ARCHIVED:
+        p.status = Project.Status.ARCHIVED
+        p.save(update_fields=["status", "updated_at"])
+        ChatWorkspace.objects.filter(project=p).exclude(status=ChatWorkspace.Status.ARCHIVED).update(
+            status=ChatWorkspace.Status.ARCHIVED
+        )
+
+    if str(request.session.get("rw_active_project_id")) == str(project_id):
+        request.session.pop("rw_active_project_id", None)
+        request.session.pop("rw_active_chat_id", None)
+        request.session.modified = True
+
+    messages.success(request, "Project archived (all chats archived).")
+    return redirect("accounts:project_config_list")
+
+
+def _safe_zip_name(name: str) -> str:
+    s = (name or "item").strip()
+    s = re.sub(r"[^A-Za-z0-9._-]+", "_", s)
+    return s[:80] or "item"
+
+
+def _unique_project_name(base: str) -> str:
+    name = (base or "Imported Project").strip()[:200] or "Imported Project"
+    if not Project.objects.filter(name=name).exists():
+        return name
+    i = 2
+    while True:
+        candidate = (f"{name} ({i})")[:200]
+        if not Project.objects.filter(name=candidate).exists():
+            return candidate
+        i += 1
+
+
+@require_POST
+@login_required
+def project_export(request, project_id: int):
+    p = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+    if not (request.user.is_superuser or p.owner_id == request.user.id):
+        messages.error(request, "You do not have permission to export this project.")
+        return redirect("accounts:project_config_list")
+
+    chats = list(ChatWorkspace.objects.filter(project=p).order_by("id"))
+    payload = {
+        "type": "project_export_v1",
+        "project": {
+            "name": p.name,
+            "description": p.description or "",
+            "purpose": p.purpose or "",
+            "kind": p.kind,
+            "primary_type": p.primary_type,
+            "mode": p.mode,
+            "status": p.status,
+        },
+        "chats": [],
+    }
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for chat in chats:
+            chat_payload = {
+                "title": chat.title,
+                "status": chat.status,
+                "goal_text": chat.goal_text,
+                "success_text": chat.success_text,
+                "constraints_text": chat.constraints_text,
+                "non_goals_text": chat.non_goals_text,
+                "cde_is_locked": chat.cde_is_locked,
+                "cde_json": chat.cde_json or {},
+                "chat_overrides": chat.chat_overrides or {},
+                "pinned_summary": chat.pinned_summary or "",
+                "pinned_conclusion": chat.pinned_conclusion or "",
+                "pinned_cursor_message_id": chat.pinned_cursor_message_id,
+                "messages": [],
+                "attachments": [],
+            }
+            for m in ChatMessage.objects.filter(chat=chat).order_by("id"):
+                chat_payload["messages"].append(
+                    {
+                        "role": m.role,
+                        "importance": m.importance,
+                        "raw_text": m.raw_text or "",
+                        "answer_text": m.answer_text or "",
+                        "reasoning_text": m.reasoning_text or "",
+                        "output_text": m.output_text or "",
+                        "segment_meta": m.segment_meta or {},
+                    }
+                )
+
+            for a in ChatAttachment.objects.filter(chat=chat).order_by("id"):
+                base = _safe_zip_name(a.original_name or f"attachment_{a.id}")
+                arc = f"attachments/chat_{chat.id}/{a.id}_{base}"
+                try:
+                    with a.file.open("rb") as fh:
+                        zf.writestr(arc, fh.read())
+                except Exception:
+                    continue
+                chat_payload["attachments"].append(
+                    {
+                        "path": arc,
+                        "original_name": a.original_name or "",
+                        "content_type": a.content_type or "",
+                        "size_bytes": int(a.size_bytes or 0),
+                    }
+                )
+
+            payload["chats"].append(chat_payload)
+
+        zf.writestr("project.json", json.dumps(payload, ensure_ascii=True, indent=2))
+
+    project_name = p.name
+    project_id_str = str(p.id)
+    project_delete(request, p.id)
+    request.session.pop("rw_active_project_id", None)
+    if request.session.get("rw_active_chat_id"):
+        request.session.pop("rw_active_chat_id", None)
+    request.session.modified = True
+
+    filename = _safe_zip_name(project_name or f"project_{project_id_str}") + ".zip"
+    resp = HttpResponse(zip_buffer.getvalue(), content_type="application/zip")
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
+
+
+@require_POST
+@login_required
+def project_import(request):
+    f = request.FILES.get("project_file")
+    if not f:
+        messages.error(request, "Choose a project export ZIP to import.")
+        return redirect("accounts:project_config_list")
+
+    try:
+        zf = zipfile.ZipFile(f)
+        payload = json.loads(zf.read("project.json").decode("utf-8"))
+    except Exception as exc:
+        messages.error(request, f"Invalid project export: {exc}")
+        return redirect("accounts:project_config_list")
+
+    if payload.get("type") != "project_export_v1":
+        messages.error(request, "Unsupported project export format.")
+        return redirect("accounts:project_config_list")
+
+    proj = payload.get("project") or {}
+    project = Project.objects.create(
+        name=_unique_project_name(str(proj.get("name") or "Imported Project")),
+        description=str(proj.get("description") or ""),
+        purpose=str(proj.get("purpose") or ""),
+        kind=str(proj.get("kind") or Project.Kind.STANDARD),
+        primary_type=str(proj.get("primary_type") or Project.PrimaryType.DELIVERY),
+        mode=str(proj.get("mode") or Project.Mode.PLAN),
+        status=Project.Status.ACTIVE,
+        owner=request.user,
+    )
+    bootstrap_project(project=project)
+
+    for chat_payload in payload.get("chats") or []:
+        if not isinstance(chat_payload, dict):
+            continue
+        chat = ChatWorkspace.objects.create(
+            project=project,
+            title=str(chat_payload.get("title") or "Imported chat")[:250],
+            status=ChatWorkspace.Status.ACTIVE,
+            created_by=request.user,
+            goal_text=str(chat_payload.get("goal_text") or ""),
+            success_text=str(chat_payload.get("success_text") or ""),
+            constraints_text=str(chat_payload.get("constraints_text") or ""),
+            non_goals_text=str(chat_payload.get("non_goals_text") or ""),
+            cde_is_locked=bool(chat_payload.get("cde_is_locked")),
+            cde_json=chat_payload.get("cde_json") if isinstance(chat_payload.get("cde_json"), dict) else {},
+            chat_overrides=chat_payload.get("chat_overrides") if isinstance(chat_payload.get("chat_overrides"), dict) else {},
+            pinned_summary=str(chat_payload.get("pinned_summary") or ""),
+            pinned_conclusion=str(chat_payload.get("pinned_conclusion") or ""),
+            pinned_cursor_message_id=chat_payload.get("pinned_cursor_message_id"),
+            pinned_updated_at=timezone.now(),
+        )
+
+        for m in chat_payload.get("messages") or []:
+            if not isinstance(m, dict):
+                continue
+            role = str(m.get("role") or "").upper()
+            if role not in {ChatMessage.Role.USER, ChatMessage.Role.ASSISTANT, ChatMessage.Role.SYSTEM}:
+                continue
+            importance = str(m.get("importance") or ChatMessage.Importance.NORMAL).upper()
+            if importance not in {
+                ChatMessage.Importance.NORMAL,
+                ChatMessage.Importance.PINNED,
+                ChatMessage.Importance.IGNORE,
+            }:
+                importance = ChatMessage.Importance.NORMAL
+            ChatMessage.objects.create(
+                chat=chat,
+                role=role,
+                importance=importance,
+                raw_text=str(m.get("raw_text") or ""),
+                answer_text=str(m.get("answer_text") or ""),
+                reasoning_text=str(m.get("reasoning_text") or ""),
+                output_text=str(m.get("output_text") or ""),
+                segment_meta=m.get("segment_meta") if isinstance(m.get("segment_meta"), dict) else {},
+            )
+
+        for a in chat_payload.get("attachments") or []:
+            if not isinstance(a, dict):
+                continue
+            arc_path = str(a.get("path") or "")
+            if not arc_path:
+                continue
+            try:
+                blob = zf.read(arc_path)
+            except Exception:
+                continue
+            original_name = str(a.get("original_name") or "attachment.bin")
+            cf = ContentFile(blob, name=original_name)
+            ChatAttachment.objects.create(
+                project=project,
+                chat=chat,
+                uploaded_by=request.user,
+                file=cf,
+                original_name=original_name,
+                content_type=str(a.get("content_type") or ""),
+                size_bytes=int(a.get("size_bytes") or len(blob)),
+            )
+
+    request.session["rw_active_project_id"] = project.id
+    request.session.pop("rw_active_chat_id", None)
+    request.session.modified = True
+    messages.success(request, "Project imported.")
     return redirect("accounts:project_config_list")
 
 
@@ -239,13 +473,13 @@ def project_chat_list(request, project_id: int):
         request.session.pop("rw_active_chat_id", None)
         request.session.modified = True
 
-    qs = ChatWorkspace.objects.select_related("created_by").filter(project=active_project)
+    qs = ChatWorkspace.objects.select_related("created_by").filter(
+        project=active_project,
+        status=ChatWorkspace.Status.ACTIVE,
+    )
 
-    status = request.GET.get("status")
+    status = ChatWorkspace.Status.ACTIVE
     q = (request.GET.get("q") or "").strip()
-
-    if status in (ChatWorkspace.Status.ACTIVE, ChatWorkspace.Status.ARCHIVED):
-        qs = qs.filter(status=status)
 
     if q:
         qs = qs.filter(
@@ -328,6 +562,41 @@ def project_config_list(request):
             "sort": sort,
             "dir": direction,
             "page_obj": page_obj,
+        },
+    )
+
+
+@login_required
+def project_browse_print(request):
+    user = request.user
+    qs = accessible_projects_qs(user)
+
+    sort = request.GET.get("sort", "name")
+    direction = request.GET.get("dir", "asc")
+
+    sort_map = {
+        "name": "name",
+        "owner": "owner__username",
+        "profile": "active_l4_config__file_name",
+        "updated": "updated_at",
+    }
+    order_field = sort_map.get(sort, "name")
+    if direction == "desc":
+        order_field = f"-{order_field}"
+
+    projects = list(
+        qs.select_related("owner", "active_l4_config").order_by(order_field, "name")
+    )
+    projects_with_permissions = [(proj, is_project_manager(proj, user)) for proj in projects]
+
+    return render(
+        request,
+        "accounts/project_browse_print.html",
+        {
+            "projects_with_permissions": projects_with_permissions,
+            "sort": sort,
+            "dir": direction,
+            "generated_at": timezone.now(),
         },
     )
 
@@ -521,6 +790,86 @@ def project_config_info(request, project_id: int):
             "member_rows": member_rows,
             "available_users": available_users,
             "can_edit_committee": can_edit_team,
+        },
+    )
+
+
+@login_required
+def project_detail_print(request, project_id: int):
+    active_project = get_object_or_404(
+        accessible_projects_qs(request.user),
+        pk=project_id,
+    )
+
+    accepted_cko = None
+    cko_history = []
+    latest_wko = None
+
+    if active_project.defined_cko_id:
+        accepted_cko = ProjectCKO.objects.filter(
+            id=active_project.defined_cko_id
+        ).first()
+
+        cko_history = (
+            ProjectCKO.objects
+            .filter(project=active_project)
+            .order_by("-version")
+        )
+
+    latest_wko = (
+        ProjectWKO.objects
+        .filter(project=active_project)
+        .order_by("-version")
+        .first()
+    )
+
+    memberships = (
+        ProjectMembership.objects
+        .filter(
+            project=active_project,
+            status=ProjectMembership.Status.ACTIVE,
+            effective_to__isnull=True,
+        )
+        .select_related("user")
+        .order_by("user__username")
+    )
+
+    member_rows = []
+    seen_ids = set()
+    for m in memberships:
+        role_label = "COMMITTER" if m.user_id == active_project.owner_id else m.role
+        member_rows.append(
+            {
+                "user": m.user,
+                "user_id": m.user_id,
+                "role": m.role,
+                "role_label": role_label,
+                "is_committer": m.user_id == active_project.owner_id,
+            }
+        )
+        seen_ids.add(m.user_id)
+
+    if active_project.owner_id not in seen_ids and active_project.owner_id:
+        member_rows.append(
+            {
+                "user": active_project.owner,
+                "user_id": active_project.owner_id,
+                "role": ProjectMembership.Role.OWNER,
+                "role_label": "COMMITTER",
+                "is_committer": True,
+            }
+        )
+
+    return render(
+        request,
+        "accounts/project_detail_print.html",
+        {
+            "project": active_project,
+            "accepted_cko": accepted_cko,
+            "cko_history": cko_history,
+            "active_wko": latest_wko,
+            "member_rows": member_rows,
+            "generated_at": timezone.now(),
         },
     )
 

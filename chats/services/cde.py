@@ -158,7 +158,6 @@ def validate_field(
         llm_input,
         image_parts=None,
         system_blocks=system_blocks,
-        force_model="gpt-5.1",
     )
 
 
@@ -265,7 +264,6 @@ def draft_cde_from_seed(*, generate_panes_func, seed_text: str) -> Dict[str, Any
         "Seed intent:\n" + seed_text,
         image_parts=None,
         system_blocks=system_blocks,
-        force_model="gpt-5.1",
     )
     raw = (panes.get("output") or "").strip()
     try:

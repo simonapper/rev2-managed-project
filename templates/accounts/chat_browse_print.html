@@ -1,0 +1,69 @@
+{# -*- coding: utf-8 -*- #}
+{# 7-bit ASCII only. #}
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat browse print</title>
+  <style>
+    @page { size: A4; margin: 12mm; }
+    body { font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; font-size: 10pt; color: #111; }
+    h1 { margin: 0 0 4px; font-size: 16pt; }
+    .meta { margin-bottom: 12px; border-bottom: 1px solid #ddd; padding-bottom: 8px; }
+    .small { color: #555; font-size: 9pt; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 6px; text-align: left; vertical-align: top; }
+    .actions { margin-top: 8px; }
+    .btn { border: 1px solid #999; background: #f6f6f6; padding: 3px 8px; font-size: 9pt; cursor: pointer; }
+    @media print { .actions { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="meta">
+    <h1>Browse chats</h1>
+    <div class="small">Generated: {{ generated_at|date:"Y-m-d H:i" }}</div>
+    {% if active_project %}
+      <div class="small">Project: {{ active_project.name }}</div>
+    {% endif %}
+    {% if filters.status %}
+      <div class="small">Status: {{ filters.status }}</div>
+    {% endif %}
+    {% if filters.q %}
+      <div class="small">Search: {{ filters.q }}</div>
+    {% endif %}
+    <div class="actions">
+      <button type="button" class="btn" onclick="window.print();">Print</button>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Chat</th>
+        <th>Project</th>
+        <th>Owner</th>
+        <th>Turns</th>
+        <th>Updated</th>
+        <th>Last answer</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in chats %}
+        <tr>
+          <td>{{ c.title }}</td>
+          <td>{{ c.project.name }}</td>
+          <td>{{ c.created_by.username }}</td>
+          <td>{{ c.turn_count }}</td>
+          <td>{{ c.updated_at|date:"Y-m-d H:i" }}</td>
+          <td>{{ c.last_output_answer|default:c.last_output_snippet|default:"" }}</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="6">No chats found.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

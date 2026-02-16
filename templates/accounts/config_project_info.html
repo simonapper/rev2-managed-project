@@ -26,6 +26,11 @@
 
           <div class="d-flex flex-column gap-2">
             <div class="d-flex gap-2">
+              <a class="btn btn-sm btn-outline-secondary"
+                 href="{% url 'accounts:project_detail_print' project.id %}"
+                 target="_blank" rel="noopener">
+                Print
+              </a>
               {% if active_wko %}
                 <a class="btn btn-sm btn-outline-secondary"
                    href="{% url 'projects:ppde_detail' project.id %}">

@@ -70,6 +70,7 @@ class UserProfile(models.Model):
 
     language_switching_permitted = models.BooleanField(default=True)
     persist_language_switch_for_session = models.BooleanField(default=True)
+    summary_rollup_trigger_message_count = models.PositiveIntegerField(default=20)
     llm_provider = models.CharField(
         max_length=20,
         choices=[("openai", "OpenAI"), ("anthropic", "Anthropic"), ("copilot", "Copilot")],
