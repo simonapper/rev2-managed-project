@@ -6,6 +6,7 @@ from __future__ import annotations
 from django.utils import timezone
 
 from chats.models import ChatMessage
+from chats.services.llm import _extract_json_dict_from_text
 from uploads.models import ChatAttachment
 
 
@@ -34,6 +35,29 @@ def build_chat_turn_context(request, chat):
         while "  " in t:
             t = t.replace("  ", " ")
         return (t[:n] + "...") if len(t) > n else t
+
+    def _coerce_text(value) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, list):
+            lines = []
+            for item in value:
+                lines.append("- " + str(item))
+            return "\n".join(lines).strip()
+        if isinstance(value, dict):
+            return str(value).strip()
+        return str(value).strip()
+
+    def _recover_panes_from_blob(blob: str):
+        payload = _extract_json_dict_from_text(blob or "")
+        if not isinstance(payload, dict):
+            return None
+        rec_answer = _coerce_text(payload.get("answer"))
+        rec_reasoning = _coerce_text(payload.get("reasoning"))
+        rec_output = _coerce_text(payload.get("output"))
+        return rec_answer, rec_reasoning, rec_output
 
 
     turns = []
@@ -83,6 +107,16 @@ def build_chat_turn_context(request, chat):
             # Legacy fallback: panes not stored yet
             if not (answer or reasoning or output):
                 answer = (m.raw_text or "").strip()
+            elif answer and not (reasoning or output):
+                recovered = _recover_panes_from_blob(answer)
+                if recovered:
+                    rec_answer, rec_reasoning, rec_output = recovered
+                    if rec_answer:
+                        answer = rec_answer
+                    if rec_reasoning:
+                        reasoning = rec_reasoning
+                    if rec_output:
+                        output = rec_output
 
             turns.append({
                 "turn_id": f"seq-{m.sequence}",

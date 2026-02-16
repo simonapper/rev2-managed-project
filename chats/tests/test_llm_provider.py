@@ -98,3 +98,38 @@ class LLMProviderTests(TestCase):
         self.assertIn("- Provider: Anthropic", panes["key_info"])
         self.assertIn('"model_hierarchy"', panes["visuals"])
         self.assertIn("Claude 4.5 -> Sonnet", panes["visuals"])
+
+    def test_anthropic_panes_recovers_json_like_payload_with_multiline_strings(self):
+        malformed_payload = """{
+  "answer": "Yes, there are UK options.",
+  "key_info": [
+    "Angels exist",
+    "Grants exist"
+  ],
+  "visuals": [
+    "Option A -> angels",
+    "Option B -> grants"
+  ],
+  "reasoning": "Funding can help but does not replace an operating partner.",
+  "output": "## UK options
+
+- Angels
+- Grants
+"
+}"""
+        mock_client = Mock()
+        mock_client.messages.create.return_value = SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=malformed_payload)]
+        )
+
+        with patch("chats.services.llm._get_anthropic_client", return_value=mock_client):
+            panes = llm.generate_panes(
+                user_text="Any UK options?",
+                provider="anthropic",
+            )
+
+        self.assertEqual(panes["answer"], "Yes, there are UK options.")
+        self.assertIn("- Angels exist", panes["key_info"])
+        self.assertIn("- Option A -> angels", panes["visuals"])
+        self.assertIn("Funding can help", panes["reasoning"])
+        self.assertIn("## UK options", panes["output"])

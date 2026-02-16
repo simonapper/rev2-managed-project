@@ -6,6 +6,7 @@ import base64
 import importlib.util
 import json
 import os
+import re
 import anthropic
 from typing import Any, Dict, List, Optional
 
@@ -179,7 +180,82 @@ def _extract_json_dict_from_text(raw_text: str) -> Optional[Dict[str, Any]]:
                 return obj
         except Exception:
             pass
+    loose = _extract_loose_pane_payload(text)
+    if loose:
+        return loose
     return None
+
+
+def _extract_loose_pane_payload(raw_text: str) -> Optional[Dict[str, Any]]:
+    """
+    Best-effort parser for JSON-like pane payloads that are not valid JSON
+    (for example raw newlines inside quoted strings).
+    """
+    text = (raw_text or "").strip()
+    if not text:
+        return None
+
+    key_pat = re.compile(r'"(answer|key_info|visuals|reasoning|output)"\s*:\s*', re.IGNORECASE)
+    matches = list(key_pat.finditer(text))
+    if not matches:
+        return None
+
+    out: Dict[str, Any] = {}
+    for idx, match in enumerate(matches):
+        key = (match.group(1) or "").lower()
+        start = match.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        raw_value = text[start:end].strip()
+        if not raw_value:
+            out[key] = ""
+            continue
+
+        if idx + 1 < len(matches):
+            if raw_value.endswith(","):
+                raw_value = raw_value[:-1].rstrip()
+        else:
+            raw_value = re.sub(r"\s*}\s*$", "", raw_value, flags=re.DOTALL).rstrip()
+            if raw_value.endswith(","):
+                raw_value = raw_value[:-1].rstrip()
+
+        if raw_value.startswith('"'):
+            str_val = raw_value[1:]
+            if str_val.endswith('"'):
+                str_val = str_val[:-1]
+            str_val = (
+                str_val
+                .replace('\\"', '"')
+                .replace("\\n", "\n")
+                .replace("\\r", "\r")
+                .replace("\\t", "\t")
+                .replace("\\\\", "\\")
+            )
+            out[key] = str_val.strip()
+            continue
+
+        if raw_value.startswith("["):
+            try:
+                out[key] = json.loads(raw_value)
+                continue
+            except Exception:
+                items = re.findall(r'"([^"]+)"', raw_value, flags=re.DOTALL)
+                if items:
+                    out[key] = [i.strip() for i in items if i.strip()]
+                    continue
+
+        if raw_value.startswith("{"):
+            try:
+                out[key] = json.loads(raw_value)
+                continue
+            except Exception:
+                out[key] = raw_value
+                continue
+
+        out[key] = raw_value.strip()
+
+    if not any(str(out.get(k) or "").strip() for k in _PANE_KEYS):
+        return None
+    return out
 
 
 def _normalise_panes_payload(payload: Dict[str, Any]) -> Dict[str, str]:
