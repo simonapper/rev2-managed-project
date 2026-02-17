@@ -306,6 +306,10 @@ class ProjectMembership(models.Model):
         SUSPENDED = "SUSPENDED", "Suspended"
         LEFT = "LEFT", "Left"
 
+    class PlanningMode(models.TextChoices):
+        ASSISTED = "ASSISTED", "Assisted"
+        AUTO = "AUTO", "Auto"
+
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="memberships")
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -318,6 +322,11 @@ class ProjectMembership(models.Model):
     scope_ref = models.CharField(max_length=255, blank=True, default="")  # required if scope_type != PROJECT
 
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+    planning_mode = models.CharField(
+        max_length=16,
+        choices=PlanningMode.choices,
+        default=PlanningMode.ASSISTED,
+    )
 
     effective_from = models.DateTimeField(auto_now_add=True)
     effective_to = models.DateTimeField(null=True, blank=True)

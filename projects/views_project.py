@@ -19,6 +19,7 @@ from django.db.models.functions import Coalesce
 from django.http import JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -629,6 +630,19 @@ def project_config_info(request, project_id: int):
         .order_by("-version")
         .first()
     )
+    planning_mode = ProjectMembership.PlanningMode.ASSISTED
+    my_membership = (
+        ProjectMembership.objects.filter(
+            project=active_project,
+            user=request.user,
+            status=ProjectMembership.Status.ACTIVE,
+            effective_to__isnull=True,
+        )
+        .order_by("id")
+        .first()
+    )
+    if my_membership and (my_membership.planning_mode in dict(ProjectMembership.PlanningMode.choices)):
+        planning_mode = my_membership.planning_mode
 
     User = get_user_model()
     can_edit_team = can_edit_committee(active_project, request.user)
@@ -787,11 +801,61 @@ def project_config_info(request, project_id: int):
             "accepted_cko": accepted_cko,
             "cko_history": cko_history,
             "active_wko": latest_wko,
+            "planning_mode": planning_mode,
             "member_rows": member_rows,
             "available_users": available_users,
             "can_edit_committee": can_edit_team,
         },
     )
+
+
+@require_POST
+@login_required
+def set_planning_mode(request, project_id: int):
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+
+    mode = (request.POST.get("mode") or "").strip().upper()
+    allowed_modes = {
+        ProjectMembership.PlanningMode.ASSISTED,
+        ProjectMembership.PlanningMode.AUTO,
+    }
+    if mode not in allowed_modes:
+        messages.error(request, "Invalid planning mode.")
+    else:
+        membership = (
+            ProjectMembership.objects.filter(
+                project=project,
+                user=request.user,
+                status=ProjectMembership.Status.ACTIVE,
+                effective_to__isnull=True,
+            )
+            .order_by("id")
+            .first()
+        )
+        if membership is None and request.user.id == project.owner_id:
+            membership = ProjectMembership.objects.create(
+                project=project,
+                user=request.user,
+                role=ProjectMembership.Role.OWNER,
+                scope_type=ProjectMembership.ScopeType.PROJECT,
+                scope_ref="",
+                status=ProjectMembership.Status.ACTIVE,
+                planning_mode=mode,
+            )
+        elif membership is not None:
+            membership.planning_mode = mode
+            membership.save(update_fields=["planning_mode", "updated_at"])
+
+        messages.success(request, "Planning mode updated.")
+
+    next_url = (request.POST.get("next") or "").strip()
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return redirect(next_url)
+    return redirect("accounts:project_config_info", project_id=project.id)
 
 
 @login_required

@@ -1,15 +1,16 @@
 {
   "ExpandedNodes": [
     "",
+    "\\accounts",
     "\\chats",
     "\\chats\\services",
     "\\navigator",
-    "\\projects",
     "\\projects\\services",
+    "\\static",
     "\\templates",
     "\\templates\\accounts",
     "\\workbench"
   ],
-  "SelectedNode": "\\chats\\services\\chat_bootstrap.py",
+  "SelectedNode": "\\templates\\base.html",
   "PreviewInSolutionExplorer": false
 }

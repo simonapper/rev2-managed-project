@@ -2,6 +2,9 @@
 {# templates/accounts/chat_detail.html #}
 {% extends "base.html" %}
 {% block title %}{{ chat.title }} — Reasoning Workbench{% endblock %}
+<!--UI Behaviour Note:
+Turn selection is client-side; server still renders canonical HTML.-->
+
 
 {% block content %}
 <style>
@@ -38,7 +41,6 @@
     background-color: #fff3cd !important;
   }
   .msg-ignored { opacity: 0.45; filter: grayscale(0.25); }
-  .rw-turn-list-pending { visibility: hidden; }
 </style>
 <div class="rw-main-inner">
   <div class="rw-workarea">
@@ -90,12 +92,6 @@
       {% endif %}
     </div>
   </div>
-  <div class="small text-secondary mb-2">
-    Summary state: cursor {{ pinned_cursor_message_id|default:"none" }},
-    updated {% if pinned_updated_at %}{{ pinned_updated_at|date:"Y-m-d H:i" }}{% else %}never{% endif %},
-    pending {{ active_window_messages|default:0 }} messages ({{ active_window_turns|default:0 }} turns).
-  </div>
-
   <div class="d-flex align-items-start gap-2 mb-2">
     <div class="flex-grow-1">
       <textarea id="rw-chat-input" name="content" class="form-control" rows="2" placeholder="Type message..."></textarea>
@@ -189,7 +185,7 @@
         {% else %}
           <div class="rw-turn-split">
 
-            <div class="rw-turn-list rw-turn-list-pending">
+            <div class="rw-turn-list">
               <table class="rw-turn-table">
                 <thead>
                   <tr>
@@ -213,7 +209,11 @@
 
                 <tbody>
                   {% for t in turn_items %}
-                    <tr data-turn-id="{{ t.turn_id }}" data-pinned="{% if t.is_pinned %}1{% else %}0{% endif %}" class="{% if active_turn and t.turn_id == active_turn.turn_id %}rw-turn-row-active{% endif %}{% if t.is_rolled_up %} msg-rolled-up{% endif %}{% if t.is_pinned %} msg-pinned{% endif %}{% if t.is_ignored %} msg-ignored{% endif %}">
+                    <tr
+                      data-turn-id="{{ t.turn_id }}"
+                      data-active="{{ active_turn.turn_id|default:'' }}"
+                      data-pinned="{% if t.is_pinned %}1{% else %}0{% endif %}"
+                      class="{% if active_turn and t.turn_id == active_turn.turn_id %}rw-turn-row-active{% endif %}{% if t.is_rolled_up %} msg-rolled-up{% endif %}{% if t.is_pinned %} msg-pinned{% endif %}{% if t.is_ignored %} msg-ignored{% endif %}">
                       <td>
                         <a class="rw-turn-rowlink"
                            href="?{% if fullscreen %}fullscreen=1&{% endif %}turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}{% if show_system %}&system=1{% endif %}">
@@ -272,21 +272,21 @@
                                   {% if pane.assistant.importance == 'PINNED' %}
                                     <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0">
                                       {% csrf_token %}
-                                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                      <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
                                       <input type="hidden" name="importance" value="NORMAL">
                                       <button type="submit" class="btn btn-sm btn-outline-primary">Unpin</button>
                                     </form>
                                   {% elif pane.input and pane.input.importance == 'PINNED' %}
                                     <form method="post" action="{% url 'accounts:message_set_importance' pane.input.id %}" class="m-0">
                                       {% csrf_token %}
-                                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                      <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
                                       <input type="hidden" name="importance" value="NORMAL">
                                       <button type="submit" class="btn btn-sm btn-outline-primary">Unpin</button>
                                     </form>
                                   {% else %}
                                     <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0">
                                       {% csrf_token %}
-                                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                      <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
                                       <input type="hidden" name="importance" value="PINNED">
                                       <button type="submit" class="btn btn-sm btn-outline-primary">Pin</button>
                                     </form>
@@ -294,14 +294,14 @@
                                   {% if pane.assistant.importance == 'IGNORE' %}
                                     <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0">
                                       {% csrf_token %}
-                                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                      <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
                                       <input type="hidden" name="importance" value="NORMAL">
                                       <button type="submit" class="btn btn-sm btn-outline-secondary">Unignore</button>
                                     </form>
                                   {% else %}
                                     <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0">
                                       {% csrf_token %}
-                                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                      <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
                                       <input type="hidden" name="importance" value="IGNORE">
                                       <button type="submit" class="btn btn-sm btn-outline-secondary">Ignore</button>
                                     </form>
@@ -394,49 +394,93 @@
 
 <script>
   // ------------------------------------------------------------
-  // Keep turn list aligned with selected turn
+  // Turn navigation without full page reload (fetch + swap right pane)
+  // - This removes the page refresh/flicker when clicking turns.
+  // - Because we no longer navigate away, we DO NOT need scroll save/restore.
   // ------------------------------------------------------------
   (function () {
-    var list = document.querySelector(".rw-turn-list");
+    function qs(sel, root) { return (root || document).querySelector(sel); }
+
+    var list = qs(".rw-turn-list");
     if (!list) return;
-    var activeTurnId = "{{ active_turn.turn_id|default:'' }}";
-    var activeRow = null;
-    if (activeTurnId) {
-      activeRow = list.querySelector('tr[data-turn-id="' + activeTurnId + '"]');
-    }
-    if (!activeRow) {
-      activeRow = list.querySelector("tr.rw-turn-row-active");
-    }
-    if (!activeRow) {
-      list.classList.remove("rw-turn-list-pending");
-      return;
-    }
-    var target = activeRow.offsetTop - Math.floor((list.clientHeight - activeRow.offsetHeight) / 2);
-    if (target < 0) target = 0;
-    var ticks = 0;
-    var maxTicks = 100; // about 3s at 30ms
-    var applyTarget = function () {
-      list.scrollTop = target;
-      ticks += 1;
-      if (ticks === 1) {
-        list.classList.remove("rw-turn-list-pending");
-      }
-      if (ticks < maxTicks) {
-        window.setTimeout(applyTarget, 30);
-      }
-    };
-    window.requestAnimationFrame(applyTarget);
-  })();
 
-  (function () {
-    if ("scrollRestoration" in history) {
+    function setActiveRow(turnId) {
+      if (!turnId) return;
+      list.querySelectorAll("tr.rw-turn-row-active").forEach(function (r) {
+        r.classList.remove("rw-turn-row-active");
+      });
+      var row = list.querySelector('tr[data-turn-id="' + turnId + '"]');
+      if (row) row.classList.add("rw-turn-row-active");
+    }
+
+    function swapFromHtml(html) {
+      var tmp = document.createElement("div");
+      tmp.innerHTML = html;
+
+      var newDetail = qs(".rw-turn-detail", tmp);
+      var curDetail = qs(".rw-turn-detail");
+      if (newDetail && curDetail) {
+        curDetail.innerHTML = newDetail.innerHTML;
+      }
+    }
+
+    async function loadTurn(href) {
+      var resp = await fetch(href, { credentials: "same-origin" });
+      if (!resp.ok) throw new Error("Fetch failed: " + resp.status);
+      var html = await resp.text();
+      swapFromHtml(html);
+
+      // Keep URL in sync without reload
+      try { history.pushState({}, "", href); } catch (e) {}
+
+      // Sync active row from URL (defensive)
       try {
-        history.scrollRestoration = "manual";
-      } catch (e) {
-      }
+        var p = new URLSearchParams(href.slice(1));
+        var turn = p.get("turn") || "";
+        if (turn) setActiveRow(turn);
+      } catch (e) {}
     }
+
+    // Intercept turn clicks
+    list.addEventListener("click", function (ev) {
+      var a = ev.target && ev.target.closest ? ev.target.closest("a.rw-turn-rowlink") : null;
+      if (!a) return;
+
+      var href = a.getAttribute("href") || "";
+      // Only intercept same-page query navigations like "?turn=..."
+      if (!href || href.charAt(0) !== "?") return;
+
+      ev.preventDefault();
+
+      // Immediate UI feedback
+      var row = a.closest("tr[data-turn-id]");
+      if (row) setActiveRow(row.getAttribute("data-turn-id"));
+
+      loadTurn(href).catch(function () {
+        // Fallback to normal navigation if anything fails
+        window.location.href = href;
+      });
+    }, true);
+
+    // Back/forward: reload right pane for current URL
+    window.addEventListener("popstate", function () {
+      fetch(window.location.href, { credentials: "same-origin" })
+        .then(function (resp) { return resp.text(); })
+        .then(function (html) {
+          swapFromHtml(html);
+          try {
+            var p = new URLSearchParams(window.location.search || "");
+            var turn = p.get("turn") || "";
+            if (turn) setActiveRow(turn);
+          } catch (e) {}
+        })
+        .catch(function () {});
+    });
   })();
 
+  // ------------------------------------------------------------
+  // Answer mode toggle + persist
+  // ------------------------------------------------------------
   (function () {
     var modeInput = document.getElementById("rw-answer-mode");
     var buttons = document.querySelectorAll("button[data-answer-mode]");
@@ -477,6 +521,7 @@
         b.classList.toggle("btn-outline-secondary", !active);
       });
     }
+
     buttons.forEach(function (btn) {
       btn.addEventListener("click", function () {
         var selectedMode = btn.getAttribute("data-answer-mode") || "quick";
@@ -486,6 +531,7 @@
         });
       });
     });
+
     setMode(modeInput.value || "quick");
   })();
 
@@ -689,7 +735,12 @@
       });
     }
 
+    var fileBtn = document.getElementById("rw-file-btn");
     var fileInput = document.getElementById("rw-file-input");
+    if (fileBtn && fileInput) {
+      fileBtn.addEventListener("click", function () { fileInput.click(); });
+    }
+
     if (fileInput) {
       fileInput.addEventListener("change", function () {
         var file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
@@ -754,55 +805,59 @@
           });
       });
     }
-    })();
-    (function() {
-      var draftKey = "rw_chat_draft_{{ chat.id }}";
-      var inputEl = document.getElementById("rw-chat-input");
-      var formEl = inputEl ? inputEl.closest("form") : null;
-      if (inputEl) {
-        try {
-          var saved = localStorage.getItem(draftKey) || "";
-          if (saved && !inputEl.value) {
-            inputEl.value = saved;
-          }
-        } catch (e) {}
-        var saveDraft = function () {
-          try {
-            localStorage.setItem(draftKey, inputEl.value || "");
-          } catch (e) {}
-        };
-        inputEl.addEventListener("input", saveDraft);
-        inputEl.addEventListener("blur", saveDraft);
-      }
-      if (formEl) {
-        formEl.addEventListener("submit", function () {
-          try {
-            localStorage.removeItem(draftKey);
-          } catch (e) {}
-        });
-      }
-    })();
-    (function() {
-      // 7-bit ASCII: inline rename toggle
-      var btn = document.getElementById("btnRename");
-      var cancel = document.getElementById("btnRenameCancel");
-      var view = document.getElementById("chatTitleView");
-      var form = document.getElementById("chatTitleEdit");
+  })();
 
-      function showEdit(on) {
-        if (!view || !form) return;
-        view.classList.toggle("d-none", on);
-        form.classList.toggle("d-none", !on);
-        if (on) {
-          var inp = form.querySelector("input[name='title']");
-          if (inp) inp.focus();
-        }
+  // ------------------------------------------------------------
+  // Draft persistence for chat input
+  // ------------------------------------------------------------
+  (function () {
+    var draftKey = "rw_chat_draft_{{ chat.id }}";
+    var inputEl = document.getElementById("rw-chat-input");
+    var formEl = inputEl ? inputEl.closest("form") : null;
+
+    if (inputEl) {
+      try {
+        var saved = localStorage.getItem(draftKey) || "";
+        if (saved && !inputEl.value) inputEl.value = saved;
+      } catch (e) {}
+
+      var saveDraft = function () {
+        try { localStorage.setItem(draftKey, inputEl.value || ""); } catch (e) {}
+      };
+      inputEl.addEventListener("input", saveDraft);
+      inputEl.addEventListener("blur", saveDraft);
+    }
+
+    if (formEl) {
+      formEl.addEventListener("submit", function () {
+        try { localStorage.removeItem(draftKey); } catch (e) {}
+      });
+    }
+  })();
+
+  // ------------------------------------------------------------
+  // Inline rename toggle
+  // ------------------------------------------------------------
+  (function () {
+    var btn = document.getElementById("btnRename");
+    var cancel = document.getElementById("btnRenameCancel");
+    var view = document.getElementById("chatTitleView");
+    var form = document.getElementById("chatTitleEdit");
+
+    function showEdit(on) {
+      if (!view || !form) return;
+      view.classList.toggle("d-none", on);
+      form.classList.toggle("d-none", !on);
+      if (on) {
+        var inp = form.querySelector("input[name='title']");
+        if (inp) inp.focus();
       }
+    }
 
-      if (btn) btn.addEventListener("click", function() { showEdit(true); });
-      if (cancel) cancel.addEventListener("click", function() { showEdit(false); });
-    })();
-
+    if (btn) btn.addEventListener("click", function () { showEdit(true); });
+    if (cancel) cancel.addEventListener("click", function () { showEdit(false); });
+  })();
 </script>
+
 
 {% endblock %}

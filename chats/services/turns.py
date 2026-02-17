@@ -119,7 +119,8 @@ def build_chat_turn_context(request, chat):
                         output = rec_output
 
             turns.append({
-                "turn_id": f"seq-{m.sequence}",
+                "turn_id": f"msg-{m.id}",
+                "legacy_turn_id": f"seq-{m.sequence}",
                 "kind": "turn",
                 "input": pending_user,
                 "assistant": m,
@@ -148,6 +149,7 @@ def build_chat_turn_context(request, chat):
     if pending_user is not None:
         turns.append({
             "turn_id": f"pending-{pending_user.id}",
+            "legacy_turn_id": "",
             "kind": "turn",
             "input": pending_user,
             "assistant": None,
@@ -191,7 +193,15 @@ def build_chat_turn_context(request, chat):
     selected_turn_id = request.GET.get("turn")
     active_turn = None
     if selected_turn_id:
-        active_turn = next((t for t in items if t["turn_id"] == selected_turn_id), None)
+        active_turn = next(
+            (
+                t
+                for t in items
+                if t.get("turn_id") == selected_turn_id
+                or t.get("legacy_turn_id") == selected_turn_id
+            ),
+            None,
+        )
     if active_turn is None and items:
         active_turn = items[-1]
     is_system_turn = bool(active_turn) and str(active_turn.get("turn_id", "")).startswith("sys-")

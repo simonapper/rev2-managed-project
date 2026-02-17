@@ -952,7 +952,7 @@ def message_set_importance(request, message_id: int):
             trigger=ChatRollupEvent.Trigger.PIN,
         )
 
-    next_url = request.POST.get("next") or request.GET.get("next") or ""
+    next_url = (request.POST.get("next") or "").strip()
     if next_url and url_has_allowed_host_and_scheme(
         url=next_url,
         allowed_hosts={request.get_host()},
@@ -1788,6 +1788,7 @@ def chat_select(request, chat_id: int):
 def chat_detail(request, chat_id: int):
     chat = get_object_or_404(ChatWorkspace, id=chat_id)
     chat_detail_path = reverse("accounts:chat_detail", args=[chat.id])
+    next_url_keep_turn = request.get_full_path()
 
     fullscreen = request.GET.get("fullscreen") in ("1", "true", "yes")
     qs = request.GET.copy()
@@ -1890,6 +1891,7 @@ def chat_detail(request, chat_id: int):
             "show_system": show_system,
             "qs_with_system": qs_with_system,
             "qs_no_system": qs_no_system,
+            "next_url_keep_turn": next_url_keep_turn,
             "next_url_no_turn": next_url_no_turn,
             "system_preview": system_preview,
             "system_latest": {},

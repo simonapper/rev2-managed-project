@@ -18,56 +18,60 @@
     <a class="btn btn-sm rw-btn-xs btn-outline-secondary" href="{% url 'accounts:chat_browse_print' %}?{{ request.GET.urlencode }}" target="_blank" rel="noopener">Print</a>
   </div>
 
-  <form method="post" action="{% url 'accounts:chat_import' %}" enctype="multipart/form-data" class="row g-2 align-items-end mb-3">
-    {% csrf_token %}
-    <div class="col-sm-4 col-md-3">
-      <label class="form-label small text-secondary mb-1">Import chat to project</label>
-      <select name="project_id" class="form-select form-select-sm" required>
-        <option value="">Select project</option>
-        {% for p in projects %}
-          <option value="{{ p.id }}" {% if active_project and active_project.id == p.id %}selected{% endif %}>{{ p.name }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="col-sm-5 col-md-6">
-      <label class="form-label small text-secondary mb-1">Chat export ZIP</label>
-      <input type="file" name="chat_file" class="form-control form-control-sm" accept=".zip" required>
-    </div>
-    <div class="col-sm-3 col-md-3">
-      <button class="btn btn-sm rw-btn-xs btn-outline-primary w-100" type="submit">Import chat</button>
-    </div>
-  </form>
+  <details class="rw-drawer mb-3">
+    <summary class="fw-semibold">Details</summary>
+    <div class="pt-2">
+      <form method="post" action="{% url 'accounts:chat_import' %}" enctype="multipart/form-data" class="row g-2 align-items-end mb-2">
+        {% csrf_token %}
+        <div class="col-sm-4 col-md-3">
+          <label class="form-label small text-secondary mb-1">Import chat to project</label>
+          <select name="project_id" class="form-select form-select-sm" required>
+            <option value="">Select project</option>
+            {% for p in projects %}
+              <option value="{{ p.id }}" {% if active_project and active_project.id == p.id %}selected{% endif %}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-sm-5 col-md-6">
+          <label class="form-label small text-secondary mb-1">Chat export ZIP</label>
+          <input type="file" name="chat_file" class="form-control form-control-sm" accept=".zip" required>
+        </div>
+        <div class="col-sm-3 col-md-3">
+          <button class="btn btn-sm rw-btn-xs btn-outline-primary w-100" type="submit">Import chat</button>
+        </div>
+      </form>
 
-  <form method="get" class="row g-2 align-items-end mb-3">
-  <div class="col-sm-4 col-md-3">
-    <label class="form-label small text-secondary mb-1">Project</label>
-    <select name="project" class="form-select form-select-sm">
-      <option value="" {% if not filters.project %}selected{% endif %}>All</option>
-      {% for p in projects %}
-        <option value="{{ p.id }}" {% if filters.project|add:"" == p.id|stringformat:"s" %}selected{% endif %}>
-          {{ p.name }}
-        </option>
-      {% endfor %}
-    </select>
-  </div>
+      <form method="get" class="row g-2 align-items-end mb-0">
+        <div class="col-sm-4 col-md-3">
+          <label class="form-label small text-secondary mb-1">Project</label>
+          <select name="project" class="form-select form-select-sm">
+            <option value="" {% if not filters.project %}selected{% endif %}>All</option>
+            {% for p in projects %}
+              <option value="{{ p.id }}" {% if filters.project|add:"" == p.id|stringformat:"s" %}selected{% endif %}>
+                {{ p.name }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
 
-  <div class="col-sm-3 col-md-2">
-    <label class="form-label small text-secondary mb-1">Status</label>
-    <select name="status" class="form-select form-select-sm">
-      <option value="ACTIVE" {% if filters.status == "ACTIVE" %}selected{% endif %}>Active</option>
-    </select>
-  </div>
+        <div class="col-sm-3 col-md-2">
+          <label class="form-label small text-secondary mb-1">Status</label>
+          <select name="status" class="form-select form-select-sm">
+            <option value="ACTIVE" {% if filters.status == "ACTIVE" %}selected{% endif %}>Active</option>
+          </select>
+        </div>
 
+        <div class="col-sm-5 col-md-5">
+          <label class="form-label small text-secondary mb-1">Search</label>
+          <input name="q" class="form-control form-control-sm" value="{{ filters.q }}" placeholder="Title / output / project / user">
+        </div>
 
-    <div class="col-sm-5 col-md-5">
-      <label class="form-label small text-secondary mb-1">Search</label>
-      <input name="q" class="form-control form-control-sm" value="{{ filters.q }}" placeholder="Title / output / project / user">
+        <div class="col-sm-12 col-md-2">
+          <button class="btn btn-sm rw-btn-xs btn-primary w-100" type="submit">Filter</button>
+        </div>
+      </form>
     </div>
-
-    <div class="col-sm-12 col-md-2">
-      <button class="btn btn-sm rw-btn-xs btn-primary w-100" type="submit">Filter</button>
-    </div>
-  </form>
+  </details>
 
   <div class="card rw-browse-table-card">
     <div class="card-body p-0">

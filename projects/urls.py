@@ -32,6 +32,7 @@ urlpatterns = [
     path("<int:project_id>/pde/ui/", views_pde_ui.pde_detail, name="pde_detail"),
     path("<int:project_id>/ppde/ui/", views_ppde_ui.ppde_detail, name="ppde_detail"),
     path("<int:project_id>/review/", views_review.project_review, name="project_review"),
+    path("<int:project_id>/planning-mode/", views_project.set_planning_mode, name="set_planning_mode"),
     path("<int:project_id>/review/open-chat/", views_review.project_review_chat_open, name="project_review_chat_open"),
     path("<int:project_id>/review/print/intent/", views_review.project_review_print_intent, name="project_review_print_intent"),
     path("<int:project_id>/review/print/route/", views_review.project_review_print_route, name="project_review_print_route"),

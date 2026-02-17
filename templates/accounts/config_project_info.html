@@ -6,6 +6,46 @@
 {% block content %}
 <div class="rw-main-inner">
   <div class="rw-workarea">
+    <style>
+      .pc-toolbar {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        align-items: flex-end;
+      }
+      .pc-toolbar-row {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .pc-toolbar-label {
+        font-size: 0.68rem;
+        font-weight: 700;
+        color: #36516c;
+        margin-right: 0.1rem;
+      }
+      .pc-toggle-btn {
+        min-width: 76px;
+        font-size: 0.62rem;
+        font-weight: 700;
+        line-height: 1;
+        padding: 0.22rem 0.35rem;
+      }
+      .pc-action-btn {
+        width: 88px;
+        font-size: 0.62rem;
+        font-weight: 700;
+        line-height: 1;
+        padding: 0.24rem 0.35rem;
+        text-transform: uppercase;
+      }
+      .pc-toolbar-help {
+        font-size: 0.64rem;
+        color: #4f6274;
+      }
+    </style>
 
     <!-- Always-visible header -->
     <div class="card shadow-sm mb-3">
@@ -24,47 +64,72 @@
             </div>
           </div>
 
-          <div class="d-flex flex-column gap-2">
-            <div class="d-flex gap-2">
-              <a class="btn btn-sm btn-outline-secondary"
+          <div class="pc-toolbar">
+            <div class="pc-toolbar-row">
+              <form method="post" action="{% url 'projects:set_planning_mode' project.id %}" class="pc-toolbar-row m-0">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <div class="pc-toolbar-label">Planning:</div>
+                <div class="btn-group btn-group-sm" role="group" aria-label="Planning mode">
+                  <button type="submit"
+                          name="mode"
+                          value="ASSISTED"
+                          class="btn pc-toggle-btn {% if planning_mode == 'ASSISTED' %}btn-success{% else %}btn-outline-success{% endif %}">
+                    Assisted
+                  </button>
+                  <button type="submit"
+                          name="mode"
+                          value="AUTO"
+                          class="btn pc-toggle-btn {% if planning_mode == 'AUTO' %}btn-warning{% else %}btn-outline-warning{% endif %}">
+                    Auto
+                  </button>
+                </div>
+              </form>
+              <a class="btn btn-sm btn-outline-dark pc-action-btn"
                  href="{% url 'accounts:project_detail_print' project.id %}"
                  target="_blank" rel="noopener">
                 Print
               </a>
+            </div>
+
+            <div class="pc-toolbar-row">
               {% if active_wko %}
-                <a class="btn btn-sm btn-outline-secondary"
+                <a class="btn btn-sm btn-primary pc-action-btn"
                    href="{% url 'projects:ppde_detail' project.id %}">
-                  Back to PPDE
+                  Definition
                 </a>
-                <a class="btn btn-sm btn-primary"
+                <a class="btn btn-sm btn-info pc-action-btn"
                    href="{% url 'projects:wko_preview' project.id %}">
-                  View Accepted WKO
+                  Intent
                 </a>
               {% else %}
-                <a class="btn btn-sm btn-outline-secondary"
+                <a class="btn btn-sm btn-primary pc-action-btn"
                    href="{% url 'projects:pde_detail' project.id %}">
-                  Back to PDE
+                  Definition
                 </a>
                 {% if accepted_cko %}
-                  <a class="btn btn-sm btn-primary"
+                  <a class="btn btn-sm btn-info pc-action-btn"
                      href="{% url 'projects:cko_preview' project.id %}?accepted=1">
-                    View Accepted CKO
+                    Intent
                   </a>
+                {% else %}
+                  <span class="btn btn-sm btn-outline-secondary pc-action-btn disabled" aria-disabled="true">Intent</span>
                 {% endif %}
               {% endif %}
+              {% if planning_mode == "AUTO" %}
+                <a class="btn btn-sm btn-warning pc-action-btn" href="{% url 'projects:project_review' project.id %}">Plan</a>
+              {% else %}
+                <a class="btn btn-sm btn-success pc-action-btn" href="{% url 'projects:ppde_detail' project.id %}">Plan</a>
+              {% endif %}
             </div>
-            {% if not active_wko %}
-              <div class="d-flex gap-2">
-                <a class="btn btn-sm btn-outline-secondary"
-                   href="{% url 'projects:ppde_detail' project.id %}">
-                  Open PPDE
-                </a>
-                <a class="btn btn-sm btn-outline-secondary"
-                   href="{% url 'projects:project_review' project.id %}">
-                  Project review
-                </a>
-              </div>
-            {% endif %}
+
+            <div class="pc-toolbar-help">
+              {% if planning_mode == "AUTO" %}
+                AI proposes. You review.
+              {% else %}
+                You lead. AI helps.
+              {% endif %}
+            </div>
           </div>
         </div>
       </div>

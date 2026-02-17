@@ -372,16 +372,17 @@
 
 .rw-turn-list {
     flex: 0 0 360px;
+    max-height: 70vh;
     overflow: auto;
     border: 1px solid #e5e7eb;
     border-radius: 10px;
     background: #fff;
 
-@media (max-width: 480px) {
-    .rw-turn-list {
-        max-height: 180px;
+    @media (max-width: 480px) {
+        .rw-turn-list {
+            max-height: 180px;
+        }
     }
-}
 }
 /* ------------------------------------------------------------
    TURN LIST: table layout + stable columns
