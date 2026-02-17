@@ -15,6 +15,7 @@ import io
 import json
 import re
 import zipfile
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from django import forms
 from django.conf import settings
@@ -40,6 +41,27 @@ def _safe_int(val):
         return int(val)
     except Exception:
         return None
+
+
+def _strip_query_param(url: str, param_name: str) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    try:
+        parts = urlsplit(raw)
+        pairs = parse_qsl(parts.query, keep_blank_values=True)
+        filtered = [(k, v) for (k, v) in pairs if k != param_name]
+        return urlunsplit(
+            (
+                parts.scheme,
+                parts.netloc,
+                parts.path,
+                urlencode(filtered, doseq=True),
+                parts.fragment,
+            )
+        )
+    except Exception:
+        return raw
 
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_decode
 from django.views.decorators.http import require_POST
@@ -715,7 +737,7 @@ def chat_message_create(request):
     answer_mode = (request.POST.get("answer_mode") or "quick").strip().lower()
     if answer_mode not in {"quick", "full"}:
         answer_mode = "quick"
-    next_url = (request.POST.get("next") or "").strip()
+    next_url = _strip_query_param((request.POST.get("next") or "").strip(), "turn")
 
     if not chat_id:
         messages.error(request, "No chat selected.")
@@ -930,13 +952,14 @@ def message_set_importance(request, message_id: int):
             trigger=ChatRollupEvent.Trigger.PIN,
         )
 
-    next_url = (request.POST.get("next") or "").strip()
+    next_url = request.POST.get("next") or request.GET.get("next") or ""
     if next_url and url_has_allowed_host_and_scheme(
         url=next_url,
         allowed_hosts={request.get_host()},
         require_https=request.is_secure(),
     ):
         return redirect(next_url)
+
     return redirect(reverse("accounts:chat_detail", args=[chat.id]))
 
 
@@ -954,7 +977,7 @@ def chat_rollup_undo(request, chat_id: int):
     else:
         messages.info(request, "No roll-up to undo.")
 
-    next_url = (request.POST.get("next") or "").strip()
+    next_url = (request.POST.get("next") or request.GET.get("next") or "").strip()
     if next_url and url_has_allowed_host_and_scheme(
         url=next_url,
         allowed_hosts={request.get_host()},
@@ -1764,6 +1787,7 @@ def chat_select(request, chat_id: int):
 @login_required
 def chat_detail(request, chat_id: int):
     chat = get_object_or_404(ChatWorkspace, id=chat_id)
+    chat_detail_path = reverse("accounts:chat_detail", args=[chat.id])
 
     fullscreen = request.GET.get("fullscreen") in ("1", "true", "yes")
     qs = request.GET.copy()
@@ -1773,6 +1797,11 @@ def chat_detail(request, chat_id: int):
     qs_fs = request.GET.copy()
     qs_fs["fullscreen"] = "1"
     qs_fullscreen = qs_fs.urlencode()
+
+    q_next = request.GET.copy()
+    q_next.pop("turn", None)
+    qs_next = q_next.urlencode()
+    next_url_no_turn = chat_detail_path + (("?" + qs_next) if qs_next else "")
 
     qs_hide = request.GET.copy()
     qs_hide.pop("system", None)
@@ -1861,6 +1890,7 @@ def chat_detail(request, chat_id: int):
             "show_system": show_system,
             "qs_with_system": qs_with_system,
             "qs_no_system": qs_no_system,
+            "next_url_no_turn": next_url_no_turn,
             "system_preview": system_preview,
             "system_latest": {},
             "has_last_image": has_last_image,

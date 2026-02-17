@@ -38,6 +38,7 @@
     background-color: #fff3cd !important;
   }
   .msg-ignored { opacity: 0.45; filter: grayscale(0.25); }
+  .rw-turn-list-pending { visibility: hidden; }
 </style>
 <div class="rw-main-inner">
   <div class="rw-workarea">
@@ -75,7 +76,7 @@
 <form method="post" action="{% url 'accounts:chat_message_create' %}" enctype="multipart/form-data">
   {% csrf_token %}
   <input type="hidden" name="chat_id" value="{{ chat.id }}">
-  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+  <input type="hidden" name="next" value="{{ next_url_no_turn }}">
   <input type="hidden" name="answer_mode" id="rw-answer-mode" value="{{ answer_mode_default|default:'quick' }}">
 
   <div class="d-flex align-items-center justify-content-between mb-2">
@@ -188,7 +189,7 @@
         {% else %}
           <div class="rw-turn-split">
 
-            <div class="rw-turn-list">
+            <div class="rw-turn-list rw-turn-list-pending">
               <table class="rw-turn-table">
                 <thead>
                   <tr>
@@ -212,7 +213,7 @@
 
                 <tbody>
                   {% for t in turn_items %}
-                    <tr data-pinned="{% if t.is_pinned %}1{% else %}0{% endif %}" class="{% if active_turn and t.turn_id == active_turn.turn_id %}rw-turn-row-active{% endif %}{% if t.is_rolled_up %} msg-rolled-up{% endif %}{% if t.is_pinned %} msg-pinned{% endif %}{% if t.is_ignored %} msg-ignored{% endif %}">
+                    <tr data-turn-id="{{ t.turn_id }}" data-pinned="{% if t.is_pinned %}1{% else %}0{% endif %}" class="{% if active_turn and t.turn_id == active_turn.turn_id %}rw-turn-row-active{% endif %}{% if t.is_rolled_up %} msg-rolled-up{% endif %}{% if t.is_pinned %} msg-pinned{% endif %}{% if t.is_ignored %} msg-ignored{% endif %}">
                       <td>
                         <a class="rw-turn-rowlink"
                            href="?{% if fullscreen %}fullscreen=1&{% endif %}turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}{% if show_system %}&system=1{% endif %}">
@@ -393,24 +394,49 @@
 
 <script>
   // ------------------------------------------------------------
-  // Turn list scroll restore (per chat)
+  // Keep turn list aligned with selected turn
   // ------------------------------------------------------------
   (function () {
     var list = document.querySelector(".rw-turn-list");
     if (!list) return;
-
-    var chatId = "{{ chat.id }}";
-    var key = "rw_turn_scroll_chat_" + chatId;
-
-    var saved = sessionStorage.getItem(key);
-    if (saved !== null) {
-      list.scrollTop = parseInt(saved, 10);
+    var activeTurnId = "{{ active_turn.turn_id|default:'' }}";
+    var activeRow = null;
+    if (activeTurnId) {
+      activeRow = list.querySelector('tr[data-turn-id="' + activeTurnId + '"]');
     }
-
-    list.addEventListener("scroll", function () {
-      sessionStorage.setItem(key, list.scrollTop);
-    });
+    if (!activeRow) {
+      activeRow = list.querySelector("tr.rw-turn-row-active");
+    }
+    if (!activeRow) {
+      list.classList.remove("rw-turn-list-pending");
+      return;
+    }
+    var target = activeRow.offsetTop - Math.floor((list.clientHeight - activeRow.offsetHeight) / 2);
+    if (target < 0) target = 0;
+    var ticks = 0;
+    var maxTicks = 100; // about 3s at 30ms
+    var applyTarget = function () {
+      list.scrollTop = target;
+      ticks += 1;
+      if (ticks === 1) {
+        list.classList.remove("rw-turn-list-pending");
+      }
+      if (ticks < maxTicks) {
+        window.setTimeout(applyTarget, 30);
+      }
+    };
+    window.requestAnimationFrame(applyTarget);
   })();
+
+  (function () {
+    if ("scrollRestoration" in history) {
+      try {
+        history.scrollRestoration = "manual";
+      } catch (e) {
+      }
+    }
+  })();
+
   (function () {
     var modeInput = document.getElementById("rw-answer-mode");
     var buttons = document.querySelectorAll("button[data-answer-mode]");
