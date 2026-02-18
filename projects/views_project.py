@@ -6,12 +6,14 @@ from __future__ import annotations
 from django import forms
 import io
 import json
+import logging
 import re
 import zipfile
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.files.base import ContentFile
+from django.core.cache import cache
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, Q
@@ -33,6 +35,109 @@ from projects.services.project_bootstrap import bootstrap_project
 from projects.services_project_membership import accessible_projects_qs, is_project_manager, can_edit_committee
 from uploads.models import ChatAttachment
 
+_MAX_IMPORT_ZIP_BYTES = 50 * 1024 * 1024
+_MAX_IMPORT_FILES = 2000
+_MAX_IMPORT_MEMBER_BYTES = 25 * 1024 * 1024
+_MAX_IMPORT_TOTAL_BYTES = 300 * 1024 * 1024
+_MAX_IMPORT_RATIO = 200
+_IMPORT_RATE_LIMIT_WINDOW_SECONDS = 60
+_IMPORT_RATE_LIMIT_MAX = 6
+
+_SECURITY_LOG = logging.getLogger("workbench.security")
+
+
+def _validate_import_zip_safety(zf: zipfile.ZipFile) -> None:
+    infos = zf.infolist()
+    if len(infos) > _MAX_IMPORT_FILES:
+        raise ValueError("ZIP has too many files.")
+
+    total_uncompressed = 0
+    for info in infos:
+        size = int(getattr(info, "file_size", 0) or 0)
+        compressed = int(getattr(info, "compress_size", 0) or 0)
+        total_uncompressed += size
+
+        if size > _MAX_IMPORT_MEMBER_BYTES:
+            raise ValueError("ZIP member too large.")
+
+        if compressed > 0 and (size / compressed) > _MAX_IMPORT_RATIO:
+            raise ValueError("ZIP compression ratio too high.")
+
+    if total_uncompressed > _MAX_IMPORT_TOTAL_BYTES:
+        raise ValueError("ZIP uncompressed payload too large.")
+
+
+def _safe_zip_read(zf: zipfile.ZipFile, member: str, *, max_bytes: int) -> bytes:
+    info = zf.getinfo(member)
+    size = int(getattr(info, "file_size", 0) or 0)
+    if size > max_bytes:
+        raise ValueError("ZIP member exceeds allowed size.")
+    return zf.read(member)
+
+
+def _delete_project_permanently(project: Project) -> None:
+    with transaction.atomic():
+        Project.objects.filter(pk=project.pk).update(active_l4_config=None)
+
+        scopes = ConfigScope.objects.filter(project=project)
+        ConfigVersion.objects.filter(config__scope__in=scopes).delete()
+        ConfigRecord.objects.filter(scope__in=scopes).delete()
+        scopes.delete()
+
+        project.delete()
+
+
+def _record_security_event(request, event: str, **details) -> None:
+    now = timezone.now()
+    bucket = now.strftime("%Y%m%d%H")
+    counter_key = f"rw:security:{event}:{bucket}"
+    try:
+        cache.incr(counter_key)
+    except Exception:
+        cache.set(counter_key, 1, timeout=60 * 60 * 48)
+
+    user_id = getattr(getattr(request, "user", None), "id", None)
+    ip = (
+        request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
+        or request.META.get("REMOTE_ADDR", "")
+    )
+    _SECURITY_LOG.warning(
+        "security_event=%s user_id=%s ip=%s path=%s details=%s",
+        event,
+        user_id,
+        ip,
+        request.path,
+        details,
+    )
+
+
+def _safe_next_url(request, fallback: str) -> str:
+    next_url = (request.POST.get("next") or "").strip()
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return next_url
+    if next_url:
+        _record_security_event(request, "blocked_next_redirect", next_url=next_url)
+    return fallback
+
+
+def _check_import_rate_limit(*, user_id: int, scope: str) -> bool:
+    key = f"rw:import-rate:{scope}:{user_id}"
+    now_count = cache.get(key)
+    if now_count is None:
+        cache.set(key, 1, timeout=_IMPORT_RATE_LIMIT_WINDOW_SECONDS)
+        return True
+    if int(now_count) >= _IMPORT_RATE_LIMIT_MAX:
+        return False
+    try:
+        cache.incr(key)
+    except Exception:
+        cache.set(key, int(now_count) + 1, timeout=_IMPORT_RATE_LIMIT_WINDOW_SECONDS)
+    return True
+
 
 @login_required
 def active_project_set(request):
@@ -42,20 +147,20 @@ def active_project_set(request):
     project_id = request.POST.get("project_id")
     if not project_id:
         messages.error(request, "No project selected.")
-        return redirect(request.POST.get("next") or "accounts:dashboard")
+        return redirect(_safe_next_url(request, reverse("accounts:dashboard")))
 
     try:
         pid = int(project_id)
     except ValueError:
         messages.error(request, "Invalid project.")
-        return redirect(request.POST.get("next") or "accounts:dashboard")
+        return redirect(_safe_next_url(request, reverse("accounts:dashboard")))
 
     active_project = get_object_or_404(accessible_projects_qs(request.user), pk=pid)
 
     request.session["rw_active_project_id"] = active_project.id
     request.session.modified = True
 
-    return redirect(request.POST.get("next") or "accounts:dashboard")
+    return redirect(_safe_next_url(request, reverse("accounts:dashboard")))
 
 
 # ------------------------------------------------------------
@@ -64,7 +169,7 @@ def active_project_set(request):
 
 @login_required
 def project_home(request, project_id: int):
-    project = get_object_or_404(Project, id=project_id)
+    project = get_object_or_404(accessible_projects_qs(request.user), id=project_id)
 
     request.session["rw_active_project_id"] = project.id
     request.session.pop("rw_active_chat_id", None)
@@ -184,15 +289,7 @@ def project_delete(request, project_id: int):
 
     name = p.name or "(unnamed project)"
 
-    with transaction.atomic():
-        Project.objects.filter(pk=p.pk).update(active_l4_config=None)
-
-        scopes = ConfigScope.objects.filter(project=p)
-        ConfigVersion.objects.filter(config__scope__in=scopes).delete()
-        ConfigRecord.objects.filter(scope__in=scopes).delete()
-        scopes.delete()
-
-        p.delete()
+    _delete_project_permanently(p)
 
     if str(request.session.get("rw_active_project_id")) == str(project_id):
         request.session.pop("rw_active_project_id", None)
@@ -323,7 +420,7 @@ def project_export(request, project_id: int):
 
     project_name = p.name
     project_id_str = str(p.id)
-    project_delete(request, p.id)
+    _delete_project_permanently(p)
     request.session.pop("rw_active_project_id", None)
     if request.session.get("rw_active_chat_id"):
         request.session.pop("rw_active_chat_id", None)
@@ -338,101 +435,112 @@ def project_export(request, project_id: int):
 @require_POST
 @login_required
 def project_import(request):
+    if not _check_import_rate_limit(user_id=request.user.id, scope="project"):
+        _record_security_event(request, "project_import_rate_limited")
+        messages.error(request, "Too many import attempts. Please wait a minute and try again.")
+        return redirect("accounts:project_config_list")
+
     f = request.FILES.get("project_file")
     if not f:
         messages.error(request, "Choose a project export ZIP to import.")
         return redirect("accounts:project_config_list")
+    if int(getattr(f, "size", 0) or 0) > _MAX_IMPORT_ZIP_BYTES:
+        _record_security_event(request, "project_import_zip_too_large", size=int(getattr(f, "size", 0) or 0))
+        messages.error(request, "Project import ZIP is too large.")
+        return redirect("accounts:project_config_list")
 
     try:
-        zf = zipfile.ZipFile(f)
-        payload = json.loads(zf.read("project.json").decode("utf-8"))
+        with zipfile.ZipFile(f) as zf:
+            _validate_import_zip_safety(zf)
+            payload = json.loads(_safe_zip_read(zf, "project.json", max_bytes=_MAX_IMPORT_MEMBER_BYTES).decode("utf-8"))
+
+            if payload.get("type") != "project_export_v1":
+                messages.error(request, "Unsupported project export format.")
+                return redirect("accounts:project_config_list")
+
+            proj = payload.get("project") or {}
+            project = Project.objects.create(
+                name=_unique_project_name(str(proj.get("name") or "Imported Project")),
+                description=str(proj.get("description") or ""),
+                purpose=str(proj.get("purpose") or ""),
+                kind=str(proj.get("kind") or Project.Kind.STANDARD),
+                primary_type=str(proj.get("primary_type") or Project.PrimaryType.DELIVERY),
+                mode=str(proj.get("mode") or Project.Mode.PLAN),
+                status=Project.Status.ACTIVE,
+                owner=request.user,
+            )
+            bootstrap_project(project=project)
+
+            for chat_payload in payload.get("chats") or []:
+                if not isinstance(chat_payload, dict):
+                    continue
+                chat = ChatWorkspace.objects.create(
+                    project=project,
+                    title=str(chat_payload.get("title") or "Imported chat")[:250],
+                    status=ChatWorkspace.Status.ACTIVE,
+                    created_by=request.user,
+                    goal_text=str(chat_payload.get("goal_text") or ""),
+                    success_text=str(chat_payload.get("success_text") or ""),
+                    constraints_text=str(chat_payload.get("constraints_text") or ""),
+                    non_goals_text=str(chat_payload.get("non_goals_text") or ""),
+                    cde_is_locked=bool(chat_payload.get("cde_is_locked")),
+                    cde_json=chat_payload.get("cde_json") if isinstance(chat_payload.get("cde_json"), dict) else {},
+                    chat_overrides=chat_payload.get("chat_overrides") if isinstance(chat_payload.get("chat_overrides"), dict) else {},
+                    pinned_summary=str(chat_payload.get("pinned_summary") or ""),
+                    pinned_conclusion=str(chat_payload.get("pinned_conclusion") or ""),
+                    pinned_cursor_message_id=chat_payload.get("pinned_cursor_message_id"),
+                    pinned_updated_at=timezone.now(),
+                )
+
+                for m in chat_payload.get("messages") or []:
+                    if not isinstance(m, dict):
+                        continue
+                    role = str(m.get("role") or "").upper()
+                    if role not in {ChatMessage.Role.USER, ChatMessage.Role.ASSISTANT, ChatMessage.Role.SYSTEM}:
+                        continue
+                    importance = str(m.get("importance") or ChatMessage.Importance.NORMAL).upper()
+                    if importance not in {
+                        ChatMessage.Importance.NORMAL,
+                        ChatMessage.Importance.PINNED,
+                        ChatMessage.Importance.IGNORE,
+                    }:
+                        importance = ChatMessage.Importance.NORMAL
+                    ChatMessage.objects.create(
+                        chat=chat,
+                        role=role,
+                        importance=importance,
+                        raw_text=str(m.get("raw_text") or ""),
+                        answer_text=str(m.get("answer_text") or ""),
+                        reasoning_text=str(m.get("reasoning_text") or ""),
+                        output_text=str(m.get("output_text") or ""),
+                        segment_meta=m.get("segment_meta") if isinstance(m.get("segment_meta"), dict) else {},
+                    )
+
+                for a in chat_payload.get("attachments") or []:
+                    if not isinstance(a, dict):
+                        continue
+                    arc_path = str(a.get("path") or "")
+                    if not arc_path:
+                        continue
+                    try:
+                        blob = _safe_zip_read(zf, arc_path, max_bytes=_MAX_IMPORT_MEMBER_BYTES)
+                    except Exception:
+                        continue
+                    original_name = str(a.get("original_name") or "attachment.bin")
+                    cf = ContentFile(blob, name=original_name)
+                    ChatAttachment.objects.create(
+                        project=project,
+                        chat=chat,
+                        uploaded_by=request.user,
+                        file=cf,
+                        original_name=original_name,
+                        content_type=str(a.get("content_type") or ""),
+                        size_bytes=int(a.get("size_bytes") or len(blob)),
+                    )
     except Exception as exc:
+        _record_security_event(request, "project_import_invalid_zip", error=str(exc)[:160])
         messages.error(request, f"Invalid project export: {exc}")
         return redirect("accounts:project_config_list")
-
-    if payload.get("type") != "project_export_v1":
-        messages.error(request, "Unsupported project export format.")
-        return redirect("accounts:project_config_list")
-
-    proj = payload.get("project") or {}
-    project = Project.objects.create(
-        name=_unique_project_name(str(proj.get("name") or "Imported Project")),
-        description=str(proj.get("description") or ""),
-        purpose=str(proj.get("purpose") or ""),
-        kind=str(proj.get("kind") or Project.Kind.STANDARD),
-        primary_type=str(proj.get("primary_type") or Project.PrimaryType.DELIVERY),
-        mode=str(proj.get("mode") or Project.Mode.PLAN),
-        status=Project.Status.ACTIVE,
-        owner=request.user,
-    )
-    bootstrap_project(project=project)
-
-    for chat_payload in payload.get("chats") or []:
-        if not isinstance(chat_payload, dict):
-            continue
-        chat = ChatWorkspace.objects.create(
-            project=project,
-            title=str(chat_payload.get("title") or "Imported chat")[:250],
-            status=ChatWorkspace.Status.ACTIVE,
-            created_by=request.user,
-            goal_text=str(chat_payload.get("goal_text") or ""),
-            success_text=str(chat_payload.get("success_text") or ""),
-            constraints_text=str(chat_payload.get("constraints_text") or ""),
-            non_goals_text=str(chat_payload.get("non_goals_text") or ""),
-            cde_is_locked=bool(chat_payload.get("cde_is_locked")),
-            cde_json=chat_payload.get("cde_json") if isinstance(chat_payload.get("cde_json"), dict) else {},
-            chat_overrides=chat_payload.get("chat_overrides") if isinstance(chat_payload.get("chat_overrides"), dict) else {},
-            pinned_summary=str(chat_payload.get("pinned_summary") or ""),
-            pinned_conclusion=str(chat_payload.get("pinned_conclusion") or ""),
-            pinned_cursor_message_id=chat_payload.get("pinned_cursor_message_id"),
-            pinned_updated_at=timezone.now(),
-        )
-
-        for m in chat_payload.get("messages") or []:
-            if not isinstance(m, dict):
-                continue
-            role = str(m.get("role") or "").upper()
-            if role not in {ChatMessage.Role.USER, ChatMessage.Role.ASSISTANT, ChatMessage.Role.SYSTEM}:
-                continue
-            importance = str(m.get("importance") or ChatMessage.Importance.NORMAL).upper()
-            if importance not in {
-                ChatMessage.Importance.NORMAL,
-                ChatMessage.Importance.PINNED,
-                ChatMessage.Importance.IGNORE,
-            }:
-                importance = ChatMessage.Importance.NORMAL
-            ChatMessage.objects.create(
-                chat=chat,
-                role=role,
-                importance=importance,
-                raw_text=str(m.get("raw_text") or ""),
-                answer_text=str(m.get("answer_text") or ""),
-                reasoning_text=str(m.get("reasoning_text") or ""),
-                output_text=str(m.get("output_text") or ""),
-                segment_meta=m.get("segment_meta") if isinstance(m.get("segment_meta"), dict) else {},
-            )
-
-        for a in chat_payload.get("attachments") or []:
-            if not isinstance(a, dict):
-                continue
-            arc_path = str(a.get("path") or "")
-            if not arc_path:
-                continue
-            try:
-                blob = zf.read(arc_path)
-            except Exception:
-                continue
-            original_name = str(a.get("original_name") or "attachment.bin")
-            cf = ContentFile(blob, name=original_name)
-            ChatAttachment.objects.create(
-                project=project,
-                chat=chat,
-                uploaded_by=request.user,
-                file=cf,
-                original_name=original_name,
-                content_type=str(a.get("content_type") or ""),
-                size_bytes=int(a.get("size_bytes") or len(blob)),
-            )
 
     request.session["rw_active_project_id"] = project.id
     request.session.pop("rw_active_chat_id", None)
@@ -946,7 +1054,7 @@ def project_config_definitions(request, project_id: int):
 
 @login_required
 def project_config_edit(request, project_id):
-    project = get_object_or_404(Project, id=project_id)
+    project = get_object_or_404(accessible_projects_qs(request.user), id=project_id)
 
     if not is_project_manager(project, request.user):
         return redirect("accounts:project_config_list")

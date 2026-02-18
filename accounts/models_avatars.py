@@ -73,7 +73,12 @@ class UserProfile(models.Model):
     summary_rollup_trigger_message_count = models.PositiveIntegerField(default=20)
     llm_provider = models.CharField(
         max_length=20,
-        choices=[("openai", "OpenAI"), ("anthropic", "Anthropic"), ("copilot", "Copilot")],
+        choices=[
+            ("openai", "OpenAI"),
+            ("anthropic", "Anthropic"),
+            ("deepseek", "DeepSeek"),
+            ("copilot", "Copilot"),
+        ],
         default="openai",
     )
     openai_model_default = models.CharField(
@@ -85,6 +90,11 @@ class UserProfile(models.Model):
         max_length=80,
         blank=True,
         default="claude-sonnet-4-5-20250929",
+    )
+    deepseek_model_default = models.CharField(
+        max_length=80,
+        blank=True,
+        default="deepseek-chat",
     )
 
     # -------- Legacy avatar fields (unchanged) --------

@@ -61,14 +61,6 @@ urlpatterns = [
     ),
     path("chats/suggest-goals/", views.chat_suggest_goals, name="chat_suggest_goals"),
     path("chats/draft-cde/", views.chat_draft_cde, name="chat_draft_cde"),
-    # accounts/urls.py
-    path("chats/<int:chat_id>/rename/", views.chat_rename, name="chat_rename"),
-
-
-
-
-
-
     # System (L1-L4 defaults) - superuser only
     path("config/system/", views_system.system_settings_home, name="system_settings_home"),
     path("config/system/level/<int:level>/", views_system.system_level_pick, name="system_settings_level_pick"),

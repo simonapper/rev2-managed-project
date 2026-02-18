@@ -52,6 +52,22 @@ class LLMProviderTests(TestCase):
         self.assertEqual(out, "anthropic reply")
         mock_client.messages.create.assert_called_once()
 
+    def test_deepseek_adapter_is_called_when_selected(self):
+        mock_client = Mock()
+        mock_client.chat_completion.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="deepseek reply"))]
+        )
+
+        with patch("chats.services.llm._get_deepseek_client", return_value=mock_client):
+            out = llm.generate_text(
+                system_blocks=["System rule"],
+                messages=[{"role": "user", "content": "Hello"}],
+                provider="deepseek",
+            )
+
+        self.assertEqual(out, "deepseek reply")
+        mock_client.chat_completion.assert_called_once()
+
     def test_openai_model_uses_user_profile_default(self):
         User = get_user_model()
         user = User.objects.create_user(username="u4", email="u4@example.com", password="pw")

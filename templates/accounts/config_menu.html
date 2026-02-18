@@ -28,6 +28,7 @@
           <select id="llm-provider" name="llm_provider" class="form-select form-select-sm">
             <option value="openai"{% if llm_provider == "openai" %} selected="selected"{% endif %}>OpenAI</option>
             <option value="anthropic"{% if llm_provider == "anthropic" %} selected="selected"{% endif %}>Anthropic</option>
+            <option value="deepseek"{% if llm_provider == "deepseek" %} selected="selected"{% endif %}>DeepSeek</option>
           </select>
         </div>
 
@@ -49,6 +50,15 @@
           </select>
         </div>
 
+        <div id="deepseek-model-wrap" class="col-12 col-md-6">
+          <label class="form-label small mb-1">DeepSeek model</label>
+          <select name="deepseek_model_default" class="form-select form-select-sm">
+            {% for val, label in deepseek_model_choices %}
+            <option value="{{ val }}"{% if deepseek_model_default == val %} selected="selected"{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
         <div id="provider-hint" class="col-12 col-md-6 small text-muted mt-1">
           Pick the provider first. The model list follows that choice.
         </div>
@@ -57,6 +67,11 @@
           Sonnet is the best default for most work.
           Opus is strongest but costs more.
           Haiku is fastest and cheapest.
+        </div>
+
+        <div id="deepseek-model-hint" class="col-12 col-md-6 small text-muted mt-1">
+          Chat is general-purpose.
+          Reasoner is for longer chain-of-thought style tasks.
         </div>
 
         <div class="col-12 mt-2">
@@ -98,19 +113,29 @@
     var provider = document.getElementById("llm-provider");
     var openaiWrap = document.getElementById("openai-model-wrap");
     var anthropicWrap = document.getElementById("anthropic-model-wrap");
+    var deepseekWrap = document.getElementById("deepseek-model-wrap");
     var anthropicHint = document.getElementById("anthropic-model-hint");
+    var deepseekHint = document.getElementById("deepseek-model-hint");
 
     function syncModelVisibility() {
       var p = (provider && provider.value) || "openai";
       var useOpenAI = p === "openai";
+      var useAnthropic = p === "anthropic";
+      var useDeepSeek = p === "deepseek";
       if (openaiWrap) {
         openaiWrap.style.display = useOpenAI ? "" : "none";
       }
       if (anthropicWrap) {
-        anthropicWrap.style.display = useOpenAI ? "none" : "";
+        anthropicWrap.style.display = useAnthropic ? "" : "none";
+      }
+      if (deepseekWrap) {
+        deepseekWrap.style.display = useDeepSeek ? "" : "none";
       }
       if (anthropicHint) {
-        anthropicHint.style.display = useOpenAI ? "none" : "";
+        anthropicHint.style.display = useAnthropic ? "" : "none";
+      }
+      if (deepseekHint) {
+        deepseekHint.style.display = useDeepSeek ? "" : "none";
       }
     }
 

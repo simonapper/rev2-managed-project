@@ -39,7 +39,11 @@ class UserProfileDefaultsForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["llm_provider"].choices = [("openai", "OpenAI"), ("anthropic", "Anthropic")]
+        self.fields["llm_provider"].choices = [
+            ("openai", "OpenAI"),
+            ("anthropic", "Anthropic"),
+            ("deepseek", "DeepSeek"),
+        ]
 
     class Meta:
         model = UserProfile

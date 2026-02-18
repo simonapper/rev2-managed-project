@@ -15,7 +15,8 @@ from config.models import SystemConfigPointers
 
 _OPENAI_CLIENT = None
 _ANTHROPIC_CLIENT = None
-_ALLOWED_PROVIDERS = {"openai", "anthropic", "copilot"}
+_DEEPSEEK_CLIENT = None
+_ALLOWED_PROVIDERS = {"openai", "anthropic", "deepseek", "copilot"}
 _PANE_KEYS = ("answer", "key_info", "visuals", "reasoning", "output")
 _COPILOT_SPEC_OK: Optional[bool] = None
 
@@ -80,6 +81,16 @@ def _get_anthropic_client():
 
         _ANTHROPIC_CLIENT = anthropic.Anthropic()
     return _ANTHROPIC_CLIENT
+
+
+def _get_deepseek_client():
+    global _DEEPSEEK_CLIENT
+    if _DEEPSEEK_CLIENT is None:
+        from deepseek import DeepSeekClient
+
+        api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        _DEEPSEEK_CLIENT = DeepSeekClient(api_key=api_key)
+    return _DEEPSEEK_CLIENT
 
 
 def _get_copilot_agent():
@@ -317,6 +328,37 @@ def _resolve_anthropic_model(force_model: Optional[str], *, user: Any = None) ->
     return _get_default_anthropic_model_key(user=user)
 
 
+def _get_default_deepseek_model_key(*, user: Any = None) -> str:
+    profile = getattr(user, "profile", None) if user is not None else None
+    user_value = (getattr(profile, "deepseek_model_default", "") or "").strip()
+    if user_value:
+        return user_value
+    env_value = os.getenv("DEEPSEEK_MODEL", "")
+    return (env_value or "deepseek-chat").strip()
+
+
+def _resolve_deepseek_text(response: Any) -> str:
+    choices = getattr(response, "choices", None) or []
+    if choices:
+        msg = getattr(choices[0], "message", None)
+        content = getattr(msg, "content", None)
+        return _content_to_text(content)
+    if isinstance(response, dict):
+        try:
+            return _content_to_text(response["choices"][0]["message"]["content"])
+        except Exception:
+            return ""
+    return ""
+
+
+def _deepseek_chat_completion(*, messages: List[Dict[str, Any]], model: str) -> Any:
+    client = _get_deepseek_client()
+    try:
+        return client.chat_completion(model=model, messages=messages)
+    except TypeError:
+        return client.chat_completion(messages=messages)
+
+
 def _data_url_to_anthropic_image_block(data_url: str) -> Optional[Dict[str, Any]]:
     prefix = "data:"
     marker = ";base64,"
@@ -453,6 +495,31 @@ def generate_panes(
             }
         return _normalise_panes_payload(payload)
 
+    if selected_provider == "deepseek":
+        if image_parts:
+            raise ValueError("deepseek provider does not support image_parts")
+
+        prompt = _flatten_prompt(
+            system_blocks=[system_contract, *system_blocks, "Return strict JSON only. No markdown. No prose outside JSON."],
+            messages=history_messages,
+            user_text=user_text,
+        )
+        response = _deepseek_chat_completion(
+            model=_get_default_deepseek_model_key(user=user),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw_text = _resolve_deepseek_text(response).strip()
+        payload = _extract_json_dict_from_text(raw_text)
+        if payload is None:
+            return {
+                "answer": raw_text,
+                "key_info": "",
+                "visuals": "",
+                "reasoning": "",
+                "output": "",
+            }
+        return _normalise_panes_payload(payload)
+
     input_msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_contract}]
     for block in system_blocks:
         if block:
@@ -567,6 +634,18 @@ def generate_handshake(
             ]
         ).strip()
 
+    if selected_provider == "deepseek":
+        prompt = _flatten_prompt(
+            system_blocks=blocks,
+            messages=[],
+            user_text="Bootstrap handshake. Respond now.",
+        )
+        response = _deepseek_chat_completion(
+            model=_get_default_deepseek_model_key(user=user),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return _resolve_deepseek_text(response).strip()
+
     client = _get_openai_client()
     response = client.responses.create(
         model=_get_default_model_key(user=user),
@@ -624,6 +703,18 @@ def generate_text(
                 if getattr(block, "type", "") == "text"
             ]
         ).strip()
+
+    if selected_provider == "deepseek":
+        prompt = _flatten_prompt(
+            system_blocks=system_blocks,
+            messages=messages,
+            user_text="",
+        )
+        response = _deepseek_chat_completion(
+            model=_get_default_deepseek_model_key(user=user),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return _resolve_deepseek_text(response).strip()
 
     client = _get_openai_client()
     response = client.responses.create(

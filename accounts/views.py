@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import re
 import zipfile
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -24,6 +25,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import SetPasswordForm
 from django.contrib.auth.tokens import default_token_generator
+from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import UploadedFile
 from django.core.files.base import ContentFile
@@ -110,21 +112,25 @@ from uploads.models import ChatAttachment
 User = get_user_model()
 
 ALLOWED_MODELS = [
+    ("gpt-5.2", "gpt-5.2"),
     ("gpt-5.1", "gpt-5.1"),
     ("gpt-5-mini", "gpt-5-mini"),
     ("gpt-5-nano", "gpt-5-nano"),
-    ("gpt-4.1", "gpt-4.1"),
-    ("gpt-4.1-mini", "gpt-4.1-mini"),
-    ("gpt-4.1-nano", "gpt-4.1-nano"),
-    ("o3", "o3"),
-    ("o4-mini", "o4-mini"),
-    ("gpt-4o", "gpt-4o"),
+    # ("gpt-4.1", "gpt-4.1"),
+    # ("gpt-4.1-mini", "gpt-4.1-mini"),
+    # ("gpt-4.1-nano", "gpt-4.1-nano"),
 ]
 
 ALLOWED_ANTHROPIC_MODELS = [
-    ("claude-sonnet-4-5-20250929", "claude-sonnet-4-5-20250929"),
-    ("claude-opus-4-5-20251101", "claude-opus-4-5-20251101"),
-    ("claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
+    ("claude-opus-4-6", "claude-opus-4-6"),
+    ("claude-sonnet-4-5", "claude-sonnet-4-5"),
+    ("claude-opus-4-5", "claude-opus-4-5"),
+    ("claude-haiku-4-5", "claude-haiku-4-5"),
+]
+
+ALLOWED_DEEPSEEK_MODELS = [
+    ("deepseek-chat", "deepseek-chat"),
+    ("deepseek-reasoner", "deepseek-reasoner"),
 ]
 
 
@@ -486,11 +492,11 @@ def chat_create(request):
 @require_POST
 @login_required
 def chat_rename(request, chat_id: int):
-    chat = get_object_or_404(ChatWorkspace, id=chat_id)
-
-    projects = accessible_projects_qs(request.user)
-    if not projects.filter(id=chat.project_id).exists():
-        return redirect("accounts:chat_browse")
+    chat = get_object_or_404(
+        ChatWorkspace,
+        id=chat_id,
+        project__in=accessible_projects_qs(request.user),
+    )
 
     title = (request.POST.get("title") or "").strip()
     if not title:
@@ -506,7 +512,11 @@ def chat_rename(request, chat_id: int):
 @require_POST
 @login_required
 def chat_delete(request, chat_id: int):
-    chat = get_object_or_404(ChatWorkspace, pk=chat_id)
+    chat = get_object_or_404(
+        ChatWorkspace.objects.select_related("project"),
+        pk=chat_id,
+        project__in=accessible_projects_qs(request.user),
+    )
 
     p = chat.project
     if not (request.user.is_superuser or p.owner_id == request.user.id):
@@ -521,7 +531,11 @@ def chat_delete(request, chat_id: int):
 @require_POST
 @login_required
 def chat_archive(request, chat_id: int):
-    chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=chat_id)
+    chat = get_object_or_404(
+        ChatWorkspace.objects.select_related("project"),
+        pk=chat_id,
+        project__in=accessible_projects_qs(request.user),
+    )
     p = chat.project
     if not (request.user.is_superuser or p.owner_id == request.user.id):
         messages.error(request, "No permission to archive this chat.")
@@ -546,10 +560,93 @@ def _safe_zip_name(name: str) -> str:
     return s[:80] or "item"
 
 
+_MAX_IMPORT_ZIP_BYTES = 50 * 1024 * 1024
+_MAX_IMPORT_FILES = 1000
+_MAX_IMPORT_MEMBER_BYTES = 25 * 1024 * 1024
+_MAX_IMPORT_TOTAL_BYTES = 200 * 1024 * 1024
+_MAX_IMPORT_RATIO = 200
+_IMPORT_RATE_LIMIT_WINDOW_SECONDS = 60
+_IMPORT_RATE_LIMIT_MAX = 6
+_MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+_SECURITY_LOG = logging.getLogger("workbench.security")
+
+
+def _validate_import_zip_safety(zf: zipfile.ZipFile) -> None:
+    infos = zf.infolist()
+    if len(infos) > _MAX_IMPORT_FILES:
+        raise ValueError("ZIP has too many files.")
+
+    total_uncompressed = 0
+    for info in infos:
+        size = int(getattr(info, "file_size", 0) or 0)
+        compressed = int(getattr(info, "compress_size", 0) or 0)
+        total_uncompressed += size
+
+        if size > _MAX_IMPORT_MEMBER_BYTES:
+            raise ValueError("ZIP member too large.")
+
+        if compressed > 0 and (size / compressed) > _MAX_IMPORT_RATIO:
+            raise ValueError("ZIP compression ratio too high.")
+
+    if total_uncompressed > _MAX_IMPORT_TOTAL_BYTES:
+        raise ValueError("ZIP uncompressed payload too large.")
+
+
+def _safe_zip_read(zf: zipfile.ZipFile, member: str, *, max_bytes: int) -> bytes:
+    info = zf.getinfo(member)
+    size = int(getattr(info, "file_size", 0) or 0)
+    if size > max_bytes:
+        raise ValueError("ZIP member exceeds allowed size.")
+    return zf.read(member)
+
+
+def _check_import_rate_limit(*, user_id: int, scope: str) -> bool:
+    key = f"rw:import-rate:{scope}:{user_id}"
+    now_count = cache.get(key)
+    if now_count is None:
+        cache.set(key, 1, timeout=_IMPORT_RATE_LIMIT_WINDOW_SECONDS)
+        return True
+    if int(now_count) >= _IMPORT_RATE_LIMIT_MAX:
+        return False
+    try:
+        cache.incr(key)
+    except Exception:
+        cache.set(key, int(now_count) + 1, timeout=_IMPORT_RATE_LIMIT_WINDOW_SECONDS)
+    return True
+
+
+def _record_security_event(request, event: str, **details) -> None:
+    now = timezone.now()
+    bucket = now.strftime("%Y%m%d%H")
+    counter_key = f"rw:security:{event}:{bucket}"
+    try:
+        cache.incr(counter_key)
+    except Exception:
+        cache.set(counter_key, 1, timeout=60 * 60 * 48)
+
+    user_id = getattr(getattr(request, "user", None), "id", None)
+    ip = (
+        request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
+        or request.META.get("REMOTE_ADDR", "")
+    )
+    _SECURITY_LOG.warning(
+        "security_event=%s user_id=%s ip=%s path=%s details=%s",
+        event,
+        user_id,
+        ip,
+        request.path,
+        details,
+    )
+
+
 @require_POST
 @login_required
 def chat_export(request, chat_id: int):
-    chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=chat_id)
+    chat = get_object_or_404(
+        ChatWorkspace.objects.select_related("project"),
+        pk=chat_id,
+        project__in=accessible_projects_qs(request.user),
+    )
     p = chat.project
     if not (request.user.is_superuser or p.owner_id == request.user.id):
         messages.error(request, "No permission to export this chat.")
@@ -630,6 +727,11 @@ def chat_export(request, chat_id: int):
 @require_POST
 @login_required
 def chat_import(request):
+    if not _check_import_rate_limit(user_id=request.user.id, scope="chat"):
+        _record_security_event(request, "chat_import_rate_limited")
+        messages.error(request, "Too many import attempts. Please wait a minute and try again.")
+        return redirect("accounts:chat_browse")
+
     f = request.FILES.get("chat_file")
     project_id = request.POST.get("project_id")
 
@@ -639,87 +741,93 @@ def chat_import(request):
     if not str(project_id).isdigit():
         messages.error(request, "Select a target project for chat import.")
         return redirect("accounts:chat_browse")
+    if int(getattr(f, "size", 0) or 0) > _MAX_IMPORT_ZIP_BYTES:
+        _record_security_event(request, "chat_import_zip_too_large", size=int(getattr(f, "size", 0) or 0))
+        messages.error(request, "Chat import ZIP is too large.")
+        return redirect("accounts:chat_browse")
 
     project = get_object_or_404(accessible_projects_qs(request.user), pk=int(project_id))
 
     try:
-        zf = zipfile.ZipFile(f)
-        raw = zf.read("chat.json")
-        payload = json.loads(raw.decode("utf-8"))
+        with zipfile.ZipFile(f) as zf:
+            _validate_import_zip_safety(zf)
+            raw = _safe_zip_read(zf, "chat.json", max_bytes=_MAX_IMPORT_MEMBER_BYTES)
+            payload = json.loads(raw.decode("utf-8"))
+
+            if payload.get("type") != "chat_export_v1":
+                messages.error(request, "Unsupported chat export format.")
+                return redirect("accounts:chat_browse")
+
+            chat_data = payload.get("chat") or {}
+            title = (chat_data.get("title") or "Imported chat").strip()[:250] or "Imported chat"
+
+            chat = ChatWorkspace.objects.create(
+                project=project,
+                title=title,
+                status=ChatWorkspace.Status.ACTIVE,
+                created_by=request.user,
+                goal_text=str(chat_data.get("goal_text") or ""),
+                success_text=str(chat_data.get("success_text") or ""),
+                constraints_text=str(chat_data.get("constraints_text") or ""),
+                non_goals_text=str(chat_data.get("non_goals_text") or ""),
+                cde_is_locked=bool(chat_data.get("cde_is_locked")),
+                cde_json=chat_data.get("cde_json") if isinstance(chat_data.get("cde_json"), dict) else {},
+                chat_overrides=chat_data.get("chat_overrides") if isinstance(chat_data.get("chat_overrides"), dict) else {},
+                pinned_summary=str(chat_data.get("pinned_summary") or ""),
+                pinned_conclusion=str(chat_data.get("pinned_conclusion") or ""),
+                pinned_cursor_message_id=chat_data.get("pinned_cursor_message_id"),
+                pinned_updated_at=timezone.now(),
+            )
+
+            for m in payload.get("messages") or []:
+                if not isinstance(m, dict):
+                    continue
+                role = str(m.get("role") or "").upper()
+                if role not in {ChatMessage.Role.USER, ChatMessage.Role.ASSISTANT, ChatMessage.Role.SYSTEM}:
+                    continue
+                importance = str(m.get("importance") or ChatMessage.Importance.NORMAL).upper()
+                if importance not in {
+                    ChatMessage.Importance.NORMAL,
+                    ChatMessage.Importance.PINNED,
+                    ChatMessage.Importance.IGNORE,
+                }:
+                    importance = ChatMessage.Importance.NORMAL
+                ChatMessage.objects.create(
+                    chat=chat,
+                    role=role,
+                    importance=importance,
+                    raw_text=str(m.get("raw_text") or ""),
+                    answer_text=str(m.get("answer_text") or ""),
+                    reasoning_text=str(m.get("reasoning_text") or ""),
+                    output_text=str(m.get("output_text") or ""),
+                    segment_meta=m.get("segment_meta") if isinstance(m.get("segment_meta"), dict) else {},
+                )
+
+            for a in payload.get("attachments") or []:
+                if not isinstance(a, dict):
+                    continue
+                arc_path = str(a.get("path") or "")
+                if not arc_path:
+                    continue
+                try:
+                    blob = _safe_zip_read(zf, arc_path, max_bytes=_MAX_IMPORT_MEMBER_BYTES)
+                except Exception:
+                    continue
+                original_name = str(a.get("original_name") or "attachment.bin")
+                cf = ContentFile(blob, name=original_name)
+                ChatAttachment.objects.create(
+                    project=project,
+                    chat=chat,
+                    uploaded_by=request.user,
+                    file=cf,
+                    original_name=original_name,
+                    content_type=str(a.get("content_type") or ""),
+                    size_bytes=int(a.get("size_bytes") or len(blob)),
+                )
     except Exception as exc:
+        _record_security_event(request, "chat_import_invalid_zip", error=str(exc)[:160])
         messages.error(request, f"Invalid chat export: {exc}")
         return redirect("accounts:chat_browse")
-
-    if payload.get("type") != "chat_export_v1":
-        messages.error(request, "Unsupported chat export format.")
-        return redirect("accounts:chat_browse")
-
-    chat_data = payload.get("chat") or {}
-    title = (chat_data.get("title") or "Imported chat").strip()[:250] or "Imported chat"
-
-    chat = ChatWorkspace.objects.create(
-        project=project,
-        title=title,
-        status=ChatWorkspace.Status.ACTIVE,
-        created_by=request.user,
-        goal_text=str(chat_data.get("goal_text") or ""),
-        success_text=str(chat_data.get("success_text") or ""),
-        constraints_text=str(chat_data.get("constraints_text") or ""),
-        non_goals_text=str(chat_data.get("non_goals_text") or ""),
-        cde_is_locked=bool(chat_data.get("cde_is_locked")),
-        cde_json=chat_data.get("cde_json") if isinstance(chat_data.get("cde_json"), dict) else {},
-        chat_overrides=chat_data.get("chat_overrides") if isinstance(chat_data.get("chat_overrides"), dict) else {},
-        pinned_summary=str(chat_data.get("pinned_summary") or ""),
-        pinned_conclusion=str(chat_data.get("pinned_conclusion") or ""),
-        pinned_cursor_message_id=chat_data.get("pinned_cursor_message_id"),
-        pinned_updated_at=timezone.now(),
-    )
-
-    for m in payload.get("messages") or []:
-        if not isinstance(m, dict):
-            continue
-        role = str(m.get("role") or "").upper()
-        if role not in {ChatMessage.Role.USER, ChatMessage.Role.ASSISTANT, ChatMessage.Role.SYSTEM}:
-            continue
-        importance = str(m.get("importance") or ChatMessage.Importance.NORMAL).upper()
-        if importance not in {
-            ChatMessage.Importance.NORMAL,
-            ChatMessage.Importance.PINNED,
-            ChatMessage.Importance.IGNORE,
-        }:
-            importance = ChatMessage.Importance.NORMAL
-        ChatMessage.objects.create(
-            chat=chat,
-            role=role,
-            importance=importance,
-            raw_text=str(m.get("raw_text") or ""),
-            answer_text=str(m.get("answer_text") or ""),
-            reasoning_text=str(m.get("reasoning_text") or ""),
-            output_text=str(m.get("output_text") or ""),
-            segment_meta=m.get("segment_meta") if isinstance(m.get("segment_meta"), dict) else {},
-        )
-
-    for a in payload.get("attachments") or []:
-        if not isinstance(a, dict):
-            continue
-        arc_path = str(a.get("path") or "")
-        if not arc_path:
-            continue
-        try:
-            blob = zf.read(arc_path)
-        except Exception:
-            continue
-        original_name = str(a.get("original_name") or "attachment.bin")
-        cf = ContentFile(blob, name=original_name)
-        ChatAttachment.objects.create(
-            project=project,
-            chat=chat,
-            uploaded_by=request.user,
-            file=cf,
-            original_name=original_name,
-            content_type=str(a.get("content_type") or ""),
-            size_bytes=int(a.get("size_bytes") or len(blob)),
-        )
 
     request.session["rw_active_project_id"] = project.id
     request.session["rw_active_chat_id"] = chat.id
@@ -753,7 +861,11 @@ def chat_message_create(request):
         messages.error(request, "Message cannot be empty.")
         return redirect(reverse("accounts:chat_detail", args=[cid]))
 
-    chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=cid)
+    chat = get_object_or_404(
+        ChatWorkspace.objects.select_related("project"),
+        pk=cid,
+        project__in=accessible_projects_qs(request.user),
+    )
     project = chat.project
     user = request.user
 
@@ -872,12 +984,6 @@ def chat_message_create(request):
         answer_mode=answer_mode,
         exclude_message_ids=[user_msg.id],
     )
-
-    if history_messages:
-        last_roles = [m.get("role") for m in history_messages[-5:]]
-    else:
-        last_roles = []
-    print("LLM history messages:", len(history_messages), "last roles:", last_roles)
 
     panes = generate_panes(
         content,
@@ -1786,7 +1892,11 @@ def chat_select(request, chat_id: int):
 
 @login_required
 def chat_detail(request, chat_id: int):
-    chat = get_object_or_404(ChatWorkspace, id=chat_id)
+    chat = get_object_or_404(
+        ChatWorkspace.objects.select_related("project"),
+        id=chat_id,
+        project__in=accessible_projects_qs(request.user),
+    )
     chat_detail_path = reverse("accounts:chat_detail", args=[chat.id])
     next_url_keep_turn = request.get_full_path()
 
@@ -1945,9 +2055,10 @@ def config_menu(request):
 
     if request.method == "POST":
         provider = (request.POST.get("llm_provider") or "").strip().lower()
-        allowed = {"openai", "anthropic"}
+        allowed = {"openai", "anthropic", "deepseek"}
         allowed_openai_models = {k for k, _ in ALLOWED_MODELS}
         allowed_anthropic_models = {k for k, _ in ALLOWED_ANTHROPIC_MODELS}
+        allowed_deepseek_models = {k for k, _ in ALLOWED_DEEPSEEK_MODELS}
 
         if provider not in allowed:
             messages.error(request, "Invalid LLM provider.")
@@ -1968,6 +2079,13 @@ def config_menu(request):
                     return redirect("accounts:config_menu")
                 profile.anthropic_model_default = anthropic_model
                 update_fields.append("anthropic_model_default")
+            elif provider == "deepseek":
+                deepseek_model = (request.POST.get("deepseek_model_default") or "").strip()
+                if deepseek_model not in allowed_deepseek_models:
+                    messages.error(request, "Invalid DeepSeek model.")
+                    return redirect("accounts:config_menu")
+                profile.deepseek_model_default = deepseek_model
+                update_fields.append("deepseek_model_default")
             profile.save(update_fields=update_fields)
             messages.success(request, "LLM settings updated.")
         return redirect("accounts:config_menu")
@@ -1984,8 +2102,10 @@ def config_menu(request):
             "anthropic_model_default": (
                 profile.anthropic_model_default or "claude-sonnet-4-5-20250929"
             ),
+            "deepseek_model_default": (profile.deepseek_model_default or "deepseek-chat"),
             "openai_model_choices": ALLOWED_MODELS,
             "anthropic_model_choices": ALLOWED_ANTHROPIC_MODELS,
+            "deepseek_model_choices": ALLOWED_DEEPSEEK_MODELS,
         },
     )
 
@@ -2247,7 +2367,14 @@ def _push_override_update(request, chat, changed_axes: list[tuple[str, str, str]
 def chat_config_overrides(request):
     active_chat_id = request.session.get("rw_active_chat_id")
     key = str(active_chat_id) if active_chat_id else None
-    chat = ChatWorkspace.objects.filter(pk=int(active_chat_id)).first() if str(active_chat_id).isdigit() else None
+    chat = (
+        ChatWorkspace.objects.filter(
+            pk=int(active_chat_id),
+            project__in=accessible_projects_qs(request.user),
+        ).first()
+        if str(active_chat_id).isdigit()
+        else None
+    )
     chat_overrides = request.session.get("rw_chat_overrides", {}) or {}
     per_chat = {}
     if key:
@@ -2487,11 +2614,18 @@ def chat_config_overrides(request):
 @require_POST
 @login_required
 def chat_attachment_upload(request, chat_id: int):
-    chat = get_object_or_404(ChatWorkspace.objects.select_related("project"), pk=chat_id)
+    chat = get_object_or_404(
+        ChatWorkspace.objects.select_related("project"),
+        pk=chat_id,
+        project__in=accessible_projects_qs(request.user),
+    )
 
     f = request.FILES.get("file")
     if not f:
         return JsonResponse({"ok": False, "error": "No file provided."}, status=400)
+    if int(getattr(f, "size", 0) or 0) > _MAX_ATTACHMENT_BYTES:
+        _record_security_event(request, "chat_attachment_too_large", size=int(getattr(f, "size", 0) or 0))
+        return JsonResponse({"ok": False, "error": "Attachment is too large."}, status=400)
 
     ctype = (getattr(f, "content_type", "") or "").lower()
     source = (request.POST.get("source", "") or "").lower()

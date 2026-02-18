@@ -18,6 +18,7 @@ class UserLLMProviderSettingTests(TestCase):
                 "default_language_variant": profile.default_language_variant,
                 "language_switching_permitted": "on",
                 "persist_language_switch_for_session": "on",
+                "summary_rollup_trigger_message_count": str(profile.summary_rollup_trigger_message_count),
                 "llm_provider": "copilot",
             },
         )
@@ -40,6 +41,7 @@ class UserLLMProviderSettingTests(TestCase):
                 "default_language_variant": profile.default_language_variant,
                 "language_switching_permitted": "on",
                 "persist_language_switch_for_session": "on",
+                "summary_rollup_trigger_message_count": str(profile.summary_rollup_trigger_message_count),
                 "llm_provider": "anthropic",
             },
         )
@@ -47,6 +49,29 @@ class UserLLMProviderSettingTests(TestCase):
         self.assertEqual(response.status_code, 302)
         profile.refresh_from_db()
         self.assertEqual(profile.llm_provider, "anthropic")
+
+    def test_user_can_change_llm_provider_to_deepseek(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u5", email="u5@example.com", password="pw")
+
+        self.client.force_login(user)
+        profile = user.profile
+
+        response = self.client.post(
+            reverse("accounts:user_config_user"),
+            data={
+                "default_language": profile.default_language,
+                "default_language_variant": profile.default_language_variant,
+                "language_switching_permitted": "on",
+                "persist_language_switch_for_session": "on",
+                "summary_rollup_trigger_message_count": str(profile.summary_rollup_trigger_message_count),
+                "llm_provider": "deepseek",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        profile.refresh_from_db()
+        self.assertEqual(profile.llm_provider, "deepseek")
 
     def test_config_menu_updates_provider_and_model_versions(self):
         User = get_user_model()
@@ -91,3 +116,25 @@ class UserLLMProviderSettingTests(TestCase):
         self.assertEqual(user.profile.llm_provider, "openai")
         self.assertEqual(user.profile.openai_model_default, "gpt-4.1-mini")
         self.assertEqual(user.profile.anthropic_model_default, "claude-sonnet-4-5-20250929")
+
+    def test_config_menu_updates_deepseek_model_only_when_deepseek_selected(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u6", email="u6@example.com", password="pw")
+        user.profile.openai_model_default = "gpt-5.1"
+        user.profile.deepseek_model_default = "deepseek-chat"
+        user.profile.save(update_fields=["openai_model_default", "deepseek_model_default"])
+
+        self.client.force_login(user)
+        response = self.client.post(
+            reverse("accounts:config_menu"),
+            data={
+                "llm_provider": "deepseek",
+                "deepseek_model_default": "deepseek-reasoner",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        user.profile.refresh_from_db()
+        self.assertEqual(user.profile.llm_provider, "deepseek")
+        self.assertEqual(user.profile.openai_model_default, "gpt-5.1")
+        self.assertEqual(user.profile.deepseek_model_default, "deepseek-reasoner")

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Optional
 
 from django.contrib.auth.models import AnonymousUser
@@ -30,6 +31,12 @@ def topbar_context(request) -> Dict[str, Any]:
             (getattr(profile, "anthropic_model_default", "") or "").strip()
             or (getattr(pointers, "anthropic_model_default", "") or "").strip()
             or "claude-sonnet-4-5-20250929"
+        )
+    elif provider == "deepseek":
+        model_name = (
+            (getattr(profile, "deepseek_model_default", "") or "").strip()
+            or os.getenv("DEEPSEEK_MODEL", "").strip()
+            or "deepseek-chat"
         )
     else:
         model_name = (
@@ -379,15 +386,23 @@ def active_chat_bar(request) -> Dict[str, Any]:
             request.session["rw_active_chat_id"] = chat_id
             request.session.modified = True
     if not chat_id:
-        return {"rw_chat": {"active_id": None, "chat_title": "", "turn_count": 0}}
+        fallback_chat = (
+            ChatWorkspace.objects.filter(project__in=accessible_projects_qs(user))
+            .only("id")
+            .order_by("-updated_at", "-id")
+            .first()
+        )
+        if fallback_chat is not None:
+            chat_id = fallback_chat.id
+            request.session["rw_active_chat_id"] = chat_id
+            request.session.modified = True
+        else:
+            return {"rw_chat": {"active_id": None, "chat_title": "", "turn_count": 0}}
 
     try:
         chat_id_int = int(chat_id)
     except (TypeError, ValueError):
         return {"rw_chat": {"active_id": None, "chat_title": "", "turn_count": 0}}
-
-    # Import inside function (keeps import order clean)
-    from chats.models import ChatWorkspace, ChatMessage
 
     chat = (
         ChatWorkspace.objects

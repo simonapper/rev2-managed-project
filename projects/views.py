@@ -12,11 +12,12 @@ from django.http import HttpRequest, HttpResponse, HttpResponseForbidden, JsonRe
 from django.urls import reverse
 from accounts.models_avatars import Avatar
 from projects.models import Project, UserProjectPrefs
+from projects.services_project_membership import accessible_projects_qs
 
 
 @login_required
 def rename_project(request, project_id):
-    project = get_object_or_404(Project, id=project_id)
+    project = get_object_or_404(accessible_projects_qs(request.user), id=project_id)
 
     if not is_project_manager(project, request.user):
         return redirect("accounts:config_project_list")  # permission fallback
@@ -62,7 +63,7 @@ def _user_can_view_project(project: Project, user) -> bool:
 
 @login_required
 def project_preferences(request: HttpRequest, project_id: int) -> HttpResponse:
-    project = get_object_or_404(Project, pk=project_id)
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
 
     if not _user_can_view_project(project, request.user):
         return HttpResponseForbidden("Not permitted.")
