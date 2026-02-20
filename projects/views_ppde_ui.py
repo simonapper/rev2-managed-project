@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Max
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from urllib.parse import urlencode
@@ -775,6 +775,7 @@ def _block_anchor(block_key: str) -> str:
 @login_required
 def ppde_detail(request, project_id: int) -> HttpResponse:
     project = get_object_or_404(Project, id=project_id)
+    wants_json = (request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest"
     if not can_edit_ppde(project, request.user):
         messages.error(request, "You do not have permission to edit this project.")
         return redirect("accounts:dashboard")
@@ -1434,6 +1435,8 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
 
     if request.method == "POST" and action in ("save_block", "verify_block", "propose_lock", "approve_lock", "reopen_block"):
         if not block_key:
+            if wants_json:
+                return JsonResponse({"ok": False, "message": "Missing block key."}, status=400)
             messages.error(request, "Missing block key.")
             return redirect("projects:ppde_detail", project_id=project.id)
 
@@ -1466,11 +1469,15 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                     break
 
             if block.status in (ProjectPlanningPurpose.Status.PROPOSED, ProjectPlanningPurpose.Status.PASS_LOCKED) and not can_commit:
+                if wants_json:
+                    return JsonResponse({"ok": False, "message": "Only the Project Committer can edit this block."}, status=403)
                 messages.error(request, "Only the Project Committer can edit this block.")
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
             if action == "verify_block":
                 if not transform_contract:
+                    if wants_json:
+                        return JsonResponse({"ok": False, "message": "No active contract configured. Contact administrator."}, status=400)
                     messages.error(request, "No active contract configured. Contact administrator.")
                     return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
                 vobj = _ppde_validate_block(
@@ -1486,10 +1493,29 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 request.session["ppde_last_validation_key"] = block_key
                 request.session.modified = True
                 messages.info(request, "Verification complete.")
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "block_key": block_key,
+                            "status": block.status,
+                            "validation": vobj,
+                            "message": "Verification complete.",
+                        }
+                    )
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
             if action == "save_block":
                 if not changed:
+                    if wants_json:
+                        return JsonResponse(
+                            {
+                                "ok": True,
+                                "block_key": block_key,
+                                "status": block.status,
+                                "message": "No changes.",
+                            }
+                        )
                     messages.info(request, "No changes.")
                     return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
@@ -1525,6 +1551,15 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                     ]
                 )
                 messages.success(request, "Changes saved.")
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "block_key": block_key,
+                            "status": block.status,
+                            "message": "Changes saved.",
+                        }
+                    )
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
             if action == "propose_lock":
@@ -1552,13 +1587,26 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                     ]
                 )
                 messages.success(request, "Lock proposed.")
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "block_key": block_key,
+                            "status": "PROPOSED",
+                            "proposed_by": request.user.username,
+                        }
+                    )
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
             if action == "approve_lock":
                 if not can_commit:
+                    if wants_json:
+                        return JsonResponse({"ok": False, "message": "Only the Project Committer can approve."}, status=403)
                     messages.error(request, "Only the Project Committer can approve.")
                     return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
                 if block.status != ProjectPlanningPurpose.Status.PROPOSED:
+                    if wants_json:
+                        return JsonResponse({"ok": False, "message": "Block is not proposed."}, status=400)
                     messages.error(request, "Block is not proposed.")
                     return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
                 block.status = ProjectPlanningPurpose.Status.PASS_LOCKED
@@ -1566,10 +1614,21 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 block.locked_at = timezone.now()
                 block.save(update_fields=["status", "locked_by", "locked_at", "updated_at"])
                 messages.success(request, "Block locked.")
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "block_key": block_key,
+                            "status": "PASS_LOCKED",
+                            "locked_by": request.user.username,
+                        }
+                    )
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
             if action == "reopen_block":
                 if not can_commit:
+                    if wants_json:
+                        return JsonResponse({"ok": False, "message": "Only the Project Committer can reopen."}, status=403)
                     messages.error(request, "Only the Project Committer can reopen.")
                     return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
                 block.status = ProjectPlanningPurpose.Status.DRAFT
@@ -1579,6 +1638,14 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 block.locked_at = None
                 block.save(update_fields=["status", "proposed_by", "proposed_at", "locked_by", "locked_at", "updated_at"])
                 messages.success(request, "Block reopened.")
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "block_key": block_key,
+                            "status": "DRAFT",
+                        }
+                    )
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
         if block_key.startswith("stage:"):
@@ -1590,11 +1657,15 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             changed = _stage_payload_changed(stage, payload)
 
             if stage.status in (ProjectPlanningStage.Status.PROPOSED, ProjectPlanningStage.Status.PASS_LOCKED) and not can_commit:
+                if wants_json:
+                    return JsonResponse({"ok": False, "message": "Only the Project Committer can edit this block."}, status=403)
                 messages.error(request, "Only the Project Committer can edit this block.")
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
             if action == "verify_block":
                 if not transform_contract:
+                    if wants_json:
+                        return JsonResponse({"ok": False, "message": "No active contract configured. Contact administrator."}, status=400)
                     messages.error(request, "No active contract configured. Contact administrator.")
                     return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
                 vobj = _ppde_validate_block(
@@ -1610,10 +1681,29 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 request.session["ppde_last_validation_key"] = block_key
                 request.session.modified = True
                 messages.info(request, "Verification complete.")
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "block_key": block_key,
+                            "status": stage.status,
+                            "validation": vobj,
+                            "message": "Verification complete.",
+                        }
+                    )
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
             if action == "save_block":
                 if not changed:
+                    if wants_json:
+                        return JsonResponse(
+                            {
+                                "ok": True,
+                                "block_key": block_key,
+                                "status": stage.status,
+                                "message": "No changes.",
+                            }
+                        )
                     messages.info(request, "No changes.")
                     return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
@@ -1634,7 +1724,9 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                         "title",
                         "purpose",
                         "inputs",
+                        "stage_process",
                         "outputs",
+                        "assumptions",
                         "duration_estimate",
                         "risks_notes",
                         "last_edited_by",
@@ -1649,6 +1741,15 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                     ]
                 )
                 messages.success(request, "Changes saved.")
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "block_key": block_key,
+                            "status": stage.status,
+                            "message": "Changes saved.",
+                        }
+                    )
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
             if action == "propose_lock":
@@ -1664,7 +1765,9 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                         "title",
                         "purpose",
                         "inputs",
+                        "stage_process",
                         "outputs",
+                        "assumptions",
                         "duration_estimate",
                         "risks_notes",
                         "last_edited_by",
@@ -1676,13 +1779,26 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                     ]
                 )
                 messages.success(request, "Lock proposed.")
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "block_key": block_key,
+                            "status": "PROPOSED",
+                            "proposed_by": request.user.username,
+                        }
+                    )
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
             if action == "approve_lock":
                 if not can_commit:
+                    if wants_json:
+                        return JsonResponse({"ok": False, "message": "Only the Project Committer can approve."}, status=403)
                     messages.error(request, "Only the Project Committer can approve.")
                     return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
                 if stage.status != ProjectPlanningStage.Status.PROPOSED:
+                    if wants_json:
+                        return JsonResponse({"ok": False, "message": "Block is not proposed."}, status=400)
                     messages.error(request, "Block is not proposed.")
                     return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
                 stage.status = ProjectPlanningStage.Status.PASS_LOCKED
@@ -1690,10 +1806,21 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 stage.locked_at = timezone.now()
                 stage.save(update_fields=["status", "locked_by", "locked_at", "updated_at"])
                 messages.success(request, "Block locked.")
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "block_key": block_key,
+                            "status": "PASS_LOCKED",
+                            "locked_by": request.user.username,
+                        }
+                    )
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
             if action == "reopen_block":
                 if not can_commit:
+                    if wants_json:
+                        return JsonResponse({"ok": False, "message": "Only the Project Committer can reopen."}, status=403)
                     messages.error(request, "Only the Project Committer can reopen.")
                     return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
                 stage.status = ProjectPlanningStage.Status.DRAFT
@@ -1703,6 +1830,14 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                 stage.locked_at = None
                 stage.save(update_fields=["status", "proposed_by", "proposed_at", "locked_by", "locked_at", "updated_at"])
                 messages.success(request, "Block reopened.")
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": True,
+                            "block_key": block_key,
+                            "status": "DRAFT",
+                        }
+                    )
                 return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
 
     if request.method == "POST" and action == "commit_wko_version":

@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from chats.models import ChatMessage
 from chats.services.llm import _extract_json_dict_from_text
-from uploads.models import ChatAttachment
+from uploads.models import ChatAttachment, GeneratedImage
 
 
 def build_chat_turn_context(request, chat):
@@ -19,6 +19,11 @@ def build_chat_turn_context(request, chat):
     - Handshake (ASSISTANT with no preceding USER) is not a turn
     """
     attachments = list(ChatAttachment.objects.filter(chat=chat))
+    generated_images = list(GeneratedImage.objects.filter(chat=chat).order_by("created_at", "id"))
+    images_by_message_id = {}
+    for gi in generated_images:
+        if gi.message_id:
+            images_by_message_id.setdefault(gi.message_id, []).append(gi)
     show_system = request.GET.get("system") in ("1", "true", "yes")
     cursor_id = int(getattr(chat, "pinned_cursor_message_id", 0) or 0)
 
@@ -87,6 +92,7 @@ def build_chat_turn_context(request, chat):
                     "is_pinned": getattr(m, "importance", "") == "PINNED",
                     "is_ignored": getattr(m, "importance", "") == "IGNORE",
                     "is_rolled_up": is_rolled_up,
+                    "generated_images": images_by_message_id.get(m.id, []),
                 })
             continue
 
@@ -141,6 +147,7 @@ def build_chat_turn_context(request, chat):
                     or (pending_user is not None and getattr(pending_user, "importance", "") == "IGNORE")
                 ),
                 "is_rolled_up": bool(cursor_id and m.id <= cursor_id),
+                "generated_images": images_by_message_id.get(m.id, []),
             })
 
             pending_user = None
@@ -164,6 +171,7 @@ def build_chat_turn_context(request, chat):
             "is_pinned": getattr(pending_user, "importance", "") == "PINNED",
             "is_ignored": getattr(pending_user, "importance", "") == "IGNORE",
             "is_rolled_up": bool(cursor_id and pending_user.id <= cursor_id),
+            "generated_images": [],
         })
         pending_user = None
 

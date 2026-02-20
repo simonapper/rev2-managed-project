@@ -1,0 +1,14 @@
+<div class="btn-group btn-group-sm" role="group" aria-label="Intent view style">
+  <a class="btn {% if intent_view_style == 'default' %}btn-primary{% else %}btn-outline-secondary{% endif %}"
+     href="{{ intent_view_urls.default }}">
+    Reference
+  </a>
+  <a class="btn {% if intent_view_style == 'cockpit' %}btn-primary{% else %}btn-outline-secondary{% endif %}"
+     href="{{ intent_view_urls.cockpit }}">
+    Cockpit
+  </a>
+  <a class="btn {% if intent_view_style == 'mission' %}btn-primary{% else %}btn-outline-secondary{% endif %}"
+     href="{{ intent_view_urls.mission }}">
+    Mission
+  </a>
+</div>

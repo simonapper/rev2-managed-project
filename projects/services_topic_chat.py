@@ -74,6 +74,7 @@ def get_or_create_topic_chat(
             session_overrides={},
             cde_mode=cde_mode,
             cde_inputs=cde_inputs,
+            skip_readiness_checks=True,
         )
 
         seed = (seed_user_text or "").strip()

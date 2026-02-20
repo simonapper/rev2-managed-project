@@ -14,6 +14,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import re
 import zipfile
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -32,7 +33,7 @@ from django.core.files.base import ContentFile
 from django.core.paginator import Paginator
 from django.db.models import Count, Exists, OuterRef, Q, Case, When, Value, IntegerField
 from django.db.models.functions import Coalesce
-from django.http import Http404, JsonResponse, HttpResponse
+from django.http import FileResponse, Http404, JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -43,6 +44,25 @@ def _safe_int(val):
         return int(val)
     except Exception:
         return None
+
+
+def _apply_soft_boundary_label_fallback(answer_text: str, errors: list[str]) -> str:
+    text = (answer_text or "").strip()
+    lower = text.lower()
+    lines = []
+    if "missing Scope" in errors and "scope:" not in lower:
+        lines.append("Scope: OUT-OF-SCOPE")
+    if "missing Assumptions" in errors and "assumptions:" not in lower:
+        lines.append("Assumptions: jurisdiction unknown; verify local rules.")
+    if "missing Source basis" in errors and "source basis:" not in lower:
+        lines.append("Source basis: general_knowledge")
+    if "missing Confidence" in errors and "confidence:" not in lower:
+        lines.append("Confidence: low")
+    if not lines:
+        return text
+    if text:
+        return "\n".join(lines) + "\n\n" + text
+    return "\n".join(lines)
 
 
 def _strip_query_param(url: str, param_name: str) -> str:
@@ -65,16 +85,80 @@ def _strip_query_param(url: str, param_name: str) -> str:
     except Exception:
         return raw
 
+
+def _append_query_param(url: str, key: str, value: str) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    try:
+        parts = urlsplit(raw)
+        pairs = parse_qsl(parts.query, keep_blank_values=True)
+        pairs = [(k, v) for (k, v) in pairs if k != key]
+        pairs.append((key, value))
+        return urlunsplit(
+            (
+                parts.scheme,
+                parts.netloc,
+                parts.path,
+                urlencode(pairs, doseq=True),
+                parts.fragment,
+            )
+        )
+    except Exception:
+        sep = "&" if "?" in raw else "?"
+        return raw + sep + key + "=" + value
+
+
+def _boundary_profile_from_post(post_data) -> dict:
+    topic_tags_raw = (post_data.get("boundary_topic_tags") or "").strip()
+    topic_tags = [v.strip().upper() for v in topic_tags_raw.replace(";", ",").split(",") if v.strip()]
+    jurisdiction = "UK" if any(tag.startswith("UK_") or tag == "UK" for tag in topic_tags) else "NONE"
+
+    return {
+        "strictness": "SOFT",
+        "jurisdiction": jurisdiction,
+        "topic_tags": topic_tags,
+        "authority_set": {
+            "allow_model_general_knowledge": bool(post_data.get("boundary_allow_general")),
+            "allow_internal_docs": bool(post_data.get("boundary_allow_internal_docs")),
+            "allow_public_sources": False,
+        },
+        "out_of_scope_behaviour": "ALLOW_WITH_WARNING",
+        "recency_risk_topics": ["TAX_RATES", "THRESHOLDS", "DEADLINES"],
+        "required_labels": {
+            "scope_flag": True,
+            "assumptions": True,
+            "source_basis": True,
+            "confidence": True,
+        },
+    }
+
+
+def _active_provider_and_model_for_user(user) -> tuple[str, str]:
+    profile = getattr(user, "profile", None)
+    provider = (getattr(profile, "llm_provider", "") or "openai").strip().lower()
+    if provider == "anthropic":
+        model = (getattr(profile, "anthropic_model_default", "") or "").strip() or "claude-sonnet-4-5"
+    elif provider == "deepseek":
+        model = (getattr(profile, "deepseek_model_default", "") or "").strip() or "deepseek-chat"
+    else:
+        provider = "openai"
+        model = (getattr(profile, "openai_model_default", "") or "").strip() or _get_default_model_key(user=user)
+    return provider, model
+
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_decode
 from django.views.decorators.http import require_POST
 
 from accounts.forms import ProjectOperatingProfileForm, UserProfileDefaultsForm
 from accounts.models_avatars import Avatar
 from chats.models import ChatMessage, ChatRollupEvent, ChatWorkspace
+from chats.services_boundaries import build_boundary_contract_blocks, is_boundary_profile_active, resolve_boundary_profile
+from chats.services_boundary_validator import validate_boundary_labels
 from chats.services.cde_injection import build_cde_system_blocks
 from chats.services.cde_loop import validate_cde_inputs
+from chats.services_assets import persist_generated_images_from_text, save_generated_image_bytes
 from chats.services.chat_bootstrap import bootstrap_chat
-from chats.services.llm import _get_default_model_key, generate_panes, generate_text
+from chats.services.llm import _get_default_model_key, generate_openai_image_bytes, generate_panes, generate_text
 from chats.services.llm import build_image_parts_from_attachments
 from chats.services.pinning import (
     build_history_messages,
@@ -105,8 +189,9 @@ from projects.services_artefacts import normalise_pdo_payload, merge_execute_pay
 from projects.services_execute_validator import validate_execute_update, merge_execute_update
 from projects.services.context_resolution import resolve_effective_context
 from projects.services.llm_instructions import PROTOCOL_LIBRARY, build_system_messages
+from projects.services_policy_retrieval import looks_policy_related, policy_retrieve
 from projects.services_project_membership import accessible_projects_qs, can_edit_pde, can_edit_ppde, is_project_committer
-from uploads.models import ChatAttachment
+from uploads.models import ChatAttachment, GeneratedImage
 
 
 User = get_user_model()
@@ -400,6 +485,8 @@ def chat_create(request):
                 messages.error(request, "Start PPDE before creating chats.")
                 return redirect("projects:ppde_detail", project_id=project.id)
 
+        boundary_profile = _boundary_profile_from_post(request.POST)
+
         cde_mode = (request.POST.get("cde_mode") or "SKIP").strip().upper()
         cde_inputs = {
             "chat.goal": (request.POST.get("chat_goal") or "").strip(),
@@ -440,6 +527,8 @@ def chat_create(request):
                         "sticky_chat_constraints": cde_inputs.get("chat.constraints", ""),
                         "sticky_chat_non_goals": cde_inputs.get("chat.non_goals", ""),
                         "cde_feedback": cde_result.get("first_blocker"),
+                        "boundary_defaults": boundary_profile,
+                        "policy_docs_help_url": reverse("projects:policy_docs_help", args=[project.id]),
                     },
                 )
 
@@ -463,7 +552,11 @@ def chat_create(request):
 
         if cde_json:
             chat.cde_json = cde_json
-            chat.save(update_fields=["cde_json", "updated_at"])
+        chat.boundary_profile_json = boundary_profile
+        if cde_json:
+            chat.save(update_fields=["cde_json", "boundary_profile_json", "updated_at"])
+        else:
+            chat.save(update_fields=["boundary_profile_json", "updated_at"])
 
         request.session["rw_active_project_id"] = project.id
         request.session["rw_active_chat_id"] = chat.id
@@ -477,6 +570,11 @@ def chat_create(request):
             selected_project_id = int(selected_project_id)
         except ValueError:
             selected_project_id = None
+    boundary_defaults = {}
+    if selected_project_id:
+        selected_project = projects.filter(id=selected_project_id).first()
+        if selected_project:
+            boundary_defaults = resolve_boundary_profile(selected_project, None)
 
     return render(
         request,
@@ -484,6 +582,12 @@ def chat_create(request):
         {
             "projects": projects,
             "selected_project_id": selected_project_id,
+            "boundary_defaults": boundary_defaults,
+            "policy_docs_help_url": (
+                reverse("projects:policy_docs_help", args=[selected_project_id])
+                if selected_project_id
+                else ""
+            ),
         },
     )
 
@@ -654,6 +758,7 @@ def chat_export(request, chat_id: int):
 
     messages_qs = ChatMessage.objects.filter(chat=chat).order_by("id")
     atts_qs = ChatAttachment.objects.filter(chat=chat).order_by("id")
+    gen_qs = GeneratedImage.objects.filter(chat=chat).order_by("id")
 
     payload = {
         "type": "chat_export_v1",
@@ -677,11 +782,13 @@ def chat_export(request, chat_id: int):
         },
         "messages": [],
         "attachments": [],
+        "generated_images": [],
     }
 
     for m in messages_qs:
         payload["messages"].append(
             {
+                "id": m.id,
                 "role": m.role,
                 "importance": m.importance,
                 "raw_text": m.raw_text or "",
@@ -712,11 +819,33 @@ def chat_export(request, chat_id: int):
                     "created_at": a.created_at.isoformat() if a.created_at else "",
                 }
             )
+        for gi in gen_qs:
+            ext = os.path.splitext(str(getattr(gi.image_file, "name", "") or ""))[1] or ".png"
+            arc_path = f"generated_images/{gi.id}_{gi.sha256[:16] or 'img'}{ext}"
+            try:
+                with gi.image_file.open("rb") as fh:
+                    zf.writestr(arc_path, fh.read())
+            except Exception:
+                continue
+            payload["generated_images"].append(
+                {
+                    "path": arc_path,
+                    "message_id": gi.message_id,
+                    "provider": gi.provider or "",
+                    "model": gi.model or "",
+                    "prompt": gi.prompt or "",
+                    "file_id": gi.file_id or "",
+                    "mime_type": gi.mime_type or "image/png",
+                    "width": gi.width,
+                    "height": gi.height,
+                    "sha256": gi.sha256 or "",
+                    "created_at": gi.created_at.isoformat() if gi.created_at else "",
+                }
+            )
         zf.writestr("chat.json", json.dumps(payload, ensure_ascii=True, indent=2))
 
     chat_title = chat.title
-    chat.delete()
-    messages.success(request, "Chat exported and deleted.")
+    messages.success(request, "Chat exported.")
 
     filename = _safe_zip_name(chat_title or "chat") + ".zip"
     resp = HttpResponse(zip_buffer.getvalue(), content_type="application/zip")
@@ -779,6 +908,7 @@ def chat_import(request):
                 pinned_updated_at=timezone.now(),
             )
 
+            old_to_new_message = {}
             for m in payload.get("messages") or []:
                 if not isinstance(m, dict):
                     continue
@@ -792,7 +922,7 @@ def chat_import(request):
                     ChatMessage.Importance.IGNORE,
                 }:
                     importance = ChatMessage.Importance.NORMAL
-                ChatMessage.objects.create(
+                saved_msg = ChatMessage.objects.create(
                     chat=chat,
                     role=role,
                     importance=importance,
@@ -802,6 +932,9 @@ def chat_import(request):
                     output_text=str(m.get("output_text") or ""),
                     segment_meta=m.get("segment_meta") if isinstance(m.get("segment_meta"), dict) else {},
                 )
+                src_id = m.get("id")
+                if isinstance(src_id, int):
+                    old_to_new_message[src_id] = saved_msg.id
 
             for a in payload.get("attachments") or []:
                 if not isinstance(a, dict):
@@ -823,6 +956,34 @@ def chat_import(request):
                     original_name=original_name,
                     content_type=str(a.get("content_type") or ""),
                     size_bytes=int(a.get("size_bytes") or len(blob)),
+                )
+            for gi in payload.get("generated_images") or []:
+                if not isinstance(gi, dict):
+                    continue
+                arc_path = str(gi.get("path") or "")
+                if not arc_path:
+                    continue
+                try:
+                    blob = _safe_zip_read(zf, arc_path, max_bytes=_MAX_IMPORT_MEMBER_BYTES)
+                except Exception:
+                    continue
+                ext = os.path.splitext(arc_path)[1] or ".png"
+                cf = ContentFile(blob, name=(str(gi.get("sha256") or "")[:64] or "generated") + ext)
+                src_message_id = gi.get("message_id")
+                new_message_id = old_to_new_message.get(src_message_id) if isinstance(src_message_id, int) else None
+                GeneratedImage.objects.create(
+                    project=project,
+                    chat=chat,
+                    message_id=new_message_id,
+                    provider=str(gi.get("provider") or ""),
+                    model=str(gi.get("model") or ""),
+                    prompt=str(gi.get("prompt") or ""),
+                    file_id=str(gi.get("file_id") or ""),
+                    mime_type=str(gi.get("mime_type") or "image/png"),
+                    width=gi.get("width") if isinstance(gi.get("width"), int) else None,
+                    height=gi.get("height") if isinstance(gi.get("height"), int) else None,
+                    sha256=str(gi.get("sha256") or ""),
+                    image_file=cf,
                 )
     except Exception as exc:
         _record_security_event(request, "chat_import_invalid_zip", error=str(exc)[:160])
@@ -847,19 +1008,37 @@ def chat_message_create(request):
         answer_mode = "quick"
     next_url = _strip_query_param((request.POST.get("next") or "").strip(), "turn")
 
+    def _next_with_status(base_url: str, code: str) -> str:
+        return _append_query_param(base_url, "rw_err", code)
+
     if not chat_id:
         messages.error(request, "No chat selected.")
-        return redirect("accounts:dashboard")
+        target = next_url if (next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        )) else reverse("accounts:dashboard")
+        return redirect(_next_with_status(target, "no_chat"))
 
     try:
         cid = int(chat_id)
     except ValueError:
         messages.error(request, "Invalid chat.")
-        return redirect("accounts:dashboard")
+        target = next_url if (next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        )) else reverse("accounts:dashboard")
+        return redirect(_next_with_status(target, "bad_chat"))
 
     if not content:
         messages.error(request, "Message cannot be empty.")
-        return redirect(reverse("accounts:chat_detail", args=[cid]))
+        target = next_url if (next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        )) else reverse("accounts:chat_detail", args=[cid])
+        return redirect(_next_with_status(target, "empty"))
 
     chat = get_object_or_404(
         ChatWorkspace.objects.select_related("project"),
@@ -969,6 +1148,20 @@ def chat_message_create(request):
         if seed_text.startswith("Topic chat:"):
             content = "Seed context:\n" + seed_text + "\n\nUser message:\n" + content
 
+    boundary = resolve_boundary_profile(project, chat)
+    boundary_active = is_boundary_profile_active(boundary)
+    boundary_excerpts = []
+    if boundary_active:
+        allow_internal_docs = bool((boundary.get("authority_set") or {}).get("allow_internal_docs"))
+        policy_mode = looks_policy_related(content)
+        if binding:
+            topic_key = str(getattr(binding, "topic_key", "") or "").upper()
+            if "POLICY" in topic_key or "PKO" in topic_key:
+                policy_mode = True
+        if allow_internal_docs and policy_mode:
+            boundary_excerpts = policy_retrieve(project, content, max_chars=700)
+        system_blocks.extend(build_boundary_contract_blocks(boundary, boundary_excerpts))
+
     sys_text = "\n\n".join([b for b in system_blocks if (b or "").strip()]).strip()
     if sys_text:
         ChatMessage.objects.create(
@@ -985,18 +1178,139 @@ def chat_message_create(request):
         exclude_message_ids=[user_msg.id],
     )
 
-    panes = generate_panes(
-        content,
-        image_parts=image_parts,
-        system_blocks=system_blocks,
-        history_messages=history_messages,
-        user=request.user,
-    )
+    image_prompt = ""
+    content_stripped = (content or "").strip()
+    lower_content = content_stripped.lower()
+    if lower_content.startswith("/image "):
+        image_prompt = content_stripped[7:].strip()
+    elif lower_content.startswith("/img "):
+        image_prompt = content_stripped[5:].strip()
+    elif lower_content.startswith("image "):
+        image_prompt = content_stripped[6:].strip()
+    elif lower_content.startswith("img "):
+        image_prompt = content_stripped[4:].strip()
+
+    if image_prompt:
+        try:
+            image_result = generate_openai_image_bytes(prompt=image_prompt)
+        except Exception as e:
+            messages.error(request, "Image generation failed: " + str(e))
+            if next_url and url_has_allowed_host_and_scheme(
+                url=next_url,
+                allowed_hosts={request.get_host()},
+                require_https=request.is_secure(),
+            ):
+                return redirect(_next_with_status(next_url, "img"))
+            return redirect(_next_with_status(reverse("accounts:chat_detail", args=[chat.id]), "img"))
+
+        assistant_answer = "Generated image."
+        out_msg = ChatMessage.objects.create(
+            chat=chat,
+            role=ChatMessage.Role.ASSISTANT,
+            raw_text=assistant_answer,
+            answer_text=assistant_answer,
+            reasoning_text="",
+            output_text="",
+            segment_meta={
+                "parser_version": "llm_v1",
+                "confidence": "HIGH",
+                "generated_via": "image_command",
+            },
+        )
+        image_obj = save_generated_image_bytes(
+            project=project,
+            chat=chat,
+            message=out_msg,
+            prompt=image_prompt,
+            provider="openai",
+            model=str(image_result.get("model") or "gpt-image-1"),
+            image_bytes=image_result.get("image_bytes") or b"",
+            mime_type=str(image_result.get("mime_type") or "image/png"),
+            file_id=str(image_result.get("file_id") or ""),
+        )
+        meta = dict(out_msg.segment_meta or {})
+        meta["generated_image_ids"] = [image_obj.id]
+        out_msg.segment_meta = meta
+        out_msg.save(update_fields=["segment_meta"])
+
+        if next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            return redirect(next_url)
+        return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+    try:
+        panes = generate_panes(
+            content,
+            image_parts=image_parts,
+            system_blocks=system_blocks,
+            history_messages=history_messages,
+            user=request.user,
+        )
+    except Exception as e:
+        messages.error(request, "LLM call failed: " + str(e))
+        if next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            return redirect(_next_with_status(next_url, "llm"))
+        return redirect(_next_with_status(reverse("accounts:chat_detail", args=[chat.id]), "llm"))
 
     assistant_answer = (panes.get("answer") or "")
+    if boundary_active:
+        labels_ok, label_errors = validate_boundary_labels(boundary, assistant_answer, boundary_excerpts=boundary_excerpts)
+        if not labels_ok:
+            correction_lines = ["Add the missing boundary labels. Keep sentences short. No qualifiers."]
+            if label_errors:
+                correction_lines.append("Missing:")
+                for err in label_errors:
+                    correction_lines.append("- " + err)
+            correction_lines.append("")
+            correction_lines.append("Revise this draft:")
+            correction_lines.append(assistant_answer)
+
+            panes = generate_panes(
+                "\n".join(correction_lines),
+                image_parts=image_parts,
+                system_blocks=system_blocks,
+                history_messages=history_messages,
+                user=request.user,
+            )
+            assistant_answer = (panes.get("answer") or "")
+            labels_ok, label_errors = validate_boundary_labels(boundary, assistant_answer, boundary_excerpts=boundary_excerpts)
+            if not labels_ok:
+                strictness = str(boundary.get("strictness") or "SOFT").upper()
+                if strictness == "SOFT":
+                    assistant_answer = _apply_soft_boundary_label_fallback(assistant_answer, label_errors)
+                    messages.warning(request, "Boundary warning: " + "; ".join(label_errors))
+                else:
+                    messages.error(request, "Boundary check failed: " + "; ".join(label_errors))
+                    if next_url and url_has_allowed_host_and_scheme(
+                        url=next_url,
+                        allowed_hosts={request.get_host()},
+                        require_https=request.is_secure(),
+                    ):
+                        return redirect(_next_with_status(next_url, "boundary"))
+                    return redirect(_next_with_status(reverse("accounts:chat_detail", args=[chat.id]), "boundary"))
+
+    provider_name, model_name = _active_provider_and_model_for_user(request.user)
     assistant_reasoning = (panes.get("reasoning") or "")
     assistant_output = (panes.get("output") or "")
     assistant_raw = (assistant_answer or assistant_output or "").strip()
+    if not assistant_raw:
+        assistant_answer = (
+            "[No assistant content returned. "
+            + "Provider: "
+            + provider_name
+            + " Model: "
+            + model_name
+            + "]"
+        )
+        assistant_raw = assistant_answer
+        messages.warning(request, "Assistant returned empty content.")
 
     out_msg = ChatMessage.objects.create(
         chat=chat,
@@ -1005,8 +1319,27 @@ def chat_message_create(request):
         answer_text=assistant_answer,
         reasoning_text=assistant_reasoning,
         output_text=assistant_output,
-        segment_meta={"parser_version": "llm_v1", "confidence": "HIGH"},
+        segment_meta={
+            "parser_version": "llm_v1",
+            "confidence": "HIGH",
+            "boundary_strictness": str(boundary.get("strictness") or "SOFT"),
+            "boundary_excerpts_count": len(boundary_excerpts),
+        },
     )
+    image_assets = persist_generated_images_from_text(
+        project=project,
+        chat=chat,
+        message=out_msg,
+        prompt=content,
+        provider=provider_name,
+        model=model_name,
+        text="\n\n".join([assistant_answer or "", assistant_output or ""]),
+    )
+    if image_assets:
+        meta = dict(out_msg.segment_meta or {})
+        meta["generated_image_ids"] = [img.id for img in image_assets]
+        out_msg.segment_meta = meta
+        out_msg.save(update_fields=["segment_meta"])
 
     chat.last_answer_snippet = (out_msg.answer_text or out_msg.raw_text or "")[:280]
     chat.last_output_snippet = (out_msg.output_text or "")[:280]
@@ -1064,9 +1397,9 @@ def message_set_importance(request, message_id: int):
         allowed_hosts={request.get_host()},
         require_https=request.is_secure(),
     ):
-        return redirect(next_url)
+        return redirect(_append_query_param(next_url, "rw_sent", "1"))
 
-    return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+    return redirect(_append_query_param(reverse("accounts:chat_detail", args=[chat.id]), "rw_sent", "1"))
 
 
 @require_POST
@@ -1100,14 +1433,22 @@ def chat_use_selected(request):
     selected_text = (request.POST.get("selected_text") or "").strip()
     apply_mode = (request.POST.get("apply_mode") or "replace").strip().lower()
     next_url = (request.POST.get("next") or "").strip()
+    wants_json = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or (request.POST.get("ajax") or "").strip() == "1"
+    )
 
     if apply_mode not in ("replace", "append"):
         apply_mode = "replace"
 
     if not chat_id or not chat_id.isdigit():
+        if wants_json:
+            return JsonResponse({"ok": False, "message": "Invalid chat."}, status=400)
         messages.error(request, "Invalid chat.")
         return redirect("accounts:dashboard")
     if not selected_text:
+        if wants_json:
+            return JsonResponse({"ok": False, "message": "No selected text."}, status=400)
         messages.error(request, "No selected text.")
         if next_url and url_has_allowed_host_and_scheme(
             url=next_url,
@@ -1584,11 +1925,15 @@ def chat_use_selected(request):
         field_key = binding.topic_key.split(":", 1)[1].strip()
         row = ProjectDefinitionField.objects.filter(project=project, field_key=field_key).first()
         if not row:
+            if wants_json:
+                return JsonResponse({"ok": False, "message": "PDE field not found."}, status=404)
             messages.error(request, "PDE field not found.")
             return redirect(reverse("accounts:chat_detail", args=[chat.id]))
 
         can_commit = is_project_committer(project, request.user)
         if row.status != ProjectDefinitionField.Status.DRAFT and not can_commit:
+            if wants_json:
+                return JsonResponse({"ok": False, "message": "Field is not editable."}, status=403)
             messages.error(request, "Field is not editable.")
             return redirect(reverse("accounts:chat_detail", args=[chat.id]))
 
@@ -1613,6 +1958,17 @@ def chat_use_selected(request):
             "last_edited_at",
             "updated_at",
         ])
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "message": "PDE field updated.",
+                    "scope": "PDE",
+                    "field_key": field_key,
+                    "applied_text": row.value_text or "",
+                    "status": row.status,
+                }
+            )
         messages.success(request, "PDE field updated.")
         return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
 
@@ -2390,7 +2746,8 @@ def chat_config_overrides(request):
             request.session["rw_chat_overrides"] = chat_overrides
             if chat:
                 chat.chat_overrides = {}
-                chat.save(update_fields=["chat_overrides"])
+                chat.boundary_profile_json = {}
+                chat.save(update_fields=["chat_overrides", "boundary_profile_json", "updated_at"])
 
         for k in [
             "rw_l4_override_COGNITIVE",
@@ -2405,6 +2762,8 @@ def chat_config_overrides(request):
         request.session.modified = True
         messages.success(request, "Temporary overrides cleared (chat + legacy session keys).")
         return redirect("accounts:chat_config_overrides")
+
+    boundary_profile = resolve_boundary_profile(chat.project, chat) if chat else resolve_boundary_profile(None, None)
 
     if key and per_chat:
         changed = False
@@ -2478,7 +2837,8 @@ def chat_config_overrides(request):
         request.session["rw_chat_overrides"] = chat_overrides
         if chat:
             chat.chat_overrides = per_chat
-            chat.save(update_fields=["chat_overrides"])
+            chat.boundary_profile_json = _boundary_profile_from_post(request.POST)
+            chat.save(update_fields=["chat_overrides", "boundary_profile_json", "updated_at"])
         request.session.modified = True
 
         if chat:
@@ -2603,6 +2963,10 @@ def chat_config_overrides(request):
             "reasoning_choices": reasoning_choices,
             "approach_choices": approach_choices,
             "control_choices": control_choices,
+            "boundary_profile": boundary_profile,
+            "policy_docs_help_url": (
+                reverse("projects:policy_docs_help", args=[chat.project_id]) if chat else ""
+            ),
         },
     )
 
@@ -2677,6 +3041,44 @@ def chat_attachment_delete(request, attachment_id: int):
         att.delete()
 
     return JsonResponse({"ok": True})
+
+
+# --------------------------------------------------------
+# Generated images
+# ------------------------------------------------------------
+
+@login_required
+def generated_image_detail(request, image_id: int):
+    image = get_object_or_404(
+        GeneratedImage.objects.select_related("project", "chat", "message"),
+        pk=image_id,
+    )
+    if image.project_id is None or not accessible_projects_qs(request.user).filter(id=image.project_id).exists():
+        raise Http404("Image not found.")
+
+    return render(
+        request,
+        "accounts/generated_image_detail.html",
+        {
+            "image": image,
+        },
+    )
+
+
+@login_required
+def generated_image_download(request, image_id: int):
+    image = get_object_or_404(
+        GeneratedImage.objects.select_related("project"),
+        pk=image_id,
+    )
+    if image.project_id is None or not accessible_projects_qs(request.user).filter(id=image.project_id).exists():
+        raise Http404("Image not found.")
+    try:
+        fh = image.image_file.open("rb")
+    except Exception:
+        raise Http404("Image file not available.")
+    filename = os.path.basename(str(image.image_file.name or "")) or f"generated-image-{image.id}.png"
+    return FileResponse(fh, as_attachment=True, filename=filename, content_type=image.mime_type or "image/png")
 
 
 # --------------------------------------------------------

@@ -111,7 +111,7 @@
               <div class="min-w-0">
                 <div class="small text-muted mt-1">
                 Status:
-                <span class="fw-semibold">
+                <span class="fw-semibold rw-ppde-status" data-block-key="purpose">
                   {% if purpose.status == "PROPOSED" %}
                     PROPOSED{% if purpose.proposed_by %} ({{ purpose.proposed_by }}){% endif %}
                   {% elif purpose.status == "PASS_LOCKED" %}
@@ -204,10 +204,12 @@
               <div class="small text-muted">Define the intent and scope of the planning workflow.</div>
               <div class="d-flex gap-2">
                 {% if purpose.status == "PASS_LOCKED" and ppde_can_commit %}
-                  <button type="submit" name="action" value="reopen_block" class="btn btn-sm btn-outline-secondary">Reopen</button>
+                  <span class="d-inline-flex gap-2 rw-ppde-lock-controls" data-block-key="purpose">
+                    <button type="button" class="btn btn-sm btn-outline-secondary rw-ppde-lock-action" data-action="reopen_block" data-block-key="purpose">Reopen</button>
+                  </span>
                 {% else %}
                   {% if purpose.status == "DRAFT" or ppde_can_commit %}
-                    <button type="submit" name="action" value="save_block" class="btn btn-sm btn-outline-secondary">Save Draft</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary rw-ppde-block-action" data-action="save_block" data-block-key="purpose">Save Draft</button>
                   {% endif %}
                   {% if ppde_can_commit %}
                     <button type="submit" name="action" value="seed_purpose_from_cko"
@@ -219,50 +221,54 @@
                       <div class="small text-muted align-self-center">No active contract set (admin).</div>
                     {% endif %}
                   {% endif %}
-                  <button type="submit" name="action" value="verify_block" class="btn btn-sm btn-outline-primary">Verify</button>
+                  <button type="button" class="btn btn-sm btn-outline-primary rw-ppde-block-action" data-action="verify_block" data-block-key="purpose">Verify</button>
                   {% if not transform_contract %}
                     <div class="small text-muted align-self-center">No active contract set (admin).</div>
                   {% endif %}
-                  {% if purpose.status == "DRAFT" %}
-                    <button type="submit" name="action" value="propose_lock" class="btn btn-sm btn-outline-primary">Propose Lock</button>
-                  {% endif %}
-                  {% if purpose.status == "PROPOSED" and ppde_can_commit %}
-                    <button type="submit" name="action" value="approve_lock" class="btn btn-sm btn-success">Approve Lock</button>
-                    <button type="submit" name="action" value="reopen_block" class="btn btn-sm btn-outline-secondary">Reopen</button>
-                  {% endif %}
+                  <span class="d-inline-flex gap-2 rw-ppde-lock-controls" data-block-key="purpose">
+                    {% if purpose.status == "DRAFT" %}
+                      <button type="button" class="btn btn-sm btn-outline-primary rw-ppde-lock-action" data-action="propose_lock" data-block-key="purpose">Propose Lock</button>
+                    {% endif %}
+                    {% if purpose.status == "PROPOSED" and ppde_can_commit %}
+                      <button type="button" class="btn btn-sm btn-success rw-ppde-lock-action" data-action="approve_lock" data-block-key="purpose">Approve Lock</button>
+                      <button type="button" class="btn btn-sm btn-outline-secondary rw-ppde-lock-action" data-action="reopen_block" data-block-key="purpose">Reopen</button>
+                    {% endif %}
+                  </span>
                 {% endif %}
               </div>
             </div>
           </form>
 
-          {% if purpose.last_validation and show_validation_key == "purpose" %}
-            {% if purpose.last_validation.issues %}
-              <div class="mt-2 text-danger small">
-                <div class="fw-semibold">Issues</div>
-                <ul class="mb-0">
-                  {% for it in purpose.last_validation.issues %}
-                    <li>{{ it }}</li>
-                  {% endfor %}
-                </ul>
-              </div>
+          <div id="ppde-validation-purpose">
+            {% if purpose.last_validation and show_validation_key == "purpose" %}
+              {% if purpose.last_validation.issues %}
+                <div class="mt-2 text-danger small">
+                  <div class="fw-semibold">Issues</div>
+                  <ul class="mb-0">
+                    {% for it in purpose.last_validation.issues %}
+                      <li>{{ it }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              {% endif %}
+              {% if purpose.last_validation.questions %}
+                <div class="mt-2 small">
+                  <div class="fw-semibold">Questions</div>
+                  <ul class="mb-0">
+                    {% for q in purpose.last_validation.questions %}
+                      <li>{{ q }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              {% endif %}
+              {% if purpose.last_validation.suggested_revision %}
+                <div class="mt-2 small">
+                  <div class="fw-semibold">Suggested revision</div>
+                  <div style="white-space:pre-wrap;">{{ purpose.last_validation.suggested_revision }}</div>
+                </div>
+              {% endif %}
             {% endif %}
-            {% if purpose.last_validation.questions %}
-              <div class="mt-2 small">
-                <div class="fw-semibold">Questions</div>
-                <ul class="mb-0">
-                  {% for q in purpose.last_validation.questions %}
-                    <li>{{ q }}</li>
-                  {% endfor %}
-                </ul>
-              </div>
-            {% endif %}
-            {% if purpose.last_validation.suggested_revision %}
-              <div class="mt-2 small">
-                <div class="fw-semibold">Suggested revision</div>
-                <div style="white-space:pre-wrap;">{{ purpose.last_validation.suggested_revision }}</div>
-              </div>
-            {% endif %}
-          {% endif %}
+          </div>
           {% include "projects/ppde_inline_chat.html" with chat_ctx=purpose_chat_ctx %}
           </details>
         </div>
@@ -277,7 +283,7 @@
                 <div class="min-w-0">
                   <div class="small text-muted mt-1">
                 Status:
-                <span class="fw-semibold">
+                <span class="fw-semibold rw-ppde-status" data-block-key="stage:{{ stage.id }}">
                   {% if stage.status == "PROPOSED" %}
                     PROPOSED{% if stage.proposed_by %} ({{ stage.proposed_by }}){% endif %}
                     {% elif stage.status == "PASS_LOCKED" %}
@@ -407,12 +413,14 @@
                 <div class="small text-muted">Lock when this stage definition is complete.</div>
                 <div class="d-flex gap-2">
                   {% if stage.status == "PASS_LOCKED" and ppde_can_commit %}
-                    <button type="submit" name="action" value="reopen_block" class="btn btn-sm btn-outline-secondary">Reopen</button>
+                    <span class="d-inline-flex gap-2 rw-ppde-lock-controls" data-block-key="stage:{{ stage.id }}">
+                      <button type="button" class="btn btn-sm btn-outline-secondary rw-ppde-lock-action" data-action="reopen_block" data-block-key="stage:{{ stage.id }}">Reopen</button>
+                    </span>
                   {% else %}
                     {% if stage.status == "DRAFT" or ppde_can_commit %}
-                      <button type="submit" name="action" value="save_block" class="btn btn-sm btn-outline-secondary">Save Draft</button>
+                      <button type="button" class="btn btn-sm btn-outline-secondary rw-ppde-block-action" data-action="save_block" data-block-key="stage:{{ stage.id }}">Save Draft</button>
                     {% endif %}
-                    <button type="submit" name="action" value="verify_block" class="btn btn-sm btn-outline-primary">Verify</button>
+                    <button type="button" class="btn btn-sm btn-outline-primary rw-ppde-block-action" data-action="verify_block" data-block-key="stage:{{ stage.id }}">Verify</button>
                     {% if transform_contract %}
                       <button class="btn btn-sm btn-outline-secondary" type="button"
                               data-bs-toggle="modal" data-bs-target="#ppdeTransformContract">
@@ -421,13 +429,15 @@
                     {% else %}
                       <div class="small text-muted align-self-center">No active contract set (admin).</div>
                     {% endif %}
-                    {% if stage.status == "DRAFT" %}
-                      <button type="submit" name="action" value="propose_lock" class="btn btn-sm btn-outline-primary">Propose Lock</button>
-                    {% endif %}
-                    {% if stage.status == "PROPOSED" and ppde_can_commit %}
-                      <button type="submit" name="action" value="approve_lock" class="btn btn-sm btn-success">Approve Lock</button>
-                      <button type="submit" name="action" value="reopen_block" class="btn btn-sm btn-outline-secondary">Reopen</button>
-                    {% endif %}
+                    <span class="d-inline-flex gap-2 rw-ppde-lock-controls" data-block-key="stage:{{ stage.id }}">
+                      {% if stage.status == "DRAFT" %}
+                        <button type="button" class="btn btn-sm btn-outline-primary rw-ppde-lock-action" data-action="propose_lock" data-block-key="stage:{{ stage.id }}">Propose Lock</button>
+                      {% endif %}
+                      {% if stage.status == "PROPOSED" and ppde_can_commit %}
+                        <button type="button" class="btn btn-sm btn-success rw-ppde-lock-action" data-action="approve_lock" data-block-key="stage:{{ stage.id }}">Approve Lock</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary rw-ppde-lock-action" data-action="reopen_block" data-block-key="stage:{{ stage.id }}">Reopen</button>
+                      {% endif %}
+                    </span>
                   {% endif %}
                 </div>
               </div>
@@ -439,34 +449,36 @@
               Execution planning is produced in MDE, not PPDE.
             </div>
 
-            {% if stage.last_validation and show_validation_key == stage.validation_key %}
-              {% if stage.last_validation.issues %}
-                <div class="mt-2 text-danger small">
-                  <div class="fw-semibold">Issues</div>
-                  <ul class="mb-0">
-                    {% for it in stage.last_validation.issues %}
-                      <li>{{ it }}</li>
-                    {% endfor %}
-                  </ul>
-                </div>
+            <div id="ppde-validation-stage-{{ stage.id }}">
+              {% if stage.last_validation and show_validation_key == stage.validation_key %}
+                {% if stage.last_validation.issues %}
+                  <div class="mt-2 text-danger small">
+                    <div class="fw-semibold">Issues</div>
+                    <ul class="mb-0">
+                      {% for it in stage.last_validation.issues %}
+                        <li>{{ it }}</li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                {% endif %}
+                {% if stage.last_validation.questions %}
+                  <div class="mt-2 small">
+                    <div class="fw-semibold">Questions</div>
+                    <ul class="mb-0">
+                      {% for q in stage.last_validation.questions %}
+                        <li>{{ q }}</li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                {% endif %}
+                {% if stage.last_validation.suggested_revision %}
+                  <div class="mt-2 small">
+                    <div class="fw-semibold">Suggested revision</div>
+                    <div style="white-space:pre-wrap;">{{ stage.last_validation.suggested_revision }}</div>
+                  </div>
+                {% endif %}
               {% endif %}
-              {% if stage.last_validation.questions %}
-                <div class="mt-2 small">
-                  <div class="fw-semibold">Questions</div>
-                  <ul class="mb-0">
-                    {% for q in stage.last_validation.questions %}
-                      <li>{{ q }}</li>
-                    {% endfor %}
-                  </ul>
-                </div>
-              {% endif %}
-            {% if stage.last_validation.suggested_revision %}
-              <div class="mt-2 small">
-                <div class="fw-semibold">Suggested revision</div>
-                <div style="white-space:pre-wrap;">{{ stage.last_validation.suggested_revision }}</div>
-              </div>
-            {% endif %}
-          {% endif %}
+            </div>
             </details>
           </div>
         </div>
@@ -769,6 +781,158 @@
 
 <script>
 (function () {
+  var canCommit = {% if ppde_can_commit %}true{% else %}false{% endif %};
+
+  function escHtml(text) {
+    return String(text || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function validationHtml(v) {
+    if (!v || typeof v !== "object") return "";
+    var html = "";
+    var issues = Array.isArray(v.issues) ? v.issues : [];
+    var qs = Array.isArray(v.questions) ? v.questions : [];
+    var sugg = String(v.suggested_revision || "");
+    if (issues.length) {
+      html += '<div class="mt-2 text-danger small"><div class="fw-semibold">Issues</div><ul class="mb-0">';
+      issues.forEach(function (it) { html += "<li>" + escHtml(it) + "</li>"; });
+      html += "</ul></div>";
+    }
+    if (qs.length) {
+      html += '<div class="mt-2 small"><div class="fw-semibold">Questions</div><ul class="mb-0">';
+      qs.forEach(function (q) { html += "<li>" + escHtml(q) + "</li>"; });
+      html += "</ul></div>";
+    }
+    if (sugg) {
+      html += '<div class="mt-2 small"><div class="fw-semibold">Suggested revision</div><div style="white-space:pre-wrap;">' + escHtml(sugg) + "</div></div>";
+    }
+    return html;
+  }
+
+  function noticeHost() {
+    var host = document.getElementById("ppde-ajax-notice");
+    if (host) return host;
+    var root = document.querySelector(".container-fluid.py-4");
+    if (!root) return null;
+    host = document.createElement("div");
+    host.id = "ppde-ajax-notice";
+    host.className = "mb-2";
+    root.insertBefore(host, root.firstChild);
+    return host;
+  }
+
+  function showNotice(text, ok) {
+    var host = noticeHost();
+    if (!host) return;
+    var cls = ok ? "alert-success" : "alert-danger";
+    host.innerHTML = '<div class="alert ' + cls + ' py-1 px-2 small mb-0">' + escHtml(text || "") + "</div>";
+    setTimeout(function () {
+      if (host) host.innerHTML = "";
+    }, 2000);
+  }
+
+  function statusText(status, actor) {
+    if (status === "PASS_LOCKED") return "LOCKED" + (actor ? " (" + actor + ")" : "");
+    if (status === "PROPOSED") return "PROPOSED" + (actor ? " (" + actor + ")" : "");
+    return "DRAFT";
+  }
+
+  function lockButtonsHtml(blockKey, status) {
+    if (status === "PASS_LOCKED") {
+      if (!canCommit) return "";
+      return '<button type="button" class="btn btn-sm btn-outline-secondary rw-ppde-lock-action" data-action="reopen_block" data-block-key="' + blockKey + '">Reopen</button>';
+    }
+    if (status === "PROPOSED") {
+      if (!canCommit) return "";
+      return ''
+        + '<button type="button" class="btn btn-sm btn-success rw-ppde-lock-action" data-action="approve_lock" data-block-key="' + blockKey + '">Approve Lock</button>'
+        + '<button type="button" class="btn btn-sm btn-outline-secondary rw-ppde-lock-action" data-action="reopen_block" data-block-key="' + blockKey + '">Reopen</button>';
+    }
+    return '<button type="button" class="btn btn-sm btn-outline-primary rw-ppde-lock-action" data-action="propose_lock" data-block-key="' + blockKey + '">Propose Lock</button>';
+  }
+
+  function setReadOnlyForBlock(form, status) {
+    if (!form || canCommit) return;
+    var readonly = status !== "DRAFT";
+    var fields = form.querySelectorAll("input[type='text'], textarea");
+    fields.forEach(function (el) {
+      if (readonly) {
+        el.setAttribute("readonly", "");
+      } else {
+        el.removeAttribute("readonly");
+      }
+    });
+  }
+
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target && ev.target.closest ? ev.target.closest(".rw-ppde-lock-action, .rw-ppde-block-action") : null;
+    if (!btn) return;
+    ev.preventDefault();
+    var action = btn.getAttribute("data-action") || "";
+    var blockKey = btn.getAttribute("data-block-key") || "";
+    var form = btn.closest("form");
+    if (!action || !blockKey || !form) return;
+
+    var fd = new FormData(form);
+    fd.set("action", action);
+    fd.set("block_key", blockKey);
+    var body = new URLSearchParams();
+    fd.forEach(function (v, k) { body.append(k, String(v || "")); });
+
+    var prior = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Saving...";
+
+    fetch(window.location.pathname, {
+      method: "POST",
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: body.toString()
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data || !data.ok) {
+        showNotice((data && data.message) || "Action failed.", false);
+        return;
+      }
+      var effectiveBlockKey = data.block_key || blockKey;
+      var status = data.status || "DRAFT";
+      var actor = data.locked_by || data.proposed_by || "";
+      var statusEl = document.querySelector(".rw-ppde-status[data-block-key='" + effectiveBlockKey + "']");
+      if (statusEl) statusEl.textContent = statusText(status, actor);
+      var controls = document.querySelector(".rw-ppde-lock-controls[data-block-key='" + effectiveBlockKey + "']");
+      if (controls) controls.innerHTML = lockButtonsHtml(effectiveBlockKey, status);
+      setReadOnlyForBlock(form, status);
+      if (action === "verify_block" && data.validation) {
+        if (effectiveBlockKey === "purpose") {
+          var p = document.getElementById("ppde-validation-purpose");
+          if (p) p.innerHTML = validationHtml(data.validation);
+        } else if (effectiveBlockKey.indexOf("stage:") === 0) {
+          var sid = effectiveBlockKey.split(":")[1] || "";
+          var s = document.getElementById("ppde-validation-stage-" + sid);
+          if (s) s.innerHTML = validationHtml(data.validation);
+        }
+      }
+      showNotice(data.message || "Saved.", true);
+    })
+    .catch(function () {
+      showNotice("Action failed.", false);
+    })
+    .finally(function () {
+      if (document.body.contains(btn)) {
+        btn.disabled = false;
+        btn.textContent = prior;
+      }
+    });
+  });
+
   var key = "ppde_scroll_" + "{{ project.id }}";
   if (window.location.hash) {
     return;

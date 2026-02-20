@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import mimetypes
 from uuid import uuid4
 
 from django.conf import settings
@@ -60,3 +61,63 @@ class ChatAttachment(models.Model):
 
     def __str__(self) -> str:
         return f"{self.original_name} ({self.size_bytes} bytes)"
+
+
+def generated_image_upload_to(instance: "GeneratedImage", filename: str) -> str:
+    ext = os.path.splitext(filename or "")[1].lower()
+    if not ext:
+        guessed = mimetypes.guess_extension((instance.mime_type or "").strip()) or ".png"
+        ext = guessed.lower()
+    safe = (instance.sha256 or uuid4().hex)[:64] + ext
+    project_id = instance.project_id or "none"
+    chat_id = instance.chat_id or "none"
+    return f"projects/{project_id}/chats/{chat_id}/generated_images/{safe}"
+
+
+class GeneratedImage(models.Model):
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="generated_images",
+        null=True,
+        blank=True,
+    )
+    chat = models.ForeignKey(
+        "chats.ChatWorkspace",
+        on_delete=models.CASCADE,
+        related_name="generated_images",
+        null=True,
+        blank=True,
+    )
+    message = models.ForeignKey(
+        "chats.ChatMessage",
+        on_delete=models.SET_NULL,
+        related_name="generated_images",
+        null=True,
+        blank=True,
+    )
+
+    provider = models.CharField(max_length=30, blank=True, default="")
+    model = models.CharField(max_length=120, blank=True, default="")
+    prompt = models.TextField(blank=True, default="")
+    file_id = models.CharField(max_length=200, blank=True, default="")
+
+    mime_type = models.CharField(max_length=80, blank=True, default="image/png")
+    width = models.IntegerField(null=True, blank=True)
+    height = models.IntegerField(null=True, blank=True)
+    sha256 = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    image_file = models.FileField(upload_to=generated_image_upload_to)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["project", "created_at"]),
+            models.Index(fields=["chat", "created_at"]),
+            models.Index(fields=["message", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"GeneratedImage:{self.id}:{self.provider}:{self.model}"

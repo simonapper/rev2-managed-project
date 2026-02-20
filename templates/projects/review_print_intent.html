@@ -7,91 +7,93 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Intent print - {{ project.name }}</title>
   <style>
-    @page {
-      size: A4;
-      margin: 14mm 12mm;
-    }
-
-    html,
-    body {
-      margin: 0;
-      padding: 0;
-      background: #fff;
-      color: #111;
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      line-height: 1.45;
-      font-size: 11pt;
-    }
-
-    .page {
-      max-width: 190mm;
-      margin: 0 auto;
-      padding: 4mm 0;
-    }
-
-    .meta {
-      margin-bottom: 6mm;
-      border-bottom: 1px solid #d9d9d9;
-      padding-bottom: 4mm;
-    }
-
-    .title {
-      font-size: 16pt;
-      font-weight: 700;
-      margin: 0 0 1mm;
-    }
-
-    .sub {
-      font-size: 10pt;
-      color: #444;
-      margin: 0;
-    }
-
-    .actions {
-      margin-top: 4mm;
-    }
-
-    .btn {
-      display: inline-block;
-      border: 1px solid #999;
-      padding: 1.5mm 3mm;
-      font-size: 9pt;
-      background: #f6f6f6;
-      color: #111;
-      text-decoration: none;
-      cursor: pointer;
-    }
-
-    @media print {
-      .actions {
-        display: none;
-      }
-    }
+    @page { size: A4; margin: 12mm; }
+    html, body { margin: 0; padding: 0; background: #fff; color: #111; font-family: "Segoe UI", Tahoma, sans-serif; font-size: 10.5pt; line-height: 1.4; }
+    .page { max-width: 190mm; margin: 0 auto; }
+    .meta { border-bottom: 1px solid #d9d9d9; padding-bottom: 3mm; margin-bottom: 4mm; }
+    .title { margin: 0 0 1mm; font-size: 16pt; }
+    .sub { margin: 0; font-size: 9.5pt; color: #444; }
+    .actions { margin-top: 3mm; display: flex; gap: 2mm; }
+    .btn { border: 1px solid #999; padding: 1.2mm 3mm; background: #f6f6f6; font-size: 9pt; text-decoration: none; color: #111; }
+    .chip { display: inline-block; border: 1px solid #d7dee8; border-radius: 999px; padding: 0.5mm 2.2mm; font-size: 8.5pt; margin-right: 1.5mm; background: #f5f8fb; }
+    .block { border: 1px solid #e2e8f0; border-radius: 6px; padding: 2.5mm; margin-bottom: 3mm; background: #fff; }
+    .block h2 { margin: 0 0 2mm; font-size: 11pt; }
+    .muted { color: #5b6573; font-size: 9pt; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2mm; }
+    .kv { margin: 0 0 1mm; }
+    .kv b { display: block; font-size: 8.8pt; color: #2d3748; margin-bottom: 0.8mm; }
+    pre { white-space: pre-wrap; margin: 0; font-family: inherit; }
+    @media print { .actions { display: none; } }
   </style>
 </head>
 <body>
   <main class="page">
     <header class="meta">
-      <h1 class="title">Intent - Print view</h1>
+      <h1 class="title">Intent - {{ view_style|title }} view</h1>
       <p class="sub">{{ project.name }}</p>
-      {% if anchor %}
-        <p class="sub">Status: {{ anchor.status }}</p>
-      {% endif %}
+      {% if anchor %}<p class="sub">Status: {{ anchor.status }}</p>{% endif %}
       <div class="actions">
+        <a class="btn" href="?view=default">Reference</a>
+        <a class="btn" href="?view=cockpit">Cockpit</a>
+        <a class="btn" href="?view=mission">Mission</a>
         <button type="button" class="btn" onclick="window.print();">Print</button>
+        <button type="button" class="btn" onclick="window.close();">Close</button>
       </div>
     </header>
 
-    {% if content_html %}
-      <div class="rw-artefact-doc">
-        {{ content_html|safe }}
-      </div>
-    {% elif content_text %}
-      <div style="white-space:pre-wrap;">{{ content_text }}</div>
+    {% if not intent_fields and not content_text %}
+      <div class="muted">No intent content yet.</div>
+    {% elif view_style == "mission" %}
+      <section class="block">
+        <h2>Mission</h2>
+        <div class="kv"><b>Canonical summary</b><pre>{{ intent_fields.canonical_summary }}</pre></div>
+        <div class="kv"><b>Statement</b><pre>{{ intent_fields.statement }}</pre></div>
+      </section>
+      <section class="block">
+        <h2>Reference</h2>
+        <div class="grid">
+          <div class="kv"><b>Scope</b><pre>{{ intent_fields.scope }}</pre></div>
+          <div class="kv"><b>Assumptions</b><pre>{{ intent_fields.assumptions }}</pre></div>
+          <div class="kv"><b>Supporting basis</b><pre>{{ intent_fields.supporting_basis }}</pre></div>
+          <div class="kv"><b>Provenance</b><pre>{{ intent_fields.provenance }}</pre></div>
+        </div>
+      </section>
+    {% elif view_style == "cockpit" %}
+      <section class="block">
+        <h2>Intent cockpit</h2>
+        <span class="chip">Scope {{ intent_fields.scope|default:""|length }}</span>
+        <span class="chip">Assumptions {{ intent_fields.assumptions|default:""|length }}</span>
+        <span class="chip">Alternatives {{ intent_fields.alternatives_considered|default:""|length }}</span>
+        <span class="chip">Limits {{ intent_fields.uncertainties_limits|default:""|length }}</span>
+      </section>
+      <section class="block">
+        <h2>Core</h2>
+        <div class="kv"><b>Canonical summary</b><pre>{{ intent_fields.canonical_summary }}</pre></div>
+        <div class="kv"><b>Statement</b><pre>{{ intent_fields.statement }}</pre></div>
+        <div class="kv"><b>Supporting basis</b><pre>{{ intent_fields.supporting_basis }}</pre></div>
+      </section>
+      <section class="block">
+        <h2>Reference</h2>
+        <div class="grid">
+          <div class="kv"><b>Scope</b><pre>{{ intent_fields.scope }}</pre></div>
+          <div class="kv"><b>Assumptions</b><pre>{{ intent_fields.assumptions }}</pre></div>
+          <div class="kv"><b>Alternatives considered</b><pre>{{ intent_fields.alternatives_considered }}</pre></div>
+          <div class="kv"><b>Uncertainties / limits</b><pre>{{ intent_fields.uncertainties_limits }}</pre></div>
+          <div class="kv"><b>Provenance</b><pre>{{ intent_fields.provenance }}</pre></div>
+        </div>
+      </section>
     {% else %}
-      <div style="color:#666;font-size:10pt;">No intent content yet.</div>
+      <section class="block">
+        <h2>Reference</h2>
+        {% if content_html %}
+          <div class="rw-artefact-doc">{{ content_html|safe }}</div>
+        {% elif content_text %}
+          <pre>{{ content_text }}</pre>
+        {% else %}
+          <div class="muted">No intent content yet.</div>
+        {% endif %}
+      </section>
     {% endif %}
-
   </main>
 </body>
 </html>

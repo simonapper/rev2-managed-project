@@ -11,7 +11,8 @@
       {% for it in pde_nav.items %}
         <li class="mb-2 d-flex align-items-start">
           <span style="flex:0 0 auto; display:inline-block;width:10px;height:10px;border-radius:50%;
-                       background:{{ it.dot }}; margin-right:8px; margin-top:4px;"></span>
+                       background:{{ it.dot }}; margin-right:8px; margin-top:4px;"
+                data-pde-nav-dot="{{ it.anchor }}"></span>
           <a class="rw-pde-navlink" href="#{{ it.anchor }}">{{ it.label }}</a>
         </li>
       {% endfor %}

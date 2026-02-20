@@ -77,7 +77,7 @@ class UserLLMProviderSettingTests(TestCase):
         User = get_user_model()
         user = User.objects.create_user(username="u3", email="u3@example.com", password="pw")
         user.profile.openai_model_default = "gpt-5.1"
-        user.profile.anthropic_model_default = "claude-sonnet-4-5-20250929"
+        user.profile.anthropic_model_default = "claude-sonnet-4-5"
         user.profile.save(update_fields=["openai_model_default", "anthropic_model_default"])
 
         self.client.force_login(user)
@@ -85,7 +85,7 @@ class UserLLMProviderSettingTests(TestCase):
             reverse("accounts:config_menu"),
             data={
                 "llm_provider": "anthropic",
-                "anthropic_model_default": "claude-opus-4-5-20251101",
+                "anthropic_model_default": "claude-opus-4-5",
             },
         )
 
@@ -93,13 +93,13 @@ class UserLLMProviderSettingTests(TestCase):
         user.profile.refresh_from_db()
         self.assertEqual(user.profile.llm_provider, "anthropic")
         self.assertEqual(user.profile.openai_model_default, "gpt-5.1")
-        self.assertEqual(user.profile.anthropic_model_default, "claude-opus-4-5-20251101")
+        self.assertEqual(user.profile.anthropic_model_default, "claude-opus-4-5")
 
     def test_config_menu_updates_openai_model_only_when_openai_selected(self):
         User = get_user_model()
         user = User.objects.create_user(username="u4", email="u4@example.com", password="pw")
         user.profile.openai_model_default = "gpt-5.1"
-        user.profile.anthropic_model_default = "claude-sonnet-4-5-20250929"
+        user.profile.anthropic_model_default = "claude-sonnet-4-5"
         user.profile.save(update_fields=["openai_model_default", "anthropic_model_default"])
 
         self.client.force_login(user)
@@ -107,15 +107,15 @@ class UserLLMProviderSettingTests(TestCase):
             reverse("accounts:config_menu"),
             data={
                 "llm_provider": "openai",
-                "openai_model_default": "gpt-4.1-mini",
+                "openai_model_default": "gpt-5-mini",
             },
         )
 
         self.assertEqual(response.status_code, 302)
         user.profile.refresh_from_db()
         self.assertEqual(user.profile.llm_provider, "openai")
-        self.assertEqual(user.profile.openai_model_default, "gpt-4.1-mini")
-        self.assertEqual(user.profile.anthropic_model_default, "claude-sonnet-4-5-20250929")
+        self.assertEqual(user.profile.openai_model_default, "gpt-5-mini")
+        self.assertEqual(user.profile.anthropic_model_default, "claude-sonnet-4-5")
 
     def test_config_menu_updates_deepseek_model_only_when_deepseek_selected(self):
         User = get_user_model()

@@ -73,17 +73,10 @@
                              href="{% url 'projects:rename_project' p.id %}">Rename</a>
                         {% endif %}
                         {% if request.user.is_superuser or p.owner_id == request.user.id %}
-                          <form method="post" action="{% url 'accounts:project_archive' p.id %}" class="d-inline-flex m-0 align-items-center">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-outline-dark rw-project-action"
-                                    onclick="return confirm('Archive this project and all its chats?');">
-                              Archive
-                            </button>
-                          </form>
                           <form method="post" action="{% url 'accounts:project_export' p.id %}" class="d-inline-flex m-0 align-items-center">
                             {% csrf_token %}
                             <button type="submit" class="btn btn-sm btn-outline-primary rw-project-action"
-                                    onclick="return confirm('Export and permanently delete this project and all chats?');">
+                                    onclick="return confirm('Export this project and its chats to ZIP?');">
                               Export
                             </button>
                           </form>

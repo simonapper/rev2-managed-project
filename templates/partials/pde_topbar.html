@@ -3,7 +3,9 @@
 
 <div class="rw-topbar d-flex align-items-center justify-content-between px-3 py-2 position-relative"
      style="border-bottom:1px solid rgba(0,0,0,0.08); background:#fafafa;">
-  <div class="d-flex flex-wrap align-items-center gap-2">
+  <div id="rwPdeTopActions"
+       class="d-flex flex-wrap align-items-center gap-2"
+       data-ui-return="{{ ui_return_to|default:'' }}">
     <i class="bi bi-shield-check"></i>
     <div>
       <div class="fw-semibold">Project Definition</div>
@@ -22,21 +24,12 @@
       {% endif %}
     </div>
     {% if pde_status_badge %}
-      <span class="badge {{ pde_status_badge.class }}" title="{{ pde_status_badge.text }}">{{ pde_status_badge.text }}</span>
+      <span id="rwPdeStatusBadge" class="badge {{ pde_status_badge.class }}" title="{{ pde_status_badge.text }}">{{ pde_status_badge.text }}</span>
     {% endif %}
   </div>
 
 
   <div class="d-flex flex-wrap align-items-center gap-2">
-
-    {# Help Chat button #}
-    <button class="btn btn-sm btn-success rw-topbar-btn rw-btn-xs"
-            type="button"
-            data-bs-toggle="offcanvas"
-            data-bs-target="#rwPdeHelp"
-            aria-controls="rwPdeHelp">
-      Help
-    </button>
 
     <!--{# ------------------------------------------------------------
        Action buttons (context dependent)

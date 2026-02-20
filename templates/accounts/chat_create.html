@@ -118,6 +118,51 @@
 
     <div class="card rw-compact-card mb-3">
       <div class="card-body p-0">
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <h6 class="mb-1">Boundaries</h6>
+            <div class="text-secondary small">Soft boundaries for this chat.</div>
+          </div>
+          {% if policy_docs_help_url %}
+            <a class="btn btn-outline-secondary rw-btn-xs" href="{{ policy_docs_help_url }}">Help</a>
+          {% endif %}
+        </div>
+
+        <hr class="my-3">
+
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label" for="id_boundary_topic_tags">Boundary constraints</label>
+            <input
+              id="id_boundary_topic_tags"
+              type="text"
+              name="boundary_topic_tags"
+              class="form-control"
+              value="{{ boundary_defaults.topic_tags|join:', ' }}"
+              placeholder="Example: UK_LAW, COMPANY_POLICY"
+            >
+            <div class="form-text">Add one or more constraints, separated by commas.</div>
+          </div>
+          {% with auth=boundary_defaults.authority_set %}
+          <div class="col-12 col-md-6">
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="boundary_allow_general" {% if auth.allow_model_general_knowledge != False %}checked{% endif %}>
+              <span class="form-check-label">Allow general model knowledge</span>
+            </label>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="boundary_allow_internal_docs" {% if auth.allow_internal_docs != False %}checked{% endif %}>
+              <span class="form-check-label">Allow internal policy docs</span>
+            </label>
+          </div>
+          {% endwith %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card rw-compact-card mb-3">
+      <div class="card-body p-0">
 
         <div class="d-flex align-items-center justify-content-between">
           <div>

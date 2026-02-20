@@ -71,7 +71,7 @@ class LLMProviderTests(TestCase):
     def test_openai_model_uses_user_profile_default(self):
         User = get_user_model()
         user = User.objects.create_user(username="u4", email="u4@example.com", password="pw")
-        user.profile.openai_model_default = "gpt-4.1-mini"
+        user.profile.openai_model_default = "gpt-5-mini"
         user.profile.save(update_fields=["openai_model_default"])
 
         mock_client = Mock()
@@ -85,7 +85,7 @@ class LLMProviderTests(TestCase):
             )
 
         call_kwargs = mock_client.responses.create.call_args.kwargs
-        self.assertEqual(call_kwargs["model"], "gpt-4.1-mini")
+        self.assertEqual(call_kwargs["model"], "gpt-5-mini")
 
     def test_anthropic_panes_parses_fenced_json_and_structured_fields(self):
         fenced_json = """```json
@@ -94,7 +94,7 @@ class LLMProviderTests(TestCase):
   "key_info": ["Model: Claude Sonnet", "Provider: Anthropic"],
   "visuals": {"model_hierarchy": "Claude 4.5 -> Sonnet"},
   "reasoning": "Reasoning summary.",
-  "output": "claude-sonnet-4-5-20250929"
+  "output": "claude-sonnet-4-5"
 }
 ```"""
         mock_client = Mock()

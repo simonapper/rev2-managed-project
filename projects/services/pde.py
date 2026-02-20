@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 from typing import Any, Dict, Optional
 
 
@@ -74,6 +76,57 @@ PDE_DRAFT_BOILERPLATE = (
     "- If unknown, use an explicit placeholder like 'DEFERRED'.\n"
 )
 
+ALLOWED_PDE_SEED_STYLES = {"concise", "balanced", "detailed"}
+
+
+def _normalise_seed_style(value: str) -> str:
+    v = str(value or "").strip().lower()
+    if v in ALLOWED_PDE_SEED_STYLES:
+        return v
+    return "balanced"
+
+
+def _normalise_seed_constraints(value: str) -> str:
+    text = str(value or "").strip()
+    if len(text) > 400:
+        return text[:400].strip()
+    return text
+
+
+def _seed_style_block(seed_style: str, seed_constraints: str = "") -> str:
+    style = _normalise_seed_style(seed_style)
+    lines = ["Writing style controls:"]
+    if style == "concise":
+        lines.extend(
+            [
+                "- Use short sentences.",
+                "- One idea per sentence.",
+                "- Avoid qualifiers and filler.",
+                "- Avoid wording like high-level, robust, comprehensive, strategic.",
+                "- Prefer concrete verbs and clear actions.",
+            ]
+        )
+    elif style == "detailed":
+        lines.extend(
+            [
+                "- Use clear detail with practical depth.",
+                "- Prefer concrete specifics over abstract terms.",
+                "- Keep structure explicit and scannable.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "- Use balanced clarity.",
+                "- Avoid unnecessary qualifiers.",
+                "- Keep language practical and direct.",
+            ]
+        )
+    constraints = _normalise_seed_constraints(seed_constraints)
+    if constraints:
+        lines.append("- User constraints: " + constraints)
+    return "\n".join(lines)
+
 
 def _locked_fields_block(locked_fields: Dict[str, str]) -> str:
     if not locked_fields:
@@ -92,9 +145,12 @@ def _locked_fields_block(locked_fields: Dict[str, str]) -> str:
 
 def _parse_output_json(raw_output: str, field_key: str) -> Dict[str, Any]:
     raw_output = (raw_output or "").strip()
+    data = None
     try:
         data = json.loads(raw_output)
     except Exception:
+        data = _extract_json_object(raw_output)
+    if data is None:
         return {
             "field_key": field_key,
             "verdict": "WEAK",
@@ -148,6 +204,114 @@ def _parse_output_json(raw_output: str, field_key: str) -> Dict[str, Any]:
     return out
 
 
+def _word_tokens(text: str) -> list[str]:
+    return [w for w in re.findall(r"[A-Za-z0-9']+", str(text or "")) if w]
+
+
+def _normalise_canonical_summary(text: str) -> str:
+    # Single sentence, plain text, max 15 words.
+    raw = str(text or "").replace("\r", " ").replace("\n", " ").strip()
+    raw = re.sub(r"\s+", " ", raw)
+    if not raw:
+        return ""
+    words = _word_tokens(raw)
+    if len(words) > 15:
+        words = words[:15]
+    out = " ".join(words).strip()
+    if not out:
+        return ""
+    out = out.rstrip(".!?") + "."
+    return out
+
+
+def _extract_json_object(raw_text: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(raw_text, dict):
+        return raw_text
+    if isinstance(raw_text, list):
+        for item in raw_text:
+            if isinstance(item, dict):
+                return item
+
+    text = ("" if raw_text is None else str(raw_text)).strip()
+    if not text:
+        return None
+
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+
+    if "```" in text:
+        parts = text.split("```")
+        for chunk in parts[1::2]:
+            candidate = chunk.strip()
+            if candidate.lower().startswith("json"):
+                candidate = candidate[4:].strip()
+            try:
+                obj = json.loads(candidate)
+                if isinstance(obj, dict):
+                    return obj
+            except Exception:
+                continue
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = text[start : end + 1]
+        try:
+            obj = json.loads(candidate)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+        try:
+            obj = ast.literal_eval(candidate)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+
+    if start != -1:
+        depth = 0
+        in_str = False
+        escaped = False
+        for i, ch in enumerate(text[start:], start):
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\" and in_str:
+                escaped = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start : i + 1]
+                    try:
+                        obj = json.loads(candidate)
+                        if isinstance(obj, dict):
+                            return obj
+                    except Exception:
+                        break
+
+    try:
+        obj = ast.literal_eval(text)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+
+    return None
+
+
 def validate_field(
     *,
     generate_panes_func,
@@ -174,38 +338,120 @@ def validate_field(
         image_parts=None,
         system_blocks=system_blocks,
     )
+    pane_order = ("output", "answer", "reasoning", "key_info", "visuals")
+    raw_first = ""
+    parsed_obj = None
+    for k in pane_order:
+        text = str(panes.get(k) or "").strip()
+        if not text:
+            continue
+        if not raw_first:
+            raw_first = text
+        parsed_obj = _extract_json_object(text)
+        if isinstance(parsed_obj, dict):
+            break
 
-    out = _parse_output_json(
-        raw_output=str(panes.get("output") or ""),
-        field_key=field_key,
-    )
+    if isinstance(parsed_obj, dict):
+        out = _parse_output_json(
+            raw_output=json.dumps(parsed_obj, ensure_ascii=True),
+            field_key=field_key,
+        )
+    else:
+        out = _parse_output_json(
+            raw_output=raw_first,
+            field_key=field_key,
+        )
+
+    if field_key == "canonical.summary":
+        value_words = len(_word_tokens(value_text))
+        if value_words > 15:
+            out["verdict"] = "WEAK"
+            issues = [str(x) for x in (out.get("issues") or []) if str(x).strip()]
+            msg = "Canonical summary must be one sentence and 15 words or fewer."
+            if msg not in issues:
+                issues.append(msg)
+            out["issues"] = issues
+        suggested = _normalise_canonical_summary(out.get("suggested_revision") or "")
+        if not suggested:
+            suggested = _normalise_canonical_summary(value_text)
+        out["suggested_revision"] = suggested
 
     out["debug_system_blocks"] = system_blocks
     out["debug_user_text"] = llm_input
     return out
 
 
-def draft_pde_from_seed(*, generate_panes_func, seed_text: str) -> Dict[str, Any]:
+def draft_pde_from_seed(
+    *,
+    generate_panes_func,
+    seed_text: str,
+    seed_style: str = "balanced",
+    seed_constraints: str = "",
+) -> Dict[str, Any]:
     seed_text = (seed_text or "").strip()
-    system_blocks = [PDE_DRAFT_BOILERPLATE]
+    system_blocks = [PDE_DRAFT_BOILERPLATE, _seed_style_block(seed_style, seed_constraints)]
     panes = generate_panes_func(
         "Seed intent:\n" + seed_text,
         image_parts=None,
         system_blocks=system_blocks,
     )
-    raw = (panes.get("output") or "").strip()
-    try:
-        data = json.loads(raw)
-    except Exception:
-        return {"ok": False, "error": "Draft OUTPUT was not valid JSON.", "raw": raw}
+    pane_order = ("output", "answer", "reasoning", "key_info", "visuals")
+    candidates = [(panes.get(k) or "") for k in pane_order]
+    pane_dump_lines = []
+    for k in pane_order:
+        val = str(panes.get(k) or "").strip()
+        if val:
+            pane_dump_lines.append(k.upper() + ":\n" + val)
+    pane_dump = "\n\n".join(pane_dump_lines).strip()
+    if not pane_dump:
+        try:
+            pane_dump = "PANE_DEBUG:\n" + json.dumps(
+                {k: str(panes.get(k) or "") for k in pane_order},
+                ensure_ascii=True,
+                indent=2,
+            )
+        except Exception:
+            pane_dump = "PANE_DEBUG: unavailable"
+    raw = ""
+    data = None
+    for c in candidates:
+        text = str(c or "").strip()
+        if not text:
+            continue
+        if not raw:
+            raw = text
+        data = _extract_json_object(text)
+        if data is not None:
+            raw = text
+            break
+    if data is None:
+        if not (raw or "").strip() and pane_dump.startswith("PANE_DEBUG:"):
+            return {
+                "ok": False,
+                "error": "Draft model returned empty panes.",
+                "raw": pane_dump,
+            }
+        return {
+            "ok": False,
+            "error": "Draft OUTPUT was not valid JSON.",
+            "raw": (raw or pane_dump),
+        }
 
     hyp = data.get("hypotheses") if isinstance(data, dict) else None
     if not isinstance(hyp, dict):
-        return {"ok": False, "error": "Draft JSON missing hypotheses.", "raw": raw}
+        return {
+            "ok": False,
+            "error": "Draft JSON missing hypotheses.",
+            "raw": (raw or pane_dump),
+        }
 
     fields = hyp.get("fields")
     if not isinstance(fields, dict):
-        return {"ok": False, "error": "Draft JSON missing hypotheses.fields.", "raw": raw}
+        return {
+            "ok": False,
+            "error": "Draft JSON missing hypotheses.fields.",
+            "raw": (raw or pane_dump),
+        }
 
     out_fields: Dict[str, str] = {}
     for k, v in fields.items():
@@ -214,4 +460,4 @@ def draft_pde_from_seed(*, generate_panes_func, seed_text: str) -> Dict[str, Any
             continue
         out_fields[kk] = ("" if v is None else str(v)).strip()
 
-    return {"ok": True, "draft": {"hypotheses": {"fields": out_fields}}, "raw": raw}
+    return {"ok": True, "draft": {"hypotheses": {"fields": out_fields}}, "raw": (raw or pane_dump)}

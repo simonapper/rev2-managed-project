@@ -147,6 +147,26 @@ def normalise_pdo_payload(payload: dict) -> dict:
         "stages": [],
     }
 
+    def _stage_score(stage_obj: dict) -> int:
+        keys = (
+            "status",
+            "title",
+            "purpose",
+            "inputs",
+            "stage_process",
+            "outputs",
+            "assumptions",
+            "duration_estimate",
+            "risks_notes",
+        )
+        score = 0
+        for key in keys:
+            if str(stage_obj.get(key) or "").strip():
+                score += 1
+        return score
+
+    stage_rows = {}
+    stage_order = []
     stages = payload.get("stages")
     if isinstance(stages, list):
         for idx, item in enumerate(stages, start=1):
@@ -165,21 +185,28 @@ def normalise_pdo_payload(payload: dict) -> dict:
                 outputs_val = "\n".join([str(x).strip() for x in outputs_val if str(x).strip()])
             stage_process = item.get("stage_process", item.get("description", ""))
             assumptions = item.get("assumptions", item.get("key_variables", ""))
-            out["stages"].append(
-                {
-                    "stage_id": stage_id,
-                    "stage_number": stage_number,
-                    "status": _str(item.get("status")),
-                    "title": _str(item.get("title")),
-                    "purpose": _str(item.get("purpose")),
-                    "inputs": _str(item.get("inputs")),
-                    "stage_process": _str(stage_process),
-                    "outputs": _str(outputs_val),
-                    "assumptions": _str(assumptions),
-                    "duration_estimate": _str(item.get("duration_estimate")),
-                    "risks_notes": _str(item.get("risks_notes")),
-                }
-            )
+            stage_obj = {
+                "stage_id": stage_id,
+                "stage_number": stage_number,
+                "status": _str(item.get("status")),
+                "title": _str(item.get("title")),
+                "purpose": _str(item.get("purpose")),
+                "inputs": _str(item.get("inputs")),
+                "stage_process": _str(stage_process),
+                "outputs": _str(outputs_val),
+                "assumptions": _str(assumptions),
+                "duration_estimate": _str(item.get("duration_estimate")),
+                "risks_notes": _str(item.get("risks_notes")),
+            }
+            key = stage_id or f"S{stage_number}"
+            if key not in stage_rows:
+                stage_rows[key] = stage_obj
+                stage_order.append(key)
+                continue
+            # Keep the more complete duplicate when stage keys collide.
+            if _stage_score(stage_obj) >= _stage_score(stage_rows[key]):
+                stage_rows[key] = stage_obj
+    out["stages"] = [stage_rows[k] for k in stage_order if k in stage_rows]
     return out
 
 
@@ -392,18 +419,48 @@ def merge_execute_payload(existing: dict, incoming: dict) -> dict:
                 existing_wi[wid] = w
     out["work_items"] = sorted(existing_wi.values(), key=lambda x: str(x.get("wi_id") or x.get("title") or ""))
 
-    existing_stages = {s.get("stage_id"): s for s in (out.get("stages") or []) if isinstance(s, dict)}
+    def _stage_key(stage: dict) -> str:
+        if not isinstance(stage, dict):
+            return ""
+        sid = str(stage.get("stage_id") or "").strip()
+        if sid:
+            return sid
+        try:
+            num = int(stage.get("stage_number") or 0)
+        except Exception:
+            num = 0
+        if num > 0:
+            return f"S{num}"
+        return ""
+
+    existing_stages = {}
+    for stage in (out.get("stages") or []):
+        if not isinstance(stage, dict):
+            continue
+        skey = _stage_key(stage)
+        if not skey:
+            # Drop legacy placeholder rows that have no stable stage key.
+            continue
+        existing_stages[skey] = stage
+
     if "stages" in incoming and isinstance(incoming.get("stages"), list):
         for s in incoming["stages"]:
             if not isinstance(s, dict):
                 continue
-            sid = s.get("stage_id") or f"S{s.get('stage_number')}"
+            sid = _stage_key(s)
+            if not sid:
+                continue
             if sid in existing_stages:
                 merged = dict(existing_stages[sid])
                 for k, v in s.items():
                     merged[k] = _keep(merged.get(k), v)
+                if not str(merged.get("stage_id") or "").strip():
+                    merged["stage_id"] = sid
                 existing_stages[sid] = merged
             else:
-                existing_stages[sid] = s
+                added = dict(s)
+                if not str(added.get("stage_id") or "").strip():
+                    added["stage_id"] = sid
+                existing_stages[sid] = added
     out["stages"] = sorted(existing_stages.values(), key=lambda x: int(x.get("stage_number") or 0))
     return out

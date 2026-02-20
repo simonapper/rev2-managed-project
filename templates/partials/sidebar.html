@@ -31,19 +31,12 @@
         Chats
       </a>
     </li>
-    {% if active_project and active_project.defined_cko %}
-      <li class="nav-item">
-        <a class="nav-link !bg-blue-400 !text-white rounded px-3 py-2 fw-semibold" href="{% url 'accounts:chat_create' %}">
-          +Chat
-        </a>
-      </li>
-    {% else %}
-      <li class="nav-item">
-        <span class="nav-link !bg-blue-100 !text-blue-800 rounded px-3 py-2 fw-semibold">
-          +Chat
-        </span>
-      </li>
-    {% endif %}
+    <li class="nav-item">
+      <a class="nav-link !bg-blue-400 !text-white rounded px-3 py-2 fw-semibold"
+         href="{% url 'accounts:chat_create' %}{% if active_project %}?project={{ active_project.id }}{% endif %}">
+        +Chat
+      </a>
+    </li>
 
     <!-- Active chat -->
     {% with cid=request.session.rw_active_chat_id %}

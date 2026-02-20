@@ -5,14 +5,24 @@ import re
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from chats.services.llm import generate_panes
 from chats.models import ChatWorkspace
 from chats.services.turns import build_chat_turn_context
-from projects.models import ProjectAnchor, ProjectAnchorAudit, ProjectReviewChat, ProjectReviewStageChat
+from projects.models import (
+    ProjectAnchor,
+    ProjectAnchorAudit,
+    ProjectReviewChat,
+    ProjectReviewStageChat,
+    ProjectCKO,
+    UserProjectPrefs,
+)
 from projects.services_project_membership import accessible_projects_qs
 from projects.services.artefact_render import render_artefact_html
 from projects.services_artefacts import (
@@ -22,7 +32,7 @@ from projects.services_artefacts import (
     normalise_pdo_payload,
     seed_execute_from_route,
 )
-from projects.services_execute import seed_execute_from_route as ensure_execute_from_route, merge_execute_from_route
+from projects.services_execute import seed_execute_from_route as ensure_execute_from_route, reseed_execute_from_route
 from projects.services_text_normalise import normalise_sections
 from projects.services_review_chat import get_or_create_review_chat, get_or_create_review_stage_chat
 from projects.services_execute_validator import build_execute_conference_seed, build_execute_stage_seed
@@ -61,6 +71,290 @@ EXECUTE_OVERALL_PRIORITY = (
     "IN_PROGRESS",
     "DONE",
 )
+ALLOWED_SEED_STYLES = {"concise", "balanced", "detailed"}
+
+
+def _normalise_seed_style(value: str) -> str:
+    v = str(value or "").strip().lower()
+    if v in ALLOWED_SEED_STYLES:
+        return v
+    return "balanced"
+
+
+def _normalise_seed_constraints(value: str) -> str:
+    text = str(value or "").strip()
+    if len(text) > 400:
+        return text[:400].strip()
+    return text
+
+
+def _seed_style_blocks(seed_style: str, seed_constraints: str = "") -> list[str]:
+    style = _normalise_seed_style(seed_style)
+    blocks = ["Writing style controls:"]
+    if style == "concise":
+        blocks.extend(
+            [
+                "Use short sentences.",
+                "One idea per sentence.",
+                "Avoid qualifiers and filler.",
+                "Avoid wording like high-level, robust, comprehensive, strategic.",
+                "Prefer concrete verbs and clear actions.",
+            ]
+        )
+    elif style == "detailed":
+        blocks.extend(
+            [
+                "Use clear detail with practical depth.",
+                "Prefer concrete specifics over abstract terms.",
+                "Keep structure explicit and scannable.",
+            ]
+        )
+    else:
+        blocks.extend(
+            [
+                "Use balanced clarity.",
+                "Avoid unnecessary qualifiers.",
+                "Keep language practical and direct.",
+            ]
+        )
+    if seed_constraints:
+        blocks.append("User constraints: " + _normalise_seed_constraints(seed_constraints))
+    return blocks
+
+
+def _get_user_project_seed_defaults(project, user) -> tuple[str, str]:
+    prefs = UserProjectPrefs.objects.filter(project=project, user=user).first()
+    ui = prefs.ui_overrides if prefs and isinstance(prefs.ui_overrides, dict) else {}
+    return (
+        _normalise_seed_style(ui.get("rw_seed_style")),
+        _normalise_seed_constraints(ui.get("rw_seed_constraints")),
+    )
+
+
+def _build_route_seed_from_intent(intent_payload: dict) -> dict:
+    intent = _dict_or_empty(intent_payload)
+    canonical_summary = str(intent.get("canonical_summary") or "").strip()
+    statement = str(intent.get("statement") or "").strip()
+    scope = str(intent.get("scope") or "").strip()
+    assumptions = str(intent.get("assumptions") or "").strip()
+    supporting_basis = str(intent.get("supporting_basis") or "").strip()
+    uncertainties = str(intent.get("uncertainties_limits") or "").strip()
+
+    assumptions_lines = []
+    if assumptions:
+        assumptions_lines.append(assumptions)
+    if uncertainties:
+        assumptions_lines.append("Uncertainties / limits:\n" + uncertainties)
+    combined_assumptions = "\n\n".join(assumptions_lines).strip()
+
+    raw = {
+        "pdo_summary": canonical_summary or statement,
+        "cko_alignment": {
+            "stage1_inputs_match": supporting_basis or "Derived from INTENT anchor.",
+            "final_outputs_match": statement or canonical_summary,
+        },
+        "planning_purpose": statement or canonical_summary,
+        "planning_constraints": scope,
+        "assumptions": combined_assumptions,
+        "stages": [],
+    }
+    return normalise_pdo_payload(raw)
+
+
+def _extract_json_dict_from_text(raw_text: str) -> dict | None:
+    text = (raw_text or "").strip()
+    if not text:
+        return None
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+    if "```" in text:
+        parts = text.split("```")
+        for chunk in parts[1::2]:
+            candidate = chunk.strip()
+            if candidate.lower().startswith("json"):
+                candidate = candidate[4:].strip()
+            try:
+                obj = json.loads(candidate)
+                if isinstance(obj, dict):
+                    return obj
+            except Exception:
+                continue
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            obj = json.loads(text[start : end + 1])
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+    return None
+
+
+def _build_route_seed_from_intent_llm(
+    *, intent_payload: dict, user, seed_style: str = "balanced", seed_constraints: str = ""
+) -> dict | None:
+    intent_text = build_cko_seed_text(intent_payload) or json.dumps(intent_payload, ensure_ascii=True, indent=2)
+    base_route = _build_route_seed_from_intent(intent_payload)
+    system_blocks = [
+        "You are generating only ROUTE stages from an INTENT anchor.",
+        "Return pane JSON as normal, but put strict JSON stage-map in output.",
+        "In output, return ONLY this object schema:",
+        "{",
+        '  "stages": [',
+        "    {",
+        '      "title": "string",',
+        '      "purpose": "string",',
+        '      "inputs": "string",',
+        '      "stage_process": "string",',
+        '      "outputs": "string",',
+        '      "assumptions": "string",',
+        '      "duration_estimate": "string",',
+        '      "risks_notes": "string"',
+        "    }",
+        "  ]",
+        "}",
+        "Rules: stages count 3 to 8. Concrete steps. Ordered flow. No markdown.",
+    ]
+    panes = generate_panes(
+        "INTENT anchor source:\n" + intent_text + "\n\nProduce stage map now.",
+        image_parts=None,
+        system_blocks=system_blocks + _seed_style_blocks(seed_style, seed_constraints),
+        user=user,
+    )
+    obj = _extract_json_dict_from_text(str(panes.get("output") or ""))
+    if isinstance(obj, dict):
+        stages = obj.get("stages")
+        if isinstance(stages, list) and stages:
+            merged = dict(base_route)
+            merged["stages"] = stages
+            norm = normalise_pdo_payload(merged)
+            if isinstance(norm.get("stages"), list) and len(norm.get("stages") or []) > 0:
+                return norm
+    return None
+
+
+def _normalise_intent_payload(payload: dict | None, *, default_provenance: str = "") -> dict:
+    src = payload if isinstance(payload, dict) else {}
+    out = {
+        "canonical_summary": str(src.get("canonical_summary") or "").strip(),
+        "scope": str(src.get("scope") or "").strip(),
+        "statement": str(src.get("statement") or "").strip(),
+        "supporting_basis": str(src.get("supporting_basis") or "").strip(),
+        "assumptions": str(src.get("assumptions") or "").strip(),
+        "alternatives_considered": str(src.get("alternatives_considered") or "").strip(),
+        "uncertainties_limits": str(src.get("uncertainties_limits") or "").strip(),
+        "provenance": str(src.get("provenance") or "").strip(),
+    }
+    if not out["alternatives_considered"]:
+        out["alternatives_considered"] = "DEFERRED"
+    if not out["uncertainties_limits"]:
+        out["uncertainties_limits"] = "DEFERRED"
+    if not out["provenance"]:
+        out["provenance"] = default_provenance or "Seeded from accepted CKO."
+    return out
+
+
+def _build_intent_seed_from_cko_llm(
+    *, source_payload: dict, user, seed_style: str = "balanced", seed_constraints: str = ""
+) -> dict | None:
+    source = _normalise_intent_payload(source_payload)
+    system_blocks = [
+        "You are producing an INTENT CKO payload.",
+        "Return strict JSON only in output, no markdown.",
+        "Fill all required fields with concise content.",
+        "If unknown, write DEFERRED rather than leaving empty.",
+        "Schema:",
+        "{",
+        '  "canonical_summary": "string <= 10 words",',
+        '  "scope": "string",',
+        '  "statement": "string",',
+        '  "supporting_basis": "string",',
+        '  "assumptions": "string",',
+        '  "alternatives_considered": "string",',
+        '  "uncertainties_limits": "string",',
+        '  "provenance": "string"',
+        "}",
+    ]
+    prompt = (
+        "Accepted CKO source JSON:\n"
+        + json.dumps(source, ensure_ascii=True, indent=2)
+        + "\n\nReturn INTENT CKO JSON now."
+    )
+    panes = generate_panes(
+        prompt,
+        image_parts=None,
+        system_blocks=system_blocks + _seed_style_blocks(seed_style, seed_constraints),
+        user=user,
+    )
+    obj = _extract_json_dict_from_text(str(panes.get("output") or ""))
+    if not isinstance(obj, dict):
+        return None
+    return _normalise_intent_payload(obj)
+
+
+def _build_execute_stage_actions_llm(
+    *, route_payload: dict, user, seed_style: str = "balanced", seed_constraints: str = ""
+) -> dict[str, dict] | None:
+    route_norm = normalise_pdo_payload(route_payload or {})
+    stages = route_norm.get("stages") if isinstance(route_norm.get("stages"), list) else []
+    if not stages:
+        return None
+
+    schema_lines = [
+        "{",
+        '  "stages": [',
+        "    {",
+        '      "stage_id": "S1",',
+        '      "next_actions": "- action one\\n- action two",',
+        '      "notes": "short execution notes"',
+        "    }",
+        "  ]",
+        "}",
+    ]
+    system_blocks = [
+        "You synthesise execution actions for each route stage.",
+        "Keep stage ids unchanged. Do not invent stage ids.",
+        "Return strict JSON only in output, no markdown.",
+        "For each stage, write concrete next actions that move from inputs to outputs.",
+        "Use short lines. Use '- ' bullets in next_actions.",
+        "Keep notes short and practical.",
+        "Output schema:",
+        *schema_lines,
+    ]
+    prompt = (
+        "ROUTE JSON:\n"
+        + json.dumps(route_norm, ensure_ascii=True, indent=2)
+        + "\n\nReturn stage execution actions now."
+    )
+    panes = generate_panes(
+        prompt,
+        image_parts=None,
+        system_blocks=system_blocks + _seed_style_blocks(seed_style, seed_constraints),
+        user=user,
+    )
+    obj = _extract_json_dict_from_text(str(panes.get("output") or ""))
+    if not isinstance(obj, dict):
+        return None
+    rows = obj.get("stages")
+    if not isinstance(rows, list):
+        return None
+    out = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        sid = str(row.get("stage_id") or "").strip()
+        if not sid:
+            continue
+        out[sid] = {
+            "next_actions": str(row.get("next_actions") or "").strip(),
+            "notes": str(row.get("notes") or "").strip(),
+        }
+    return out or None
 
 
 def _dict_or_empty(value):
@@ -199,6 +493,86 @@ def project_review(request, project_id: int):
     project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
     request.session["rw_active_project_id"] = project.id
     request.session.modified = True
+    allowed_view_styles = {"default", "cockpit", "mission"}
+    requested_view_style = (request.GET.get("view") or "").strip().lower()
+    if requested_view_style in allowed_view_styles:
+        request.session["rw_view_style"] = requested_view_style
+        request.session.modified = True
+    session_view_style = (request.session.get("rw_view_style") or "").strip().lower()
+    intent_view_style = session_view_style if session_view_style in allowed_view_styles else "default"
+    if requested_view_style in allowed_view_styles:
+        intent_view_style = requested_view_style
+    pref_seed_style, pref_seed_constraints = _get_user_project_seed_defaults(project, request.user)
+    seed_style = _normalise_seed_style(request.session.get("rw_seed_style") or pref_seed_style)
+    seed_constraints = _normalise_seed_constraints(
+        request.session.get("rw_seed_constraints") or pref_seed_constraints
+    )
+    if (request.GET.get("apply_seed_controls") or "").strip() == "1":
+        seed_style = _normalise_seed_style(request.GET.get("seed_style") or seed_style)
+        seed_constraints = _normalise_seed_constraints(request.GET.get("seed_constraints") or seed_constraints)
+        request.session["rw_seed_style"] = seed_style
+        request.session["rw_seed_constraints"] = seed_constraints
+        request.session.modified = True
+        if (request.GET.get("make_default") or "").strip() == "1":
+            prefs, _ = UserProjectPrefs.objects.get_or_create(project=project, user=request.user)
+            ui = prefs.ui_overrides if isinstance(prefs.ui_overrides, dict) else {}
+            ui["rw_seed_style"] = seed_style
+            ui["rw_seed_constraints"] = seed_constraints
+            prefs.ui_overrides = ui
+            prefs.save(update_fields=["ui_overrides", "updated_at"])
+            messages.success(request, "Seed style applied and set as default for this project.")
+        else:
+            messages.success(request, "Seed style applied.")
+
+    accepted_cko = None
+    if project.defined_cko_id:
+        accepted_cko = ProjectCKO.objects.filter(id=project.defined_cko_id, project=project).first()
+
+    # Ensure INTENT anchor starts from accepted CKO so review has a concrete baseline.
+    intent_anchor = ProjectAnchor.objects.filter(project=project, marker="INTENT").first()
+    if accepted_cko and (
+        intent_anchor is None
+        or (
+            not ((intent_anchor.content or "").strip())
+            and not bool(intent_anchor.content_json)
+        )
+    ):
+        seed_json = accepted_cko.content_json if isinstance(accepted_cko.content_json, dict) else {}
+        seed_text = (accepted_cko.content_text or "").strip()
+        if intent_anchor is None:
+            intent_anchor = ProjectAnchor.objects.create(
+                project=project,
+                marker="INTENT",
+                content=seed_text,
+                content_json=seed_json,
+                status=ProjectAnchor.Status.DRAFT,
+                last_edited_by=request.user,
+                last_edited_at=timezone.now(),
+            )
+        else:
+            intent_anchor.content = seed_text
+            intent_anchor.content_json = seed_json
+            intent_anchor.status = ProjectAnchor.Status.DRAFT
+            intent_anchor.proposed_by = None
+            intent_anchor.proposed_at = None
+            intent_anchor.locked_by = None
+            intent_anchor.locked_at = None
+            intent_anchor.last_edited_by = request.user
+            intent_anchor.last_edited_at = timezone.now()
+            intent_anchor.save(
+                update_fields=[
+                    "content",
+                    "content_json",
+                    "status",
+                    "proposed_by",
+                    "proposed_at",
+                    "locked_by",
+                    "locked_at",
+                    "last_edited_by",
+                    "last_edited_at",
+                    "updated_at",
+                ]
+            )
 
     anchors = {a.marker: a for a in ProjectAnchor.objects.filter(project=project)}
     audit_rows = (
@@ -265,6 +639,26 @@ def project_review(request, project_id: int):
         bucket = audit_map.setdefault(row.marker, [])
         if len(bucket) < 20:
             bucket.append(item)
+    route_versions = []
+    for row in audit_rows:
+        if row.marker != "ROUTE":
+            continue
+        if row.change_type != ProjectAnchorAudit.ChangeType.RESEED:
+            continue
+        before_json = _dict_or_empty(row.before_content_json)
+        after_json = _dict_or_empty(row.after_content_json)
+        if not before_json and not after_json:
+            continue
+        route_versions.append(
+            {
+                "audit_id": row.id,
+                "created_at": row.created_at,
+                "changed_by_name": getattr(row.changed_by, "username", "") or "",
+                "summary": row.summary or "",
+            }
+        )
+        if len(route_versions) >= 12:
+            break
 
     status_meta = {}
     now = timezone.now()
@@ -295,7 +689,10 @@ def project_review(request, project_id: int):
         for rc in ProjectReviewStageChat.objects.filter(project=project, user=request.user)
     }
     intent_anchor = anchors.get("INTENT")
-    intent_locked = bool(intent_anchor and intent_anchor.status == ProjectAnchor.Status.PASS_LOCKED)
+    intent_locked = bool(
+        (intent_anchor and intent_anchor.status == ProjectAnchor.Status.PASS_LOCKED)
+        or (accepted_cko is not None)
+    )
 
     chat_ids = set(chats.values()) | set(stage_chats.values())
     review_chat_id_raw = (request.GET.get("review_chat_id") or "").strip()
@@ -576,11 +973,18 @@ def project_review(request, project_id: int):
                 "can_reseed_execute": bool(marker == "EXECUTE" and anchors.get("ROUTE")),
                 "has_content": has_content,
                 "audit_entries": audit_map.get(marker, []),
+                "route_versions": route_versions if marker == "ROUTE" else [],
             }
         )
 
     review_edit = (request.GET.get("review_edit") or "").strip().lower()
     review_anchor_open = (request.GET.get("review_anchor_open") or "").strip().lower() in ("1", "true", "yes")
+    base_qs = request.GET.copy()
+    intent_view_urls = {}
+    for style_name in ("default", "cockpit", "mission"):
+        qs = base_qs.copy()
+        qs["view"] = style_name
+        intent_view_urls[style_name] = "?" + qs.urlencode()
     return render(
         request,
         "projects/project_review.html",
@@ -589,6 +993,10 @@ def project_review(request, project_id: int):
             "sections": sections,
             "review_edit": review_edit,
             "review_anchor_open": review_anchor_open,
+            "intent_view_style": intent_view_style,
+            "intent_view_urls": intent_view_urls,
+            "seed_style": seed_style,
+            "seed_constraints": seed_constraints,
         },
     )
 
@@ -597,6 +1005,9 @@ def project_review(request, project_id: int):
 def project_review_print_intent(request, project_id: int):
     project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
     anchor = ProjectAnchor.objects.filter(project=project, marker="INTENT").first()
+    view_style = (request.GET.get("view") or "").strip().lower()
+    if view_style not in {"default", "cockpit", "mission"}:
+        view_style = "default"
 
     content_text = (anchor.content or "") if anchor else ""
     content_json = (anchor.content_json if anchor else {}) or {}
@@ -611,6 +1022,7 @@ def project_review_print_intent(request, project_id: int):
     content_html = ""
     if content_json:
         content_html = render_artefact_html("CKO", content_json)
+    intent_fields = _normalise_intent_payload(content_json if isinstance(content_json, dict) else {})
 
     return render(
         request,
@@ -618,6 +1030,8 @@ def project_review_print_intent(request, project_id: int):
         {
             "project": project,
             "anchor": anchor,
+            "view_style": view_style,
+            "intent_fields": intent_fields,
             "content_text": content_text,
             "content_html": content_html,
         },
@@ -628,6 +1042,9 @@ def project_review_print_intent(request, project_id: int):
 def project_review_print_route(request, project_id: int):
     project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
     anchor = ProjectAnchor.objects.filter(project=project, marker="ROUTE").first()
+    view_style = (request.GET.get("view") or "").strip().lower()
+    if view_style not in {"default", "cockpit", "mission"}:
+        view_style = "default"
 
     content_text = (anchor.content or "") if anchor else ""
     content_json = (anchor.content_json if anchor else {}) or {}
@@ -640,9 +1057,41 @@ def project_review_print_route(request, project_id: int):
             content_json = payload
 
     normalised = normalise_pdo_payload(content_json)
-    content_html = ""
+    route_fields = {}
+    route_stages = []
     if normalised:
-        content_html = render_artefact_html("PDO", normalised)
+        route_fields = {
+            "pdo_summary": str(normalised.get("pdo_summary") or "").strip(),
+            "planning_purpose": str(normalised.get("planning_purpose") or "").strip(),
+            "planning_constraints": str(normalised.get("planning_constraints") or "").strip(),
+            "assumptions": str(normalised.get("assumptions") or "").strip(),
+            "cko_alignment_stage1_inputs_match": str(
+                (normalised.get("cko_alignment") or {}).get("stage1_inputs_match") or ""
+            ).strip(),
+            "cko_alignment_final_outputs_match": str(
+                (normalised.get("cko_alignment") or {}).get("final_outputs_match") or ""
+            ).strip(),
+        }
+        for item in normalised.get("stages") or []:
+            if not isinstance(item, dict):
+                continue
+            stage_number = item.get("stage_number")
+            route_stages.append(
+                {
+                    "stage_number": stage_number if isinstance(stage_number, int) else None,
+                    "stage_id": str(item.get("stage_id") or "").strip(),
+                    "status": str(item.get("status") or "").strip(),
+                    "title": str(item.get("title") or "").strip(),
+                    "purpose": str(item.get("purpose") or "").strip(),
+                    "inputs": str(item.get("inputs") or "").strip(),
+                    "stage_process": str(item.get("stage_process") or "").strip(),
+                    "outputs": str(item.get("outputs") or "").strip(),
+                    "assumptions": str(item.get("assumptions") or "").strip(),
+                    "duration_estimate": str(item.get("duration_estimate") or "").strip(),
+                    "risks_notes": str(item.get("risks_notes") or "").strip(),
+                }
+            )
+    content_html = render_artefact_html("PDO", normalised) if normalised else ""
 
     return render(
         request,
@@ -650,6 +1099,76 @@ def project_review_print_route(request, project_id: int):
         {
             "project": project,
             "anchor": anchor,
+            "view_style": view_style,
+            "route_fields": route_fields,
+            "route_stages": route_stages,
+            "content_text": content_text,
+            "content_html": content_html,
+        },
+    )
+
+
+@login_required
+def project_review_print_execute(request, project_id: int):
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+    anchor = ProjectAnchor.objects.filter(project=project, marker="EXECUTE").first()
+    view_style = (request.GET.get("view") or "").strip().lower()
+    if view_style not in {"default", "cockpit", "mission"}:
+        view_style = "default"
+
+    content_text = (anchor.content or "") if anchor else ""
+    content_json = (anchor.content_json if anchor else {}) or {}
+    if not content_json and content_text:
+        try:
+            parsed = json.loads(content_text)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict):
+            content_json = parsed
+
+    exec_payload = _dict_or_empty(content_json)
+    execute_stages = []
+    for item in exec_payload.get("stages") or []:
+        if not isinstance(item, dict):
+            continue
+        stage_number = item.get("stage_number")
+        execute_stages.append(
+            {
+                "stage_number": stage_number if isinstance(stage_number, int) else None,
+                "stage_id": str(item.get("stage_id") or "").strip(),
+                "status": str(item.get("status") or "").strip(),
+                "title": str(item.get("title") or "").strip(),
+                "next_actions": str(item.get("next_actions") or "").strip(),
+                "notes": str(item.get("notes") or "").strip(),
+                "purpose": str(item.get("purpose") or "").strip(),
+                "inputs": str(item.get("inputs") or "").strip(),
+                "stage_process": str(item.get("stage_process") or "").strip(),
+                "outputs": str(item.get("outputs") or "").strip(),
+                "assumptions": str(item.get("assumptions") or "").strip(),
+                "duration_estimate": str(item.get("duration_estimate") or "").strip(),
+                "risks_notes": str(item.get("risks_notes") or "").strip(),
+            }
+        )
+    execute_fields = {
+        "overall_status": _compute_execute_overall_status(
+            execute_stages, fallback=str(exec_payload.get("overall_status") or "").strip()
+        ),
+        "current_stage_id": str(exec_payload.get("current_stage_id") or "").strip(),
+        "version": str(exec_payload.get("version") or "").strip(),
+        "next_actions_summary": _collate_stage_text(execute_stages, "next_actions"),
+        "notes_summary": _collate_stage_text(execute_stages, "notes"),
+    }
+    content_html = render_artefact_html("EXECUTE", exec_payload) if exec_payload else ""
+
+    return render(
+        request,
+        "projects/review_print_execute.html",
+        {
+            "project": project,
+            "anchor": anchor,
+            "view_style": view_style,
+            "execute_fields": execute_fields,
+            "execute_stages": execute_stages,
             "content_text": content_text,
             "content_html": content_html,
         },
@@ -660,6 +1179,10 @@ def project_review_print_route(request, project_id: int):
 @login_required
 def project_review_anchor_update(request, project_id: int):
     project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+    wants_json = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or (request.POST.get("ajax") or "").strip() == "1"
+    )
     marker = (request.POST.get("marker") or "").strip().upper()
     markers = {m[0] for m in MARKERS}
     if marker not in markers:
@@ -703,6 +1226,7 @@ def project_review_anchor_update(request, project_id: int):
                     normalised[k] = v
             payload = normalised
     if marker == "ROUTE":
+        route_action = (request.POST.get("action") or "").strip().lower()
         route_fields = {
             "pdo_summary": (request.POST.get("route_pdo_summary") or "").strip(),
             "planning_purpose": (request.POST.get("route_planning_purpose") or "").strip(),
@@ -735,7 +1259,40 @@ def project_review_anchor_update(request, project_id: int):
                     "risks_notes": (request.POST.get(prefix + "risks_notes") or "").strip(),
                 }
             )
-        if any(v for v in route_fields.values()) or stages:
+        if route_action.startswith("save_route_stage:"):
+            try:
+                target_idx = int(route_action.split(":", 1)[1])
+            except Exception:
+                target_idx = 0
+            if target_idx <= 0 or target_idx > len(stages):
+                if wants_json:
+                    return JsonResponse({"ok": False, "message": "Invalid stage save target."}, status=400)
+                messages.error(request, "Invalid stage save target.")
+                return redirect(reverse("projects:project_review", args=[project.id]) + "?review_edit=route&review_anchor_open=1#review-route")
+
+            current = normalise_pdo_payload(anchor.content_json if isinstance(anchor.content_json, dict) else {})
+            current_stages = list(current.get("stages") or [])
+            staged = stages[target_idx - 1]
+            stage_id = str(staged.get("stage_id") or "").strip()
+            stage_num = int(staged.get("stage_number") or 0)
+            updated = False
+            for i, item in enumerate(current_stages):
+                if not isinstance(item, dict):
+                    continue
+                item_id = str(item.get("stage_id") or "").strip()
+                try:
+                    item_num = int(item.get("stage_number") or 0)
+                except Exception:
+                    item_num = 0
+                if (stage_id and item_id == stage_id) or (stage_num and item_num == stage_num):
+                    current_stages[i] = staged
+                    updated = True
+                    break
+            if not updated:
+                current_stages.append(staged)
+            current["stages"] = current_stages
+            payload = normalise_pdo_payload(current)
+        elif any(v for v in route_fields.values()) or stages:
             payload = {
                 "pdo_summary": route_fields["pdo_summary"],
                 "cko_alignment": {
@@ -882,7 +1439,14 @@ def project_review_anchor_update(request, project_id: int):
             before_json=before_json,
             after_json=after_json,
         )
-        messages.success(request, "Anchor JSON saved.")
+        if marker == "ROUTE" and (request.POST.get("action") or "").strip().lower().startswith("save_route_stage:"):
+            if wants_json:
+                return JsonResponse({"ok": True, "message": "Stage saved.", "marker": marker})
+            messages.success(request, "Stage saved.")
+        else:
+            if wants_json:
+                return JsonResponse({"ok": True, "message": "Anchor JSON saved.", "marker": marker})
+            messages.success(request, "Anchor JSON saved.")
     else:
         anchor.content = normalise_sections(raw_text)
         anchor.content_json = {}
@@ -914,6 +1478,8 @@ def project_review_anchor_update(request, project_id: int):
             before_json=before_json,
             after_json={},
         )
+        if wants_json:
+            return JsonResponse({"ok": True, "message": "Anchor text saved.", "marker": marker})
         messages.success(request, "Anchor text saved.")
 
     return redirect(
@@ -951,12 +1517,103 @@ def project_review_chat_open(request, project_id: int):
         )
     seed_from = (request.POST.get("seed_from") or "").strip().upper()
     seed_from_text = ""
+    pref_seed_style, pref_seed_constraints = _get_user_project_seed_defaults(project, request.user)
+    seed_style = _normalise_seed_style(
+        request.POST.get("seed_style") or request.session.get("rw_seed_style") or pref_seed_style
+    )
+    seed_constraints = _normalise_seed_constraints(
+        request.POST.get("seed_constraints") or request.session.get("rw_seed_constraints") or pref_seed_constraints
+    )
+    request.session["rw_seed_style"] = seed_style
+    request.session["rw_seed_constraints"] = seed_constraints
+    request.session.modified = True
+    # Backward-compatible guard:
+    # if older UI posts ROUTE seed to open-chat, seed ROUTE anchor directly.
+    if marker == "ROUTE" and seed_from == "INTENT":
+        intent_anchor = ProjectAnchor.objects.filter(project=project, marker="INTENT").first()
+        intent_payload = _dict_or_empty(intent_anchor.content_json if intent_anchor else {})
+        if not intent_payload and project.defined_cko_id:
+            accepted_cko = ProjectCKO.objects.filter(id=project.defined_cko_id, project=project).first()
+            intent_payload = _dict_or_empty(accepted_cko.content_json if accepted_cko else {})
+        if not intent_payload:
+            messages.error(request, "No INTENT source available to seed ROUTE.")
+            return redirect(reverse("projects:project_review", args=[project.id]) + "#review-route")
+
+        route_payload = _build_route_seed_from_intent_llm(
+            intent_payload=intent_payload,
+            user=request.user,
+            seed_style=seed_style,
+            seed_constraints=seed_constraints,
+        )
+        used_fallback = False
+        if route_payload is None:
+            route_payload = _build_route_seed_from_intent(intent_payload)
+            used_fallback = True
+        route_anchor, _ = ProjectAnchor.objects.get_or_create(
+            project=project,
+            marker="ROUTE",
+            defaults={"content": "", "status": ProjectAnchor.Status.DRAFT},
+        )
+        before_status = route_anchor.status
+        before_content = (route_anchor.content or "")
+        before_json = _dict_or_empty(route_anchor.content_json).copy()
+        route_anchor.content_json = route_payload
+        route_anchor.content = ""
+        route_anchor.status = ProjectAnchor.Status.DRAFT
+        route_anchor.proposed_by = None
+        route_anchor.proposed_at = None
+        route_anchor.locked_by = None
+        route_anchor.locked_at = None
+        route_anchor.last_edited_by = request.user
+        route_anchor.last_edited_at = timezone.now()
+        route_anchor.save(
+            update_fields=[
+                "content_json",
+                "content",
+                "status",
+                "proposed_by",
+                "proposed_at",
+                "locked_by",
+                "locked_at",
+                "last_edited_by",
+                "last_edited_at",
+                "updated_at",
+            ]
+        )
+        _record_anchor_audit(
+            project=project,
+            anchor=route_anchor,
+            marker="ROUTE",
+            changed_by=request.user,
+            change_type="RESEED",
+            summary="ROUTE seeded from INTENT anchor.",
+            status_before=before_status,
+            status_after=route_anchor.status,
+            before_content=before_content,
+            after_content=route_anchor.content or "",
+            before_json=before_json,
+            after_json=_dict_or_empty(route_anchor.content_json).copy(),
+        )
+        if used_fallback:
+            messages.warning(request, "Route seed fallback applied. Stage synthesis failed in LLM response.")
+        else:
+            messages.success(request, "Route seeded from Intent anchor.")
+        return redirect(
+            reverse("projects:project_review", args=[project.id])
+            + "?review_edit=route&review_anchor_open=1#review-route"
+        )
     if seed_from == "INTENT":
         anchor = ProjectAnchor.objects.filter(project=project, marker="INTENT").first()
         if anchor and anchor.content_json:
             seed_from_text = build_cko_seed_text(anchor.content_json)
         elif anchor and anchor.content:
             seed_from_text = anchor.content
+        elif project.defined_cko_id:
+            accepted_cko = ProjectCKO.objects.filter(id=project.defined_cko_id, project=project).first()
+            if accepted_cko and isinstance(accepted_cko.content_json, dict) and accepted_cko.content_json:
+                seed_from_text = build_cko_seed_text(accepted_cko.content_json)
+            elif accepted_cko:
+                seed_from_text = (accepted_cko.content_text or "").strip()
     if marker == "EXECUTE":
         ensure_execute_from_route(project)
         route_anchor = ProjectAnchor.objects.filter(project=project, marker="ROUTE").first()
@@ -988,12 +1645,310 @@ def project_review_chat_open(request, project_id: int):
 
 @require_POST
 @login_required
+def project_review_route_seed_from_intent(request, project_id: int):
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+    wants_json = (
+        (request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest"
+        or (request.POST.get("ajax") or "").strip() == "1"
+    )
+
+    pref_seed_style, pref_seed_constraints = _get_user_project_seed_defaults(project, request.user)
+    seed_style = _normalise_seed_style(
+        request.POST.get("seed_style") or request.session.get("rw_seed_style") or pref_seed_style
+    )
+    seed_constraints = _normalise_seed_constraints(
+        request.POST.get("seed_constraints") or request.session.get("rw_seed_constraints") or pref_seed_constraints
+    )
+    request.session["rw_seed_style"] = seed_style
+    request.session["rw_seed_constraints"] = seed_constraints
+    request.session.modified = True
+    intent_anchor = ProjectAnchor.objects.filter(project=project, marker="INTENT").first()
+    intent_payload = _dict_or_empty(intent_anchor.content_json if intent_anchor else {})
+    if not intent_payload and project.defined_cko_id:
+        accepted_cko = ProjectCKO.objects.filter(id=project.defined_cko_id, project=project).first()
+        intent_payload = _dict_or_empty(accepted_cko.content_json if accepted_cko else {})
+
+    if not intent_payload:
+        msg = "No INTENT source available to seed ROUTE."
+        if wants_json:
+            return JsonResponse({"ok": False, "message": msg}, status=400)
+        messages.error(request, msg)
+        return redirect(reverse("projects:project_review", args=[project.id]) + "#review-route")
+
+    force_llm = (request.POST.get("force_llm") or "").strip() == "1"
+    route_payload = _build_route_seed_from_intent_llm(
+        intent_payload=intent_payload,
+        user=request.user,
+        seed_style=seed_style,
+        seed_constraints=seed_constraints,
+    )
+    used_fallback = False
+    if route_payload is None:
+        if force_llm:
+            msg = "Route reseed failed. LLM stage synthesis failed. Existing ROUTE was kept."
+            if wants_json:
+                return JsonResponse({"ok": False, "message": msg}, status=400)
+            messages.error(request, msg)
+            return redirect(reverse("projects:project_review", args=[project.id]) + "#review-route")
+        route_payload = _build_route_seed_from_intent(intent_payload)
+        used_fallback = True
+    route_anchor, _ = ProjectAnchor.objects.get_or_create(
+        project=project,
+        marker="ROUTE",
+        defaults={"content": "", "status": ProjectAnchor.Status.DRAFT},
+    )
+    before_status = route_anchor.status
+    before_content = (route_anchor.content or "")
+    before_json = _dict_or_empty(route_anchor.content_json).copy()
+
+    route_anchor.content_json = route_payload
+    route_anchor.content = ""
+    route_anchor.status = ProjectAnchor.Status.DRAFT
+    route_anchor.proposed_by = None
+    route_anchor.proposed_at = None
+    route_anchor.locked_by = None
+    route_anchor.locked_at = None
+    route_anchor.last_edited_by = request.user
+    route_anchor.last_edited_at = timezone.now()
+    route_anchor.save(
+        update_fields=[
+            "content_json",
+            "content",
+            "status",
+            "proposed_by",
+            "proposed_at",
+            "locked_by",
+            "locked_at",
+            "last_edited_by",
+            "last_edited_at",
+            "updated_at",
+        ]
+    )
+    _record_anchor_audit(
+        project=project,
+        anchor=route_anchor,
+        marker="ROUTE",
+        changed_by=request.user,
+        change_type="RESEED",
+        summary="ROUTE seeded from INTENT anchor.",
+        status_before=before_status,
+        status_after=route_anchor.status,
+        before_content=before_content,
+        after_content=route_anchor.content or "",
+        before_json=before_json,
+        after_json=_dict_or_empty(route_anchor.content_json).copy(),
+    )
+    redirect_url = (
+        reverse("projects:project_review", args=[project.id])
+        + "?review_edit=route&review_anchor_open=1#review-route"
+    )
+    if used_fallback:
+        msg = "Route seed fallback applied. Stage synthesis failed in LLM response."
+        if wants_json:
+            return JsonResponse({"ok": True, "message": msg, "redirect_url": redirect_url, "used_fallback": True})
+        messages.warning(request, msg)
+    else:
+        msg = "Route seeded from Intent anchor."
+        if wants_json:
+            return JsonResponse({"ok": True, "message": msg, "redirect_url": redirect_url, "used_fallback": False})
+        messages.success(request, msg)
+    return redirect(redirect_url)
+
+
+@require_POST
+@login_required
+def project_review_route_restore(request, project_id: int):
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+    audit_id_raw = (request.POST.get("audit_id") or "").strip()
+    if not audit_id_raw.isdigit():
+        messages.error(request, "Choose a route version to restore.")
+        return redirect(reverse("projects:project_review", args=[project.id]) + "#review-route")
+    audit_row = (
+        ProjectAnchorAudit.objects
+        .select_related("changed_by")
+        .filter(
+            project=project,
+            marker="ROUTE",
+            id=int(audit_id_raw),
+            change_type=ProjectAnchorAudit.ChangeType.RESEED,
+        )
+        .first()
+    )
+    if not audit_row:
+        messages.error(request, "Route version not found.")
+        return redirect(reverse("projects:project_review", args=[project.id]) + "#review-route")
+
+    snapshot = (request.POST.get("snapshot") or "before").strip().lower()
+    if snapshot not in {"before", "after"}:
+        snapshot = "before"
+    if snapshot == "after":
+        payload_json = _dict_or_empty(audit_row.after_content_json).copy()
+        payload_text = (audit_row.after_content or "").strip()
+    else:
+        payload_json = _dict_or_empty(audit_row.before_content_json).copy()
+        payload_text = (audit_row.before_content or "").strip()
+    if not payload_json and not payload_text:
+        messages.error(request, "Selected route version is empty.")
+        return redirect(reverse("projects:project_review", args=[project.id]) + "#review-route")
+
+    route_anchor, _ = ProjectAnchor.objects.get_or_create(
+        project=project,
+        marker="ROUTE",
+        defaults={"content": "", "status": ProjectAnchor.Status.DRAFT},
+    )
+    before_status = route_anchor.status
+    before_content = (route_anchor.content or "")
+    before_json = _dict_or_empty(route_anchor.content_json).copy()
+
+    route_anchor.content_json = payload_json
+    route_anchor.content = payload_text
+    route_anchor.status = ProjectAnchor.Status.DRAFT
+    route_anchor.proposed_by = None
+    route_anchor.proposed_at = None
+    route_anchor.locked_by = None
+    route_anchor.locked_at = None
+    route_anchor.last_edited_by = request.user
+    route_anchor.last_edited_at = timezone.now()
+    route_anchor.save(
+        update_fields=[
+            "content_json",
+            "content",
+            "status",
+            "proposed_by",
+            "proposed_at",
+            "locked_by",
+            "locked_at",
+            "last_edited_by",
+            "last_edited_at",
+            "updated_at",
+        ]
+    )
+    _record_anchor_audit(
+        project=project,
+        anchor=route_anchor,
+        marker="ROUTE",
+        changed_by=request.user,
+        change_type=ProjectAnchorAudit.ChangeType.UPDATE,
+        summary=f"ROUTE restored from version {audit_row.id} ({snapshot}).",
+        status_before=before_status,
+        status_after=route_anchor.status,
+        before_content=before_content,
+        after_content=route_anchor.content or "",
+        before_json=before_json,
+        after_json=_dict_or_empty(route_anchor.content_json).copy(),
+    )
+    messages.success(request, "Route version restored.")
+    return redirect(
+        reverse("projects:project_review", args=[project.id])
+        + "?review_edit=route&review_anchor_open=1#review-route"
+    )
+
+
+@require_POST
+@login_required
+def project_review_intent_seed(request, project_id: int):
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+    pref_seed_style, pref_seed_constraints = _get_user_project_seed_defaults(project, request.user)
+    seed_style = _normalise_seed_style(
+        request.POST.get("seed_style") or request.session.get("rw_seed_style") or pref_seed_style
+    )
+    seed_constraints = _normalise_seed_constraints(
+        request.POST.get("seed_constraints") or request.session.get("rw_seed_constraints") or pref_seed_constraints
+    )
+    request.session["rw_seed_style"] = seed_style
+    request.session["rw_seed_constraints"] = seed_constraints
+    request.session.modified = True
+    intent_anchor = ProjectAnchor.objects.filter(project=project, marker="INTENT").first()
+    accepted_cko = None
+    if project.defined_cko_id:
+        accepted_cko = ProjectCKO.objects.filter(id=project.defined_cko_id, project=project).first()
+
+    source_payload = _dict_or_empty(intent_anchor.content_json if intent_anchor else {})
+    if not source_payload and accepted_cko:
+        source_payload = _dict_or_empty(accepted_cko.content_json)
+    if not source_payload:
+        messages.error(request, "No INTENT source available to seed.")
+        return redirect(reverse("projects:project_review", args=[project.id]) + "#review-intent")
+
+    default_provenance = "Seeded from accepted CKO on " + timezone.now().strftime("%Y-%m-%d")
+    llm_payload = _build_intent_seed_from_cko_llm(
+        source_payload=source_payload,
+        user=request.user,
+        seed_style=seed_style,
+        seed_constraints=seed_constraints,
+    )
+    payload = _normalise_intent_payload(llm_payload or source_payload, default_provenance=default_provenance)
+    used_llm = llm_payload is not None
+
+    anchor, _ = ProjectAnchor.objects.get_or_create(
+        project=project,
+        marker="INTENT",
+        defaults={"content": "", "status": ProjectAnchor.Status.DRAFT},
+    )
+    before_status = anchor.status
+    before_content = (anchor.content or "")
+    before_json = _dict_or_empty(anchor.content_json).copy()
+    anchor.content_json = payload
+    anchor.content = ""
+    anchor.status = ProjectAnchor.Status.DRAFT
+    anchor.proposed_by = None
+    anchor.proposed_at = None
+    anchor.locked_by = None
+    anchor.locked_at = None
+    anchor.last_edited_by = request.user
+    anchor.last_edited_at = timezone.now()
+    anchor.save(
+        update_fields=[
+            "content_json",
+            "content",
+            "status",
+            "proposed_by",
+            "proposed_at",
+            "locked_by",
+            "locked_at",
+            "last_edited_by",
+            "last_edited_at",
+            "updated_at",
+        ]
+    )
+    _record_anchor_audit(
+        project=project,
+        anchor=anchor,
+        marker="INTENT",
+        changed_by=request.user,
+        change_type="RESEED",
+        summary="INTENT seeded from accepted CKO.",
+        status_before=before_status,
+        status_after=anchor.status,
+        before_content=before_content,
+        after_content=anchor.content or "",
+        before_json=before_json,
+        after_json=_dict_or_empty(anchor.content_json).copy(),
+    )
+    if used_llm:
+        messages.success(request, "INTENT seeded with LLM enrichment.")
+    else:
+        messages.warning(request, "INTENT seeded from source. LLM enrichment unavailable.")
+    return redirect(
+        reverse("projects:project_review", args=[project.id])
+        + "?review_edit=intent&review_anchor_open=1#review-intent"
+    )
+
+
+@require_POST
+@login_required
 def project_review_stage_chat_open(request, project_id: int):
     project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+    wants_json = (
+        (request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest"
+        or (request.POST.get("ajax") or "").strip() == "1"
+    )
     marker = (request.POST.get("marker") or "").strip().upper()
     stage_raw = (request.POST.get("stage_number") or "").strip()
     stage_id = (request.POST.get("stage_id") or "").strip()
     if not stage_raw.isdigit():
+        if wants_json:
+            return JsonResponse({"ok": False, "message": "Invalid stage number."}, status=400)
         messages.error(request, "Invalid stage number.")
         return redirect("projects:project_review", project_id=project.id)
     stage_number = int(stage_raw)
@@ -1050,12 +2005,37 @@ def project_review_stage_chat_open(request, project_id: int):
     )
     request.session["rw_active_chat_id"] = chat.id
     request.session.modified = True
-    return redirect(
+    redirect_url = (
         reverse("projects:project_review", args=[project.id])
         + "?review_chat_id="
         + str(chat.id)
         + "&review_chat_open=1#review-"
         + marker.lower()
+    )
+    if wants_json:
+        ctx = build_chat_turn_context(request, chat)
+        qs = request.GET.copy()
+        qs["review_chat_id"] = str(chat.id)
+        qs["review_chat_open"] = "1"
+        qs.pop("turn", None)
+        qs.pop("system", None)
+        ctx["chat"] = chat
+        ctx["qs_base"] = qs.urlencode()
+        ctx["is_open"] = True
+        drawer_html = render_to_string("projects/review_inline_chat.html", {"chat_ctx": ctx}, request=request)
+        return JsonResponse(
+            {
+                "ok": True,
+                "chat_id": chat.id,
+                "marker": marker,
+                "stage_number": stage_number,
+                "stage_id": stage_id,
+                "redirect_url": redirect_url,
+                "drawer_html": drawer_html,
+            }
+        )
+    return redirect(
+        redirect_url
     )
 
 
@@ -1172,15 +2152,51 @@ def project_review_anchor_status(request, project_id: int):
 @login_required
 def project_review_execute_reseed(request, project_id: int):
     project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+    pref_seed_style, pref_seed_constraints = _get_user_project_seed_defaults(project, request.user)
+    seed_style = _normalise_seed_style(
+        request.POST.get("seed_style") or request.session.get("rw_seed_style") or pref_seed_style
+    )
+    seed_constraints = _normalise_seed_constraints(
+        request.POST.get("seed_constraints") or request.session.get("rw_seed_constraints") or pref_seed_constraints
+    )
+    request.session["rw_seed_style"] = seed_style
+    request.session["rw_seed_constraints"] = seed_constraints
+    request.session.modified = True
+    route_anchor = ProjectAnchor.objects.filter(project=project, marker="ROUTE").first()
+    route_payload = _dict_or_empty(route_anchor.content_json if route_anchor else {})
     before_anchor = ProjectAnchor.objects.filter(project=project, marker="EXECUTE").first()
     before_content = (before_anchor.content if before_anchor else "") or ""
     before_json = _dict_or_empty(before_anchor.content_json if before_anchor else {}).copy()
     before_status = (before_anchor.status if before_anchor else "") or ""
-    merged = merge_execute_from_route(project)
-    if not merged:
+    reseeded = reseed_execute_from_route(project)
+    if not reseeded:
         messages.error(request, "No ROUTE anchor available to reseed EXECUTE.")
     else:
         after_anchor = ProjectAnchor.objects.filter(project=project, marker="EXECUTE").first()
+        llm_actions = _build_execute_stage_actions_llm(
+            route_payload=route_payload,
+            user=request.user,
+            seed_style=seed_style,
+            seed_constraints=seed_constraints,
+        )
+        used_llm = False
+        if after_anchor and isinstance(after_anchor.content_json, dict):
+            payload = dict(after_anchor.content_json)
+            stage_rows = payload.get("stages") if isinstance(payload.get("stages"), list) else []
+            if llm_actions and stage_rows:
+                for item in stage_rows:
+                    if not isinstance(item, dict):
+                        continue
+                    sid = str(item.get("stage_id") or "").strip()
+                    if not sid or sid not in llm_actions:
+                        continue
+                    item["next_actions"] = llm_actions[sid].get("next_actions") or item.get("next_actions") or ""
+                    item["notes"] = llm_actions[sid].get("notes") or item.get("notes") or ""
+                payload["stages"] = stage_rows
+                after_anchor.content_json = payload
+                after_anchor.content = ""
+                after_anchor.save(update_fields=["content_json", "content", "updated_at"])
+                used_llm = True
         if after_anchor:
             _record_anchor_audit(
                 project=project,
@@ -1196,5 +2212,8 @@ def project_review_execute_reseed(request, project_id: int):
                 before_json=before_json,
                 after_json=_dict_or_empty(after_anchor.content_json).copy(),
             )
-        messages.success(request, "EXECUTE reseeded from ROUTE (non-destructive).")
+        if used_llm:
+            messages.success(request, "EXECUTE reseeded from ROUTE with LLM stage actions.")
+        else:
+            messages.warning(request, "EXECUTE reseeded from ROUTE. LLM stage action synthesis was unavailable.")
     return redirect(reverse("projects:project_review", args=[project.id]) + "#review-execute")

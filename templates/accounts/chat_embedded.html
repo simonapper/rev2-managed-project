@@ -1,4 +1,4 @@
-<div id="rw-embedded-chat-{{ chat_ctx.chat.id }}">
+<div id="rw-embedded-chat-{{ chat_ctx.chat.id }}" data-apply-target="{{ chat_ctx.apply_target|default:'' }}">
   <form method="post" action="{% url 'accounts:chat_message_create' %}">
     {% csrf_token %}
     <input type="hidden" name="chat_id" value="{{ chat_ctx.chat.id }}">
@@ -9,7 +9,7 @@
         <textarea id="rw-chat-input-{{ chat_ctx.chat.id }}" name="content" class="form-control" rows="2" placeholder="Type message..."></textarea>
       </div>
       <div class="d-flex flex-column align-items-end gap-1" style="min-width: 120px;">
-        <button type="submit" class="btn btn-sm btn-success">Send</button>
+        <button type="button" class="btn btn-sm btn-success" data-chat-send="1">Send</button>
       </div>
     </div>
   </form>
@@ -23,8 +23,8 @@
       <input type="hidden" name="apply_mode" id="rw-selected-mode-{{ chat_ctx.chat.id }}" value="replace">
       <button type="button" class="btn btn-sm btn-outline-primary" data-apply-mode="replace">Use selected (replace)</button>
       <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-mode="append">Use selected (append)</button>
-      <button type="button" class="btn btn-sm btn-outline-primary" data-apply-mode="replace" data-source="input">Use input (replace)</button>
-      <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-mode="append" data-source="input">Use input (append)</button>
+      <button type="button" class="btn btn-sm btn-outline-primary" data-apply-mode="replace" data-source="assistant">Use answer (replace)</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-mode="append" data-source="assistant">Use answer (append)</button>
     </form>
     {% if chat_ctx.show_system %}
       <a class="btn btn-sm btn-outline-secondary" href="?{{ chat_ctx.qs_base }}&system=0">Hide system</a>
@@ -200,18 +200,120 @@
     inputEl.addEventListener("blur", saveDraft);
   }
   if (formEl) {
-    formEl.addEventListener("submit", function () {
-      try {
-        localStorage.removeItem(draftKey);
-      } catch (e) {}
-    });
+    var sendBtn = root.querySelector("button[data-chat-send='1']");
+    if (sendBtn) {
+      sendBtn.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var txt = String((inputEl && inputEl.value) || "").trim();
+        if (!txt) {
+          alert("Type a message first.");
+          return;
+        }
+
+        var postForm = document.createElement("form");
+        postForm.method = "post";
+        postForm.action = "{% url 'accounts:chat_message_create' %}";
+        postForm.style.display = "none";
+
+        function addHidden(name, value) {
+          var el = document.createElement("input");
+          el.type = "hidden";
+          el.name = name;
+          el.value = value || "";
+          postForm.appendChild(el);
+        }
+
+        addHidden("csrfmiddlewaretoken", "{{ csrf_token }}");
+        addHidden("chat_id", "{{ chat_ctx.chat.id }}");
+        addHidden("content", txt);
+        addHidden("next", "{{ request.get_full_path|escapejs }}");
+        document.body.appendChild(postForm);
+        postForm.submit();
+      });
+    }
   }
+  try {
+    var statusParams = new URLSearchParams(window.location.search || "");
+    var errCode = statusParams.get("rw_err") || "";
+    if (errCode) {
+      var map = {
+        no_chat: "Send failed: no chat selected.",
+        bad_chat: "Send failed: invalid chat.",
+        empty: "Send failed: message is empty.",
+        llm: "Send failed: LLM call failed.",
+        boundary: "Send failed: boundary validation blocked response."
+      };
+      var msg = map[errCode] || ("Send failed: " + errCode);
+      var note = document.createElement("div");
+      note.className = "small text-danger mb-2";
+      note.textContent = msg;
+      root.insertBefore(note, root.firstChild);
+    }
+  } catch (e) {}
+  try {
+    var params = new URLSearchParams(window.location.search || "");
+    if (params.get("rw_sent") === "1") {
+      localStorage.removeItem(draftKey);
+    }
+  } catch (e) {}
   var form = root.querySelector("form[data-use-selected-form]");
   if (!form) return;
   var textInput = root.querySelector("#rw-selected-text-{{ chat_ctx.chat.id }}");
   var modeInput = root.querySelector("#rw-selected-mode-{{ chat_ctx.chat.id }}");
   var buttons = form.querySelectorAll("button[data-apply-mode]");
   if (!textInput || !modeInput || !buttons.length) return;
+  var applyTarget = root.getAttribute("data-apply-target") || "";
+
+  function showApplyStatus(msg, ok) {
+    var prior = root.querySelector(".rw-apply-status");
+    if (prior && prior.parentNode) {
+      prior.parentNode.removeChild(prior);
+    }
+    var note = document.createElement("div");
+    note.className = "rw-apply-status small " + (ok ? "text-success" : "text-danger");
+    note.textContent = msg || (ok ? "Applied." : "Apply failed.");
+    root.insertBefore(note, root.firstChild);
+  }
+
+  function applyToLocalTarget(text) {
+    var txt = String(text || "").trim();
+    if (!txt || !applyTarget) return;
+    if (applyTarget.indexOf("pde_field:") === 0) {
+      var fieldKey = applyTarget.split(":", 2)[1] || "";
+      if (!fieldKey) return;
+      var el = document.querySelector("textarea[name='" + fieldKey + "']");
+      if (!el) return;
+      el.value = txt;
+    }
+  }
+
+  function submitUseSelectedNoRefresh(txt, mode) {
+    var fd = new FormData(form);
+    fd.set("selected_text", txt);
+    fd.set("apply_mode", mode || "replace");
+    fd.set("ajax", "1");
+    var body = new URLSearchParams();
+    fd.forEach(function (v, k) { body.append(k, String(v || "")); });
+
+    fetch(form.action, {
+      method: "POST",
+      headers: { "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data || !data.ok) {
+        showApplyStatus((data && data.message) || "Apply failed.", false);
+        return;
+      }
+      applyToLocalTarget(data.applied_text || txt);
+      showApplyStatus((data && data.message) || "Applied.", true);
+    })
+    .catch(function () {
+      showApplyStatus("Apply failed.", false);
+    });
+  }
 
   function getSelectedText() {
     var sel = window.getSelection ? window.getSelection() : null;
@@ -219,11 +321,7 @@
     return String(sel).trim();
   }
 
-  function getInputText() {
-    var el = root.querySelector("#rw-chat-input-{{ chat_ctx.chat.id }}");
-    if (el && String(el.value || "").trim()) {
-      return String(el.value || "").trim();
-    }
+  function getAssistantText() {
     var ansEl = root.querySelector("#rw-active-answer-{{ chat_ctx.chat.id }}");
     if (ansEl && String(ansEl.value || "").trim()) {
       return String(ansEl.value || "").trim();
@@ -231,6 +329,10 @@
     var outEl = root.querySelector("#rw-active-output-{{ chat_ctx.chat.id }}");
     if (outEl && String(outEl.value || "").trim()) {
       return String(outEl.value || "").trim();
+    }
+    var el = root.querySelector("#rw-chat-input-{{ chat_ctx.chat.id }}");
+    if (el && String(el.value || "").trim()) {
+      return String(el.value || "").trim();
     }
     return "";
   }
@@ -305,24 +407,28 @@
   buttons.forEach(function (btn) {
     btn.addEventListener("click", function () {
       var src = btn.getAttribute("data-source") || "selected";
-      var txt = (src === "input") ? getInputText() : getSelectedText();
+      var txt = (src === "assistant") ? getAssistantText() : getSelectedText();
       if (!txt) {
-        alert(src === "input" ? "Type/paste JSON or select a turn with OUTPUT first." : "Select text in the chat first.");
+        alert(src === "assistant" ? "Select a turn with ANSWER/OUTPUT first." : "Select text in the chat first.");
         return;
       }
       var mode = btn.getAttribute("data-apply-mode") || "replace";
       textInput.value = txt;
       modeInput.value = mode;
-      form.submit();
+      if (applyTarget.indexOf("pde_field:") === 0) {
+        submitUseSelectedNoRefresh(txt, mode);
+      } else {
+        form.submit();
+      }
     });
   });
 
   var jsonButtons = root.querySelectorAll("button[data-apply-json]");
   jsonButtons.forEach(function (btn) {
     btn.addEventListener("click", function () {
-      var txt = getInputText();
+      var txt = getAssistantText();
       if (!txt) {
-        alert("Type/paste JSON or select a turn with OUTPUT first.");
+        alert("Select a turn with ANSWER/OUTPUT first.");
         return;
       }
       var target = btn.getAttribute("data-apply-json") || "";

@@ -140,6 +140,114 @@
       <div class="card-body">
 
         <details class="rw-drawer">
+          <summary class="fw-semibold">Project boundaries</summary>
+          <div class="pt-2">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <div class="small text-secondary">Boundary rules for project and new chats.</div>
+              <a class="btn btn-sm btn-outline-secondary" href="{{ policy_docs_help_url }}">Help</a>
+            </div>
+            <form method="post" class="row g-2">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="boundary_update">
+
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1">Boundary constraints</label>
+                <input type="text" name="boundary_topic_tags" class="form-control form-control-sm" value="{{ boundary_profile.topic_tags|join:', ' }}" placeholder="Example: UK_LAW, COMPANY_POLICY">
+              </div>
+              <div class="col-12 col-md-8"></div>
+
+              {% with auth=boundary_profile.authority_set %}
+              <div class="col-12 col-md-6">
+                <label class="form-check small">
+                  <input class="form-check-input" type="checkbox" name="boundary_allow_general" {% if auth.allow_model_general_knowledge %}checked{% endif %}>
+                  <span class="form-check-label">Allow general model knowledge</span>
+                </label>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-check small">
+                  <input class="form-check-input" type="checkbox" name="boundary_allow_internal_docs" {% if auth.allow_internal_docs %}checked{% endif %}>
+                  <span class="form-check-label">Allow internal policy docs</span>
+                </label>
+              </div>
+              {% endwith %}
+
+              <div class="col-12">
+                <button class="btn btn-sm btn-primary" type="submit">Save boundaries</button>
+              </div>
+            </form>
+          </div>
+        </details>
+
+        <hr class="my-3" />
+
+        <details class="rw-drawer">
+          <summary class="fw-semibold">Policy documents</summary>
+          <div class="pt-2">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <div class="small text-secondary">Store internal policy text for retrieval.</div>
+              <a class="btn btn-sm btn-outline-secondary" href="{% url 'projects:policy_docs_help' project.id %}">Help</a>
+            </div>
+
+            <form method="post" class="row g-2 mb-3">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="policy_doc_create">
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1">Title</label>
+                <input type="text" name="doc_title" class="form-control form-control-sm" required>
+              </div>
+              <div class="col-12 col-md-8">
+                <label class="form-label small mb-1">Source ref</label>
+                <input type="text" name="doc_source_ref" class="form-control form-control-sm" placeholder="Optional">
+              </div>
+              <div class="col-12">
+                <label class="form-label small mb-1">Body text</label>
+                <textarea name="doc_body_text" rows="5" class="form-control form-control-sm" required></textarea>
+              </div>
+              <div class="col-12">
+                <button type="submit" class="btn btn-sm btn-primary">Save policy doc</button>
+              </div>
+            </form>
+
+            {% if policy_documents %}
+              <div class="small text-muted mb-2">Saved docs</div>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Source</th>
+                      <th>Updated</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for d in policy_documents %}
+                      <tr>
+                        <td>{{ d.title }}</td>
+                        <td class="small">{{ d.source_ref|default:"-" }}</td>
+                        <td class="small">{{ d.updated_at|date:"Y-m-d H:i" }}</td>
+                        <td class="text-end">
+                          <form method="post" class="d-inline">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="policy_doc_delete">
+                            <input type="hidden" name="doc_id" value="{{ d.id }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                          </form>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <div class="small text-secondary">No policy documents saved yet.</div>
+            {% endif %}
+          </div>
+        </details>
+
+        <hr class="my-3" />
+
+        <details class="rw-drawer">
           <summary class="fw-semibold">Core team</summary>
           <div class="pt-2">
             <div class="small text-secondary mb-2">

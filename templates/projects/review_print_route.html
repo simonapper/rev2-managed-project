@@ -7,91 +7,113 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Route print - {{ project.name }}</title>
   <style>
-    @page {
-      size: A4;
-      margin: 14mm 12mm;
-    }
-
-    html,
-    body {
-      margin: 0;
-      padding: 0;
-      background: #fff;
-      color: #111;
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      line-height: 1.45;
-      font-size: 11pt;
-    }
-
-    .page {
-      max-width: 190mm;
-      margin: 0 auto;
-      padding: 4mm 0;
-    }
-
-    .meta {
-      margin-bottom: 6mm;
-      border-bottom: 1px solid #d9d9d9;
-      padding-bottom: 4mm;
-    }
-
-    .title {
-      font-size: 16pt;
-      font-weight: 700;
-      margin: 0 0 1mm;
-    }
-
-    .sub {
-      font-size: 10pt;
-      color: #444;
-      margin: 0;
-    }
-
-    .actions {
-      margin-top: 4mm;
-    }
-
-    .btn {
-      display: inline-block;
-      border: 1px solid #999;
-      padding: 1.5mm 3mm;
-      font-size: 9pt;
-      background: #f6f6f6;
-      color: #111;
-      text-decoration: none;
-      cursor: pointer;
-    }
-
-    @media print {
-      .actions {
-        display: none;
-      }
-    }
+    @page { size: A4; margin: 12mm; }
+    html, body { margin: 0; padding: 0; background: #fff; color: #111; font-family: "Segoe UI", Tahoma, sans-serif; font-size: 10.5pt; line-height: 1.4; }
+    .page { max-width: 190mm; margin: 0 auto; }
+    .meta { border-bottom: 1px solid #d9d9d9; padding-bottom: 3mm; margin-bottom: 4mm; }
+    .title { margin: 0 0 1mm; font-size: 16pt; }
+    .sub { margin: 0; font-size: 9.5pt; color: #444; }
+    .actions { margin-top: 3mm; display: flex; gap: 2mm; }
+    .btn { border: 1px solid #999; padding: 1.2mm 3mm; background: #f6f6f6; font-size: 9pt; text-decoration: none; color: #111; }
+    .chip { display: inline-block; border: 1px solid #d7dee8; border-radius: 999px; padding: 0.5mm 2.2mm; font-size: 8.5pt; margin-right: 1.5mm; background: #f5f8fb; }
+    .block { border: 1px solid #e2e8f0; border-radius: 6px; padding: 2.5mm; margin-bottom: 3mm; background: #fff; }
+    .block h2 { margin: 0 0 2mm; font-size: 11pt; }
+    .muted { color: #5b6573; font-size: 9pt; }
+    .stage { border: 1px solid #d8e2ef; border-radius: 6px; padding: 2mm; margin-bottom: 2mm; background: #f9fbfd; page-break-inside: avoid; }
+    .stage h3 { margin: 0 0 1.5mm; font-size: 10pt; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2mm; }
+    .kv { margin: 0 0 1mm; }
+    .kv b { display: block; font-size: 8.8pt; color: #2d3748; margin-bottom: 0.8mm; }
+    pre { white-space: pre-wrap; margin: 0; font-family: inherit; }
+    @media print { .actions { display: none; } }
   </style>
 </head>
 <body>
   <main class="page">
     <header class="meta">
-      <h1 class="title">Route - Print view</h1>
+      <h1 class="title">Route - {{ view_style|title }} view</h1>
       <p class="sub">{{ project.name }}</p>
-      {% if anchor %}
-        <p class="sub">Status: {{ anchor.status }}</p>
-      {% endif %}
+      {% if anchor %}<p class="sub">Status: {{ anchor.status }}</p>{% endif %}
       <div class="actions">
+        <a class="btn" href="?view=default">Reference</a>
+        <a class="btn" href="?view=cockpit">Cockpit</a>
+        <a class="btn" href="?view=mission">Mission</a>
         <button type="button" class="btn" onclick="window.print();">Print</button>
+        <button type="button" class="btn" onclick="window.close();">Close</button>
       </div>
     </header>
 
-    {% if content_html %}
-      <div class="rw-artefact-doc">
-        {{ content_html|safe }}
-      </div>
-    {% elif content_text %}
-      <div style="white-space:pre-wrap;">{{ content_text }}</div>
+    {% if not route_stages and not route_fields and not content_text %}
+      <div class="muted">No route content yet.</div>
+    {% elif view_style == "mission" %}
+      <section class="block">
+        <h2>Mission</h2>
+        <div class="kv"><b>PDO summary</b><pre>{{ route_fields.pdo_summary }}</pre></div>
+        <div class="kv"><b>Planning purpose</b><pre>{{ route_fields.planning_purpose }}</pre></div>
+      </section>
+      <section class="block">
+        <h2>Stage route</h2>
+        {% for st in route_stages %}
+          <div class="stage">
+            <h3>{{ st.stage_id|default:"S" }}{% if st.stage_number %} - Stage {{ st.stage_number }}{% endif %}: {{ st.title }}</h3>
+            <div class="muted">{{ st.status }}</div>
+          </div>
+        {% empty %}
+          <div class="muted">No stages yet.</div>
+        {% endfor %}
+      </section>
+      <section class="block">
+        <h2>Reference</h2>
+        <div class="grid">
+          <div class="kv"><b>Stage 1 alignment</b><pre>{{ route_fields.cko_alignment_stage1_inputs_match }}</pre></div>
+          <div class="kv"><b>Final alignment</b><pre>{{ route_fields.cko_alignment_final_outputs_match }}</pre></div>
+          <div class="kv"><b>Constraints</b><pre>{{ route_fields.planning_constraints }}</pre></div>
+          <div class="kv"><b>Assumptions</b><pre>{{ route_fields.assumptions }}</pre></div>
+        </div>
+      </section>
+    {% elif view_style == "cockpit" %}
+      <section class="block">
+        <h2>Route cockpit</h2>
+        <span class="chip">Stages {{ route_stages|length }}</span>
+        <span class="chip">Constraints {{ route_fields.planning_constraints|default:""|length }}</span>
+        <span class="chip">Assumptions {{ route_fields.assumptions|default:""|length }}</span>
+        <div class="kv" style="margin-top:2mm;"><b>PDO summary</b><pre>{{ route_fields.pdo_summary }}</pre></div>
+      </section>
+      <section class="block">
+        <h2>Direction</h2>
+        <div class="kv"><b>Planning purpose</b><pre>{{ route_fields.planning_purpose }}</pre></div>
+        <div class="kv"><b>Planning constraints</b><pre>{{ route_fields.planning_constraints }}</pre></div>
+        <div class="kv"><b>Assumptions</b><pre>{{ route_fields.assumptions }}</pre></div>
+      </section>
+      <section class="block">
+        <h2>Stages</h2>
+        {% for st in route_stages %}
+          <div class="stage">
+            <h3>{{ st.stage_id|default:"S" }}{% if st.stage_number %} - Stage {{ st.stage_number }}{% endif %}: {{ st.title }}</h3>
+            <div class="muted">{{ st.status }}</div>
+            <div class="grid" style="margin-top:1.5mm;">
+              <div class="kv"><b>Purpose</b><pre>{{ st.purpose }}</pre></div>
+              <div class="kv"><b>Inputs</b><pre>{{ st.inputs }}</pre></div>
+              <div class="kv"><b>Outputs</b><pre>{{ st.outputs }}</pre></div>
+              <div class="kv"><b>Stage process</b><pre>{{ st.stage_process }}</pre></div>
+            </div>
+          </div>
+        {% empty %}
+          <div class="muted">No stages yet.</div>
+        {% endfor %}
+      </section>
     {% else %}
-      <div style="color:#666;font-size:10pt;">No route content yet.</div>
+      <section class="block">
+        <h2>Reference</h2>
+        {% if content_html %}
+          <div class="rw-artefact-doc">{{ content_html|safe }}</div>
+        {% elif content_text %}
+          <pre>{{ content_text }}</pre>
+        {% else %}
+          <div class="muted">No route content yet.</div>
+        {% endif %}
+      </section>
     {% endif %}
-
   </main>
 </body>
 </html>

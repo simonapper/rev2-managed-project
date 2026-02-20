@@ -2,15 +2,15 @@
   "ExpandedNodes": [
     "",
     "\\accounts",
-    "\\chats",
     "\\chats\\services",
     "\\navigator",
+    "\\projects",
+    "\\projects\\migrations",
     "\\projects\\services",
     "\\static",
-    "\\templates",
     "\\templates\\accounts",
     "\\workbench"
   ],
-  "SelectedNode": "\\templates\\base.html",
+  "SelectedNode": "\\projects\\migrations\\0039_project_review.py",
   "PreviewInSolutionExplorer": false
 }

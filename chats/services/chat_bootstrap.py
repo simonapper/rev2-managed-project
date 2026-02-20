@@ -27,19 +27,21 @@ def bootstrap_chat(
     session_overrides: Optional[Dict[str, Any]] = None,
     cde_mode: str = "SKIP",  # "SKIP"|"LOOSE"|"CONTROLLED"
     cde_inputs: Optional[Dict[str, str]] = None,
+    skip_readiness_checks: bool = False,
 ) -> Tuple[ChatWorkspace, Dict[str, Any]]:
     session_overrides = session_overrides or {}
     cde_inputs = cde_inputs or {}
     
-    if project.defined_cko_id is None and project.kind != Project.Kind.SANDBOX:
-        raise ValueError("Project is not initialised (no accepted CKO).")
-    if project.kind != Project.Kind.SANDBOX:
-        ppde_started = (
-            ProjectPlanningPurpose.objects.filter(project=project).exists()
-            or ProjectPlanningStage.objects.filter(project=project).exists()
-        )
-        if not ppde_started:
-            raise ValueError("PPDE has not been started.")
+    if not skip_readiness_checks:
+        if project.defined_cko_id is None and project.kind != Project.Kind.SANDBOX:
+            raise ValueError("Project is not initialised (no accepted CKO).")
+        if project.kind != Project.Kind.SANDBOX:
+            ppde_started = (
+                ProjectPlanningPurpose.objects.filter(project=project).exists()
+                or ProjectPlanningStage.objects.filter(project=project).exists()
+            )
+            if not ppde_started:
+                raise ValueError("PPDE has not been started.")
 
 
 

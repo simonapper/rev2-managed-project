@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import urllib.request
 import anthropic
 from typing import Any, Dict, List, Optional
 
@@ -72,6 +73,81 @@ def _get_openai_client():
 
         _OPENAI_CLIENT = OpenAI()
     return _OPENAI_CLIENT
+
+
+def generate_openai_image_bytes(
+    *,
+    prompt: str,
+    model: Optional[str] = None,
+    size: str = "1024x1024",
+) -> Dict[str, Any]:
+    """
+    Generate one image using OpenAI Images API and return raw bytes.
+    """
+    text = (prompt or "").strip()
+    if not text:
+        raise ValueError("Image prompt is empty")
+
+    image_model = (model or os.getenv("OPENAI_IMAGE_MODEL", "") or "gpt-image-1").strip()
+    client = _get_openai_client()
+
+    try:
+        response = client.images.generate(
+            model=image_model,
+            prompt=text,
+            size=size,
+            response_format="b64_json",
+        )
+    except Exception:
+        response = client.images.generate(
+            model=image_model,
+            prompt=text,
+            size=size,
+        )
+
+    data = getattr(response, "data", None)
+    if not data and isinstance(response, dict):
+        data = response.get("data")
+    if not data:
+        raise ValueError("Image API returned no data")
+
+    first = data[0]
+    b64 = ""
+    image_url = ""
+    file_id = ""
+    if isinstance(first, dict):
+        b64 = str(first.get("b64_json") or "").strip()
+        image_url = str(first.get("url") or "").strip()
+        file_id = str(first.get("file_id") or "").strip()
+    else:
+        b64 = str(getattr(first, "b64_json", "") or "").strip()
+        image_url = str(getattr(first, "url", "") or "").strip()
+        file_id = str(getattr(first, "file_id", "") or "").strip()
+
+    image_bytes = b""
+    if b64:
+        try:
+            image_bytes = base64.b64decode(b64, validate=True)
+        except Exception as exc:
+            raise ValueError("Image payload decode failed") from exc
+    elif image_url:
+        try:
+            with urllib.request.urlopen(image_url, timeout=20) as resp:
+                image_bytes = bytes(resp.read() or b"")
+        except Exception as exc:
+            raise ValueError("Image API returned URL but download failed") from exc
+    else:
+        raise ValueError("Image API returned no b64 payload")
+
+    if not image_bytes:
+        raise ValueError("Image payload was empty")
+
+    return {
+        "image_bytes": image_bytes,
+        "mime_type": "image/png",
+        "model": image_model,
+        "file_id": file_id,
+    }
 
 
 def _get_anthropic_client():
@@ -273,6 +349,35 @@ def _normalise_panes_payload(payload: Dict[str, Any]) -> Dict[str, str]:
     return {k: _coerce_pane_value(payload.get(k)) for k in _PANE_KEYS}
 
 
+def _all_panes_empty(panes: Dict[str, Any]) -> bool:
+    for k in _PANE_KEYS:
+        if str(panes.get(k) or "").strip():
+            return False
+    return True
+
+
+def _openai_response_fallback_text(response: Any) -> str:
+    chunks: List[str] = []
+    primary = str(getattr(response, "output_text", "") or "").strip()
+    if primary:
+        chunks.append(primary)
+
+    for item in (getattr(response, "output", None) or []):
+        for content in (getattr(item, "content", None) or []):
+            text = str(getattr(content, "text", "") or "").strip()
+            if text:
+                chunks.append(text)
+
+    seen = set()
+    out: List[str] = []
+    for c in chunks:
+        if c in seen:
+            continue
+        seen.add(c)
+        out.append(c)
+    return "\n\n".join(out).strip()
+
+
 # Assumes you already have:
 # client = OpenAI()
 # and ChatAttachment is your model with FileField `file` and `content_type`.
@@ -342,10 +447,18 @@ def _resolve_deepseek_text(response: Any) -> str:
     if choices:
         msg = getattr(choices[0], "message", None)
         content = getattr(msg, "content", None)
-        return _content_to_text(content)
+        text = _content_to_text(content)
+        if text:
+            return text
+        reasoning = getattr(msg, "reasoning_content", None)
+        return _content_to_text(reasoning)
     if isinstance(response, dict):
         try:
-            return _content_to_text(response["choices"][0]["message"]["content"])
+            msg = response["choices"][0]["message"]
+            text = _content_to_text(msg.get("content"))
+            if text:
+                return text
+            return _content_to_text(msg.get("reasoning_content"))
         except Exception:
             return ""
     return ""
@@ -432,6 +545,8 @@ def generate_panes(
         raw_text = (getattr(_get_copilot_agent().run(prompt), "text", "") or "").strip()
         payload = _extract_json_dict_from_text(raw_text)
         if payload is None:
+            if not raw_text:
+                raw_text = "[copilot] empty text response"
             return {
                 "answer": raw_text,
                 "key_info": "",
@@ -439,7 +554,10 @@ def generate_panes(
                 "reasoning": "",
                 "output": "",
             }
-        return _normalise_panes_payload(payload)
+        panes = _normalise_panes_payload(payload)
+        if _all_panes_empty(panes):
+            panes["answer"] = raw_text or "[copilot] empty pane payload"
+        return panes
 
     if selected_provider == "anthropic":
         system_text = "\n\n".join(
@@ -486,6 +604,8 @@ def generate_panes(
 
         payload = _extract_json_dict_from_text(raw_text)
         if payload is None:
+            if not raw_text:
+                raw_text = "[anthropic] empty text response"
             return {
                 "answer": raw_text,
                 "key_info": "",
@@ -493,7 +613,10 @@ def generate_panes(
                 "reasoning": "",
                 "output": "",
             }
-        return _normalise_panes_payload(payload)
+        panes = _normalise_panes_payload(payload)
+        if _all_panes_empty(panes):
+            panes["answer"] = raw_text or "[anthropic] empty pane payload"
+        return panes
 
     if selected_provider == "deepseek":
         if image_parts:
@@ -511,6 +634,8 @@ def generate_panes(
         raw_text = _resolve_deepseek_text(response).strip()
         payload = _extract_json_dict_from_text(raw_text)
         if payload is None:
+            if not raw_text:
+                raw_text = "[deepseek] empty text response"
             return {
                 "answer": raw_text,
                 "key_info": "",
@@ -518,7 +643,10 @@ def generate_panes(
                 "reasoning": "",
                 "output": "",
             }
-        return _normalise_panes_payload(payload)
+        panes = _normalise_panes_payload(payload)
+        if _all_panes_empty(panes):
+            panes["answer"] = raw_text or "[deepseek] empty pane payload"
+        return panes
 
     input_msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_contract}]
     for block in system_blocks:
@@ -569,23 +697,33 @@ def generate_panes(
     try:
         parsed = response.output[0].content[0].parsed  # type: ignore[attr-defined]
         if isinstance(parsed, dict):
-            return {
+            panes = {
                 "answer": parsed.get("answer", "") or "",
                 "key_info": parsed.get("key_info", "") or "",
                 "visuals": parsed.get("visuals", "") or "",
                 "reasoning": parsed.get("reasoning", "") or "",
                 "output": parsed.get("output", "") or "",
             }
+            if not _all_panes_empty(panes):
+                return panes
     except Exception:
         pass
 
-    payload = json.loads(response.output_text or "{}")
+    raw_text = _openai_response_fallback_text(response)
+    payload = _extract_json_dict_from_text(raw_text)
+    if payload is not None:
+        panes = _normalise_panes_payload(payload)
+        if not _all_panes_empty(panes):
+            return panes
+
+    if not raw_text:
+        raw_text = "[openai] empty response payload"
     return {
-        "answer": payload.get("answer", "") or "",
-        "key_info": payload.get("key_info", "") or "",
-        "visuals": payload.get("visuals", "") or "",
-        "reasoning": payload.get("reasoning", "") or "",
-        "output": payload.get("output", "") or "",
+        "answer": raw_text,
+        "key_info": "",
+        "visuals": "",
+        "reasoning": "",
+        "output": "",
     }
 
 

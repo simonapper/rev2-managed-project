@@ -45,3 +45,23 @@ def merge_execute_from_route(project: Project) -> ProjectAnchor | None:
     exec_anchor.content = ""
     exec_anchor.save(update_fields=["content_json", "content", "updated_at"])
     return exec_anchor
+
+
+def reseed_execute_from_route(project: Project) -> ProjectAnchor | None:
+    route = ProjectAnchor.objects.filter(project=project, marker="ROUTE").first()
+    if not route or not isinstance(route.content_json, dict) or not route.content_json:
+        return None
+    payload = build_execute_seed(route.content_json)
+    exec_anchor = ProjectAnchor.objects.filter(project=project, marker="EXECUTE").first()
+    if not exec_anchor:
+        return ProjectAnchor.objects.create(
+            project=project,
+            marker="EXECUTE",
+            content_json=payload,
+            content="",
+            status=ProjectAnchor.Status.DRAFT,
+        )
+    exec_anchor.content_json = payload
+    exec_anchor.content = ""
+    exec_anchor.save(update_fields=["content_json", "content", "updated_at"])
+    return exec_anchor

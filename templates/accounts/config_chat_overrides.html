@@ -93,6 +93,42 @@
       </div>
     </div>
 
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <h5 class="card-title mb-0">Boundaries</h5>
+          {% if policy_docs_help_url %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ policy_docs_help_url }}">Help</a>
+          {% endif %}
+        </div>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label small mb-1">Boundary constraints</label>
+            <input type="text"
+                   class="form-control form-control-sm"
+                   name="boundary_topic_tags"
+                   value="{{ boundary_profile.topic_tags|join:', ' }}"
+                   placeholder="Example: UK_LAW, COMPANY_POLICY">
+          </div>
+          <div class="col-md-8"></div>
+          {% with auth=boundary_profile.authority_set %}
+          <div class="col-md-6">
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="boundary_allow_general" {% if auth.allow_model_general_knowledge %}checked{% endif %}>
+              <span class="form-check-label">Allow general model knowledge</span>
+            </label>
+          </div>
+          <div class="col-md-6">
+            <label class="form-check">
+              <input class="form-check-input" type="checkbox" name="boundary_allow_internal_docs" {% if auth.allow_internal_docs %}checked{% endif %}>
+              <span class="form-check-label">Allow internal policy docs</span>
+            </label>
+          </div>
+          {% endwith %}
+        </div>
+      </div>
+    </div>
+
 
     <!-- Actions -->
     <div class="rw-actionbar mt-2">

@@ -20,8 +20,9 @@ def create_chat(
     session_overrides: dict | None = None,
 ) -> ChatWorkspace:
     # Delegate all chat creation to the canonical bootstrap
-    return bootstrap_chat(
+    chat, _ = bootstrap_chat(
         project=project,
         user=user,
         title=title,
     )
+    return chat

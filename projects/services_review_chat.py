@@ -71,6 +71,7 @@ def get_or_create_review_chat(
             generate_panes_func=generate_panes,
             session_overrides={},
             cde_mode="CONTROLLED",
+            skip_readiness_checks=True,
         )
 
         resolved = resolve_effective_context(
@@ -182,6 +183,7 @@ def get_or_create_review_stage_chat(
             generate_panes_func=generate_panes,
             session_overrides={},
             cde_mode="CONTROLLED",
+            skip_readiness_checks=True,
         )
 
         resolved = resolve_effective_context(

@@ -10,13 +10,15 @@ from typing import Any, Dict, List
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.loader import render_to_string
 from django.views.decorators.http import require_http_methods, require_POST
 from django.urls import reverse
 from django.utils import timezone
 
 from chats.services.llm import generate_panes
-from projects.models import Project, ProjectDefinitionField, ProjectCKO, ProjectTopicChat
+from projects.models import Project, ProjectDefinitionField, ProjectCKO, ProjectTopicChat, UserProjectPrefs
 from projects.services.pde import draft_pde_from_seed, validate_field
 from projects.services.pde_commit import commit_project_definition
 from projects.services.pde_required_keys import pde_required_keys_for_defined
@@ -27,6 +29,112 @@ from projects.services_project_membership import can_edit_pde, is_project_commit
 from chats.services.turns import build_chat_turn_context
 
 
+ALLOWED_SEED_STYLES = {"concise", "balanced", "detailed"}
+ALLOWED_PROJECT_TYPES = {"META", "KNOWLEDGE", "DELIVERY", "RESEARCH", "OPERATIONS"}
+ALLOWED_PROJECT_STATUS = {"ACTIVE", "PAUSED", "ARCHIVED"}
+
+
+def _normalise_seed_style(value: str) -> str:
+    v = str(value or "").strip().lower()
+    if v in ALLOWED_SEED_STYLES:
+        return v
+    return "balanced"
+
+
+def _normalise_seed_constraints(value: str) -> str:
+    text = str(value or "").strip()
+    if len(text) > 400:
+        return text[:400].strip()
+    return text
+
+
+def _validate_direct_lock_field(field_key: str, value_text: str) -> Dict[str, Any] | None:
+    if field_key not in {"identity.project_type", "identity.project_status", "storage.artefact_root_ref"}:
+        return None
+    raw = str(value_text or "").strip()
+    val = raw.upper()
+    if field_key == "identity.project_type":
+        allowed = ALLOWED_PROJECT_TYPES
+        label = "Project type"
+    elif field_key == "identity.project_status":
+        allowed = ALLOWED_PROJECT_STATUS
+        label = "Project status"
+    else:
+        # Artefact root is either SYSTEM or a user path.
+        if not raw:
+            return {
+                "field_key": field_key,
+                "verdict": "PASS",
+                "issues": [],
+                "suggested_revision": "SYSTEM",
+                "questions": [],
+                "confidence": "HIGH",
+            }
+        if val == "SYSTEM":
+            return {
+                "field_key": field_key,
+                "verdict": "PASS",
+                "issues": [],
+                "suggested_revision": "SYSTEM",
+                "questions": [],
+                "confidence": "HIGH",
+            }
+        looks_like_path = any(ch in raw for ch in ("/", "\\", ":"))
+        if not looks_like_path:
+            return {
+                "field_key": field_key,
+                "verdict": "WEAK",
+                "issues": ["Use SYSTEM or a folder path."],
+                "suggested_revision": "",
+                "questions": [],
+                "confidence": "HIGH",
+            }
+        return {
+            "field_key": field_key,
+            "verdict": "PASS",
+            "issues": [],
+            "suggested_revision": raw,
+            "questions": [],
+            "confidence": "HIGH",
+        }
+    if not val:
+        return {
+            "field_key": field_key,
+            "verdict": "WEAK",
+            "issues": [label + " is required."],
+            "suggested_revision": "",
+            "questions": [],
+            "confidence": "HIGH",
+        }
+    if val not in allowed:
+        opts = ", ".join(sorted(allowed))
+        return {
+            "field_key": field_key,
+            "verdict": "WEAK",
+            "issues": [label + " must be one of: " + opts + "."],
+            "suggested_revision": "",
+            "questions": [],
+            "confidence": "HIGH",
+        }
+    return {
+        "field_key": field_key,
+        "verdict": "PASS",
+        "issues": [],
+        "suggested_revision": val,
+        "questions": [],
+        "confidence": "HIGH",
+    }
+
+
+def _get_user_project_seed_defaults(project: Project, user) -> tuple[str, str]:
+    prefs = UserProjectPrefs.objects.filter(project=project, user=user).first()
+    ui = prefs.ui_overrides if prefs and isinstance(prefs.ui_overrides, dict) else {}
+    return (
+        _normalise_seed_style(ui.get("rw_seed_style")),
+        _normalise_seed_constraints(ui.get("rw_seed_constraints")),
+    )
+
+
 def _fields_for_project(project: Project) -> Dict[str, ProjectDefinitionField]:
     qs = ProjectDefinitionField.objects.filter(project=project)
     out: Dict[str, ProjectDefinitionField] = {}
@@ -35,6 +143,42 @@ def _fields_for_project(project: Project) -> Dict[str, ProjectDefinitionField]:
         if k:
             out[k] = row
     return out
+
+
+def _normalise_pde_field_metadata(project: Project) -> None:
+    rows = ProjectDefinitionField.objects.filter(project=project)
+    for row in rows:
+        changed = False
+        update_fields: List[str] = []
+        if row.status == ProjectDefinitionField.Status.PASS_LOCKED:
+            if row.proposed_by_id is not None:
+                row.proposed_by = None
+                changed = True
+                update_fields.append("proposed_by")
+            if row.proposed_at is not None:
+                row.proposed_at = None
+                changed = True
+                update_fields.append("proposed_at")
+        else:
+            if row.locked_by_id is not None:
+                row.locked_by = None
+                changed = True
+                update_fields.append("locked_by")
+            if row.locked_at is not None:
+                row.locked_at = None
+                changed = True
+                update_fields.append("locked_at")
+            if row.status != ProjectDefinitionField.Status.PROPOSED:
+                if row.proposed_by_id is not None:
+                    row.proposed_by = None
+                    changed = True
+                    update_fields.append("proposed_by")
+                if row.proposed_at is not None:
+                    row.proposed_at = None
+                    changed = True
+                    update_fields.append("proposed_at")
+        if changed:
+            row.save(update_fields=list(dict.fromkeys(update_fields + ["updated_at"])))
 
 
 def _compute_pde_state(project: Project) -> Dict[str, Any]:
@@ -128,22 +272,42 @@ def _pde_help_answer(*, question: str, project: Project, generate_panes_func) ->
     return (str(panes.get("output") or "")).strip() or "No answer returned."
 
 
+def _build_blocked_validation_feedback(field_key: str, vobj: Dict[str, Any]) -> tuple[str, List[str], str]:
+    verdict = str(vobj.get("verdict") or "").strip() or "WEAK"
+    issues_raw = vobj.get("issues")
+    issues: List[str] = []
+    if isinstance(issues_raw, list):
+        issues = [str(x).strip() for x in issues_raw if str(x).strip()]
+    suggested = str(vobj.get("suggested_revision") or "").strip()
+    base = "Blocked at: " + (field_key or "") + " (" + verdict + ")"
+    if issues:
+        base += " - " + issues[0]
+    return base, issues, suggested
+
+
 @require_POST
 @login_required
 def pde_topic_chat_open(request, project_id: int):
+    wants_json = (request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest"
     project = get_object_or_404(Project, pk=project_id)
     if not can_edit_pde(project, request.user):
+        if wants_json:
+            return JsonResponse({"ok": False, "message": "Permission denied."}, status=403)
         messages.error(request, "You do not have permission to open a topic chat for this section.")
         return redirect("projects:pde_detail", project_id=project.id)
 
     spec_key = (request.POST.get("spec_key") or "").strip()
     if not spec_key:
+        if wants_json:
+            return JsonResponse({"ok": False, "message": "Invalid field."}, status=400)
         messages.error(request, "Invalid field.")
         return redirect("projects:pde_detail", project_id=project.id)
 
     spec_map = {s.key: s for s in PDE_REQUIRED_FIELDS}
     spec = spec_map.get(spec_key)
     if not spec:
+        if wants_json:
+            return JsonResponse({"ok": False, "message": "Field not found."}, status=404)
         messages.error(request, "Field not found.")
         return redirect("projects:pde_detail", project_id=project.id)
 
@@ -153,6 +317,8 @@ def pde_topic_chat_open(request, project_id: int):
     if status == ProjectDefinitionField.Status.PASS_LOCKED or (
         status == ProjectDefinitionField.Status.PROPOSED and not can_commit
     ):
+        if wants_json:
+            return JsonResponse({"ok": False, "message": "Permission denied for this field."}, status=403)
         messages.error(request, "You do not have permission to open a topic chat for this section.")
         return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + spec_key)
 
@@ -184,6 +350,16 @@ def pde_topic_chat_open(request, project_id: int):
             "Success criteria: ready to paste into the field.",
         ]
     )
+    if spec_key == "canonical.summary":
+        seed_user_text += "\n\n" + "\n".join(
+            [
+                "Canonical summary instruction:",
+                "- Write exactly one line.",
+                "- Keep it between 10 and 15 words.",
+                "- Summarise the seed intent only.",
+                "- Do not include bullets, labels, or markdown.",
+            ]
+        )
 
     chat = get_or_create_topic_chat(
         project=project,
@@ -199,27 +375,69 @@ def pde_topic_chat_open(request, project_id: int):
     request.session["rw_active_chat_id"] = chat.id
     request.session.modified = True
 
+    if wants_json:
+        ctx = build_chat_turn_context(request, chat)
+        qs = request.GET.copy()
+        qs["pde_chat_id"] = str(chat.id)
+        qs["pde_chat_open"] = "1"
+        qs.pop("turn", None)
+        qs.pop("system", None)
+        ctx["chat"] = chat
+        ctx["qs_base"] = qs.urlencode()
+        ctx["is_open"] = True
+        ctx["apply_target"] = "pde_field:" + spec_key
+        drawer_html = render_to_string(
+            "projects/ppde_inline_chat.html",
+            {"chat_ctx": ctx},
+            request=request,
+        )
+        return JsonResponse({"ok": True, "chat_id": chat.id, "drawer_html": drawer_html})
+
     open_in = (request.POST.get("open_in") or "").strip().lower()
     if open_in == "drawer":
         base = reverse("projects:pde_detail", kwargs={"project_id": project.id})
         qs = "pde_chat_id=" + str(chat.id) + "&pde_chat_open=1"
-        return redirect(base + "?" + qs + "#pde-field-" + spec_key)
+        return redirect(base + "?" + qs)
     return redirect(reverse("accounts:chat_detail", args=[chat.id]))
 
 @login_required
 @require_http_methods(["GET", "POST"])
 def pde_detail(request, project_id: int):
     project = get_object_or_404(Project, id=project_id)
+    wants_json = (request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest"
 
     if not can_edit_pde(project, request.user):
         messages.error(request, "You do not have permission to edit this project definition.")
         return redirect("accounts:dashboard")
     can_commit = is_project_committer(project, request.user)
+    pref_seed_style, pref_seed_constraints = _get_user_project_seed_defaults(project, request.user)
+    seed_style = _normalise_seed_style(request.session.get("rw_seed_style") or pref_seed_style)
+    seed_constraints = _normalise_seed_constraints(
+        request.session.get("rw_seed_constraints") or pref_seed_constraints
+    )
+
+    if request.method == "GET" and (request.GET.get("apply_seed_controls") or "").strip() == "1":
+        seed_style = _normalise_seed_style(request.GET.get("seed_style") or seed_style)
+        seed_constraints = _normalise_seed_constraints(request.GET.get("seed_constraints") or seed_constraints)
+        request.session["rw_seed_style"] = seed_style
+        request.session["rw_seed_constraints"] = seed_constraints
+        request.session.modified = True
+        if (request.GET.get("make_default") or "").strip() == "1":
+            prefs, _ = UserProjectPrefs.objects.get_or_create(project=project, user=request.user)
+            ui = prefs.ui_overrides if isinstance(prefs.ui_overrides, dict) else {}
+            ui["rw_seed_style"] = seed_style
+            ui["rw_seed_constraints"] = seed_constraints
+            prefs.ui_overrides = ui
+            prefs.save(update_fields=["ui_overrides", "updated_at"])
+            messages.success(request, "Seed style applied and set as default for this project.")
+        else:
+            messages.success(request, "Seed style applied.")
 
     def _generate_panes_for_user(*args, **kwargs):
         return generate_panes(*args, user=request.user, **kwargs)
 
     ensure_pde_fields(project)
+    _normalise_pde_field_metadata(project)
 
     # If project is defined, ensure PDE is hydrated from the accepted CKO
     # whenever the PDE is not fully locked (eg. first reopen, or got disturbed).
@@ -256,6 +474,25 @@ def pde_detail(request, project_id: int):
         request.session.modified = True
 
     action = (request.POST.get("action") or "").strip().lower()
+    if request.method == "POST" and action in ("draft", "apply_seed_controls"):
+        seed_style = _normalise_seed_style(request.POST.get("seed_style") or seed_style)
+        seed_constraints = _normalise_seed_constraints(request.POST.get("seed_constraints") or seed_constraints)
+        request.session["rw_seed_style"] = seed_style
+        request.session["rw_seed_constraints"] = seed_constraints
+        request.session.modified = True
+        if action == "apply_seed_controls":
+            if (request.POST.get("make_default") or "").strip() == "1":
+                prefs, _ = UserProjectPrefs.objects.get_or_create(project=project, user=request.user)
+                ui = prefs.ui_overrides if isinstance(prefs.ui_overrides, dict) else {}
+                ui["rw_seed_style"] = seed_style
+                ui["rw_seed_constraints"] = seed_constraints
+                prefs.ui_overrides = ui
+                prefs.save(update_fields=["ui_overrides", "updated_at"])
+                messages.success(request, "Seed style applied and set as default for this project.")
+            else:
+                messages.success(request, "Seed style applied.")
+            return redirect("projects:pde_detail", project_id=project.id)
+    draft_raw_output = ""
 
     # Only show validation suggestions after an explicit validate action.
     if request.method == "POST" and action != "validate_lock":
@@ -330,12 +567,16 @@ def pde_detail(request, project_id: int):
     if request.method == "POST" and action == "propose_lock":
         field_key = (request.POST.get("field_key") or "").strip()
         if not field_key:
+            if wants_json:
+                return JsonResponse({"ok": False, "message": "Missing field key."}, status=400)
             messages.error(request, "Missing field key.")
             return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
 
         row = ProjectDefinitionField.objects.get(project=project, field_key=field_key)
         proposed_text = (request.POST.get("value_text") or "").strip()
         if not proposed_text:
+            if wants_json:
+                return JsonResponse({"ok": False, "message": "No value captured for proposal."}, status=400)
             messages.error(request, "No value captured for proposal. Please try again.")
             return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
         if proposed_text != (row.value_text or "").strip():
@@ -345,17 +586,23 @@ def pde_detail(request, project_id: int):
         locked_fields = read_locked_fields(project)
         spec = next((s for s in PDE_REQUIRED_FIELDS if s.key == field_key), None)
         rubric_text = getattr(spec, "help_text", "") if spec else ""
-        vobj = validate_field(
-            generate_panes_func=_generate_panes_for_user,
-            field_key=field_key,
-            value_text=proposed_text,
-            locked_fields=locked_fields,
-            rubric=rubric_text,
-        )
+        vobj = _validate_direct_lock_field(field_key, proposed_text)
+        if vobj is None:
+            vobj = validate_field(
+                generate_panes_func=_generate_panes_for_user,
+                field_key=field_key,
+                value_text=proposed_text,
+                locked_fields=locked_fields,
+                rubric=rubric_text,
+            )
         row.last_validation = vobj
 
         if vobj.get("verdict") != "PASS":
             row.status = ProjectDefinitionField.Status.DRAFT
+            row.proposed_by = None
+            row.proposed_at = None
+            row.locked_by = None
+            row.locked_at = None
             row.save(
                 update_fields=[
                     "value_text",
@@ -363,20 +610,47 @@ def pde_detail(request, project_id: int):
                     "last_edited_at",
                     "status",
                     "last_validation",
+                    "proposed_by",
+                    "proposed_at",
+                    "locked_by",
+                    "locked_at",
                     "updated_at",
                 ]
             )
-            messages.error(
-                request,
-                "Blocked at: " + field_key + " (" + str(vobj.get("verdict") or "") + ")",
-            )
+            blocked_msg, blocked_issues, blocked_suggested = _build_blocked_validation_feedback(field_key, vobj)
+            messages.error(request, blocked_msg)
+            for issue in blocked_issues[1:3]:
+                messages.error(request, "Issue: " + issue)
+            if blocked_suggested:
+                messages.info(request, "Suggested revision: " + blocked_suggested)
             request.session["pde_last_validation_key"] = field_key
             request.session["pde_skip_hydrate"] = True
             request.session.modified = True
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "message": blocked_msg,
+                        "field_key": field_key,
+                        "issues": blocked_issues,
+                        "suggested_revision": blocked_suggested,
+                    },
+                    status=400,
+                )
             return redirect("projects:pde_detail", project_id=project.id)
+
+        locked_value = str(vobj.get("suggested_revision") or proposed_text or "").strip()
+        if field_key == "storage.artefact_root_ref" and not locked_value:
+            locked_value = "SYSTEM"
+        if locked_value != (row.value_text or "").strip():
+            row.value_text = locked_value
+            row.last_edited_by = request.user
+            row.last_edited_at = timezone.now()
 
         if can_commit:
             row.status = ProjectDefinitionField.Status.PASS_LOCKED
+            row.proposed_by = None
+            row.proposed_at = None
             row.locked_by = request.user
             row.locked_at = timezone.now()
             row.save(
@@ -386,16 +660,29 @@ def pde_detail(request, project_id: int):
                     "last_edited_at",
                     "status",
                     "last_validation",
+                    "proposed_by",
+                    "proposed_at",
                     "locked_by",
                     "locked_at",
                     "updated_at",
                 ]
             )
             messages.success(request, "Field locked.")
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "field_key": field_key,
+                        "status": "PASS_LOCKED",
+                        "locked_by": request.user.username,
+                    }
+                )
         else:
             row.status = ProjectDefinitionField.Status.PROPOSED
             row.proposed_by = request.user
             row.proposed_at = timezone.now()
+            row.locked_by = None
+            row.locked_at = None
             row.save(
                 update_fields=[
                     "value_text",
@@ -404,11 +691,22 @@ def pde_detail(request, project_id: int):
                     "status",
                     "proposed_by",
                     "proposed_at",
+                    "locked_by",
+                    "locked_at",
                     "last_validation",
                     "updated_at",
                 ]
             )
             messages.success(request, "Lock proposed: " + field_key)
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "field_key": field_key,
+                        "status": "PROPOSED",
+                        "proposed_by": request.user.username,
+                    }
+                )
 
         request.session["pde_skip_hydrate"] = True
         request.session.modified = True
@@ -419,7 +717,129 @@ def pde_detail(request, project_id: int):
     # ------------------------------------------------------------
     if request.method == "POST" and action == "approve_lock":
         if not can_commit:
+            if wants_json:
+                return JsonResponse({"ok": False, "message": "Only the Project Committer can commit this project."}, status=403)
             messages.error(request, "Only the Project Committer can commit this project.")
+            return redirect("projects:pde_detail", project_id=project.id)
+
+        field_key = (request.POST.get("field_key") or "").strip()
+        if not field_key:
+            if wants_json:
+                return JsonResponse({"ok": False, "message": "Missing field key."}, status=400)
+            messages.error(request, "Missing field key.")
+            return redirect("projects:pde_detail", project_id=project.id)
+
+        row = ProjectDefinitionField.objects.get(project=project, field_key=field_key)
+        proposed_text = (request.POST.get("value_text") or "").strip()
+        value_changed = False
+        if proposed_text and proposed_text != (row.value_text or "").strip():
+            row.value_text = proposed_text
+            row.last_edited_by = request.user
+            row.last_edited_at = timezone.now()
+            value_changed = True
+        if value_changed:
+            row.save(update_fields=["value_text", "last_edited_by", "last_edited_at", "updated_at"])
+        if row.status != ProjectDefinitionField.Status.PROPOSED:
+            if wants_json:
+                return JsonResponse({"ok": False, "message": "Field is not proposed."}, status=400)
+            messages.error(request, "Field is not proposed.")
+            return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
+
+        if (row.last_validation or {}).get("verdict") != "PASS":
+            locked_fields = read_locked_fields(project)
+            spec = next((s for s in PDE_REQUIRED_FIELDS if s.key == field_key), None)
+            rubric_text = getattr(spec, "help_text", "") if spec else ""
+            vobj = _validate_direct_lock_field(field_key, (row.value_text or "").strip())
+            if vobj is None:
+                vobj = validate_field(
+                    generate_panes_func=_generate_panes_for_user,
+                    field_key=field_key,
+                    value_text=(row.value_text or "").strip(),
+                    locked_fields=locked_fields,
+                    rubric=rubric_text,
+                )
+            row.last_validation = vobj
+            if vobj.get("verdict") != "PASS":
+                row.status = ProjectDefinitionField.Status.PROPOSED
+                row.locked_by = None
+                row.locked_at = None
+                row.save(
+                    update_fields=[
+                        "value_text",
+                        "last_edited_by",
+                        "last_edited_at",
+                        "status",
+                        "locked_by",
+                        "locked_at",
+                        "last_validation",
+                        "updated_at",
+                    ]
+                )
+                blocked_msg, blocked_issues, blocked_suggested = _build_blocked_validation_feedback(field_key, vobj)
+                messages.error(request, blocked_msg)
+                for issue in blocked_issues[1:3]:
+                    messages.error(request, "Issue: " + issue)
+                if blocked_suggested:
+                    messages.info(request, "Suggested revision: " + blocked_suggested)
+                request.session["pde_last_validation_key"] = field_key
+                request.session["pde_skip_hydrate"] = True
+                request.session.modified = True
+                if wants_json:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "message": blocked_msg,
+                            "field_key": field_key,
+                            "issues": blocked_issues,
+                            "suggested_revision": blocked_suggested,
+                        },
+                        status=400,
+                    )
+                return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
+
+        locked_value = str((row.last_validation or {}).get("suggested_revision") or row.value_text or "").strip()
+        if field_key == "storage.artefact_root_ref" and not locked_value:
+            locked_value = "SYSTEM"
+        row.value_text = locked_value
+        row.status = ProjectDefinitionField.Status.PASS_LOCKED
+        row.proposed_by = None
+        row.proposed_at = None
+        row.locked_by = request.user
+        row.locked_at = timezone.now()
+        row.save(
+            update_fields=[
+                "value_text",
+                "last_edited_by",
+                "last_edited_at",
+                "status",
+                "last_validation",
+                "proposed_by",
+                "proposed_at",
+                "locked_by",
+                "locked_at",
+                "updated_at",
+            ]
+        )
+        request.session["pde_skip_hydrate"] = True
+        request.session.modified = True
+        messages.success(request, "Field locked.")
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "field_key": field_key,
+                    "status": "PASS_LOCKED",
+                    "locked_by": request.user.username,
+                }
+            )
+        return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
+
+    # ------------------------------------------------------------
+    # Action: Override Lock (bypasses LLM; committer only)
+    # ------------------------------------------------------------
+    if request.method == "POST" and action == "override_lock":
+        if not can_commit:
+            messages.error(request, "Only the Project Committer can override-lock a field.")
             return redirect("projects:pde_detail", project_id=project.id)
 
         field_key = (request.POST.get("field_key") or "").strip()
@@ -433,51 +853,23 @@ def pde_detail(request, project_id: int):
             row.value_text = proposed_text
             row.last_edited_by = request.user
             row.last_edited_at = timezone.now()
-        if row.status != ProjectDefinitionField.Status.PROPOSED:
-            messages.error(request, "Field is not proposed.")
-            return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
-
-        if (row.last_validation or {}).get("verdict") != "PASS":
-            locked_fields = read_locked_fields(project)
-            spec = next((s for s in PDE_REQUIRED_FIELDS if s.key == field_key), None)
-            rubric_text = getattr(spec, "help_text", "") if spec else ""
-            vobj = validate_field(
-                generate_panes_func=_generate_panes_for_user,
-                field_key=field_key,
-                value_text=(row.value_text or "").strip(),
-                locked_fields=locked_fields,
-                rubric=rubric_text,
-            )
-            row.last_validation = vobj
-            if vobj.get("verdict") != "PASS":
-                row.save(update_fields=["last_validation", "updated_at"])
-                messages.error(
-                    request,
-                    "Blocked at: " + field_key + " (" + str(vobj.get("verdict") or "") + ")",
-                )
-                request.session["pde_last_validation_key"] = field_key
-                request.session["pde_skip_hydrate"] = True
-                request.session.modified = True
-                return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
-
         row.status = ProjectDefinitionField.Status.PASS_LOCKED
+        row.proposed_by = None
+        row.proposed_at = None
         row.locked_by = request.user
         row.locked_at = timezone.now()
-        row.save(
-            update_fields=[
-                "value_text",
-                "last_edited_by",
-                "last_edited_at",
-                "status",
-                "last_validation",
-                "locked_by",
-                "locked_at",
-                "updated_at",
-            ]
-        )
+        row.last_validation = {"verdict": "PASS", "issues": [], "override": True}
+        row.save(update_fields=[
+            "value_text", "last_edited_by", "last_edited_at",
+            "status", "last_validation",
+            "proposed_by", "proposed_at",
+            "locked_by", "locked_at", "updated_at",
+        ])
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return JsonResponse({"ok": True, "locked_by": request.user.username})
         request.session["pde_skip_hydrate"] = True
         request.session.modified = True
-        messages.success(request, "Field locked.")
+        messages.success(request, "Field override-locked.")
         return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
 
     # ------------------------------------------------------------
@@ -485,11 +877,15 @@ def pde_detail(request, project_id: int):
     # ------------------------------------------------------------
     if request.method == "POST" and action == "reopen_field":
         if not can_commit:
+            if wants_json:
+                return JsonResponse({"ok": False, "message": "Only the Project Committer can commit this project."}, status=403)
             messages.error(request, "Only the Project Committer can commit this project.")
             return redirect("projects:pde_detail", project_id=project.id)
 
         field_key = (request.POST.get("field_key") or "").strip()
         if not field_key:
+            if wants_json:
+                return JsonResponse({"ok": False, "message": "Missing field key."}, status=400)
             messages.error(request, "Missing field key.")
             return redirect("projects:pde_detail", project_id=project.id)
 
@@ -512,6 +908,14 @@ def pde_detail(request, project_id: int):
         request.session["pde_skip_hydrate"] = True
         request.session.modified = True
         messages.success(request, "Field reopened: " + field_key)
+        if wants_json:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "field_key": field_key,
+                    "status": "DRAFT",
+                }
+            )
         return redirect(reverse("projects:pde_detail", kwargs={"project_id": project.id}) + "#pde-field-" + field_key)
 
     # ------------------------------------------------------------
@@ -542,9 +946,21 @@ def pde_detail(request, project_id: int):
     # Action: Draft from seed (fills draft values, does not lock)
     # ------------------------------------------------------------
     if request.method == "POST" and action == "draft":
-        res = draft_pde_from_seed(generate_panes_func=_generate_panes_for_user, seed_text=seed_text)
+        res = draft_pde_from_seed(
+            generate_panes_func=_generate_panes_for_user,
+            seed_text=seed_text,
+            seed_style=seed_style,
+            seed_constraints=seed_constraints,
+        )
         if not res.get("ok"):
-            messages.error(request, "Draft failed: " + str(res.get("error") or "unknown error"))
+            raw_text = str(res.get("raw") or "").strip()
+            draft_raw_output = raw_text or "[No model text returned in any pane.]"
+            messages.error(
+                request,
+                "Draft failed: "
+                + str(res.get("error") or "unknown error")
+                + " Raw model output was loaded into Canonical summary.",
+            )
         else:
             fields = (((res.get("draft") or {}).get("hypotheses") or {}).get("fields") or {})
             if not isinstance(fields, dict):
@@ -558,27 +974,46 @@ def pde_detail(request, project_id: int):
                 row = ProjectDefinitionField.objects.get(project=project, field_key=spec.key)
                 row.value_text = v
                 row.status = ProjectDefinitionField.Status.PROPOSED
+                row.proposed_by = request.user
+                row.proposed_at = timezone.now()
+                row.locked_by = None
+                row.locked_at = None
                 row.last_validation = {}
-                row.save(update_fields=["value_text", "status", "last_validation", "updated_at"])
+                row.save(
+                    update_fields=[
+                        "value_text",
+                        "status",
+                        "proposed_by",
+                        "proposed_at",
+                        "locked_by",
+                        "locked_at",
+                        "last_validation",
+                        "updated_at",
+                    ]
+                )
                 updated += 1
 
-            pass
-
-        return redirect("projects:pde_detail", project_id=project.id)
+            return redirect("projects:pde_detail", project_id=project.id)
 
     # ------------------------------------------------------------
     # Action: Validate + lock (controlled loop)
     # ------------------------------------------------------------
     if request.method == "POST" and action == "validate_lock":
         if not can_commit:
+            if wants_json:
+                return JsonResponse({"ok": False, "message": "Only the Project Committer can commit this project."}, status=403)
             messages.error(request, "Only the Project Committer can commit this project.")
             return redirect("projects:pde_detail", project_id=project.id)
-        user_inputs: Dict[str, str] = {}
         spec_map = {s.key: s for s in PDE_REQUIRED_FIELDS}
+        ignored_locked_fields: List[str] = []
         for spec in PDE_REQUIRED_FIELDS:
             proposed = (request.POST.get(spec.key) or "").strip()
-            user_inputs[spec.key] = proposed
             row = ProjectDefinitionField.objects.get(project=project, field_key=spec.key)
+            if row.status == ProjectDefinitionField.Status.PASS_LOCKED:
+                prior_locked = (row.value_text or "").strip()
+                if proposed != prior_locked:
+                    ignored_locked_fields.append(spec.key)
+                continue
             prior = (row.value_text or "").strip()
             if proposed != prior:
                 row.value_text = proposed
@@ -602,6 +1037,10 @@ def pde_detail(request, project_id: int):
                         "updated_at",
                     ]
                 )
+            elif row.status == ProjectDefinitionField.Status.PROPOSED and (row.locked_by_id or row.locked_at):
+                row.locked_by = None
+                row.locked_at = None
+                row.save(update_fields=["locked_by", "locked_at", "updated_at"])
         request.session["pde_skip_hydrate"] = True
         request.session.modified = True
 
@@ -614,24 +1053,35 @@ def pde_detail(request, project_id: int):
         )
 
         if not proposed_rows:
+            if wants_json:
+                return JsonResponse({"ok": True, "message": "No proposed fields to validate.", "locked_keys": []})
             messages.info(request, "No proposed fields to validate.")
             return redirect("projects:pde_detail", project_id=project.id)
 
         first_blocker = None
+        locked_keys: List[str] = []
         for row in proposed_rows:
             spec = spec_map.get(row.field_key)
             rubric_text = getattr(spec, "help_text", "") if spec else ""
-            vobj = validate_field(
-                generate_panes_func=_generate_panes_for_user,
-                field_key=row.field_key,
-                value_text=(row.value_text or "").strip(),
-                locked_fields=locked_fields,
-                rubric=rubric_text,
-            )
+            vobj = _validate_direct_lock_field(row.field_key, (row.value_text or "").strip())
+            if vobj is None:
+                vobj = validate_field(
+                    generate_panes_func=_generate_panes_for_user,
+                    field_key=row.field_key,
+                    value_text=(row.value_text or "").strip(),
+                    locked_fields=locked_fields,
+                    rubric=rubric_text,
+                )
 
             if vobj.get("verdict") != "PASS":
+                vobj = dict(vobj or {})
+                if not str(vobj.get("field_key") or "").strip():
+                    vobj["field_key"] = row.field_key
+                row.status = ProjectDefinitionField.Status.PROPOSED
+                row.locked_by = None
+                row.locked_at = None
                 row.last_validation = vobj
-                row.save(update_fields=["last_validation", "updated_at"])
+                row.save(update_fields=["status", "locked_by", "locked_at", "last_validation", "updated_at"])
                 first_blocker = vobj
                 continue
 
@@ -640,6 +1090,8 @@ def pde_detail(request, project_id: int):
             row.status = ProjectDefinitionField.Status.PASS_LOCKED
             row.value_text = locked_value
             row.last_validation = vobj
+            row.proposed_by = None
+            row.proposed_at = None
             row.locked_at = timezone.now()
             row.locked_by = request.user
             row.save(
@@ -647,23 +1099,55 @@ def pde_detail(request, project_id: int):
                     "status",
                     "value_text",
                     "last_validation",
+                    "proposed_by",
+                    "proposed_at",
                     "locked_at",
                     "locked_by",
                     "updated_at",
                 ]
             )
+            locked_keys.append(row.field_key)
 
-        if first_blocker:
-            messages.error(
+        if ignored_locked_fields:
+            messages.info(
                 request,
-                "Blocked at: " + str(first_blocker.get("field_key") or "") + " (" + str(first_blocker.get("verdict") or "") + ")",
+                "Ignored edits to locked fields: " + ", ".join(ignored_locked_fields) + ". Reopen to edit.",
             )
-            request.session["pde_last_validation_key"] = str(first_blocker.get("field_key") or "")
+        if first_blocker:
+            blocker_key = str(first_blocker.get("field_key") or "")
+            blocked_msg, blocked_issues, blocked_suggested = _build_blocked_validation_feedback(blocker_key, first_blocker)
+            messages.error(request, blocked_msg)
+            for issue in blocked_issues[1:3]:
+                messages.error(request, "Issue: " + issue)
+            if blocked_suggested:
+                messages.info(request, "Suggested revision: " + blocked_suggested)
+            request.session["pde_last_validation_key"] = blocker_key
             request.session.modified = True
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "message": blocked_msg,
+                        "field_key": blocker_key,
+                        "issues": blocked_issues,
+                        "suggested_revision": blocked_suggested,
+                        "locked_keys": locked_keys,
+                    },
+                    status=400,
+                )
         else:
             messages.success(request, "Proposed fields locked.")
             request.session.pop("pde_last_validation_key", None)
             request.session.modified = True
+            if wants_json:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "message": "Proposed fields locked.",
+                        "locked_keys": locked_keys,
+                        "locked_by": _display_name(request.user),
+                    }
+                )
 
         return redirect("projects:pde_detail", project_id=project.id)
 
@@ -735,6 +1219,11 @@ def pde_detail(request, project_id: int):
     specs: List[Dict[str, Any]] = []
     for spec in PDE_REQUIRED_FIELDS:
         row = rows.get(spec.key)
+        value_text = (getattr(row, "value_text", "") or "") if row else ""
+        if spec.key == "storage.artefact_root_ref" and not value_text.strip():
+            value_text = "SYSTEM"
+        if draft_raw_output and spec.key == "canonical.summary":
+            value_text = draft_raw_output
         specs.append(
             {
                 "key": spec.key,
@@ -742,7 +1231,7 @@ def pde_detail(request, project_id: int):
                 "tier": getattr(spec, "tier", ""),
                 "required": getattr(spec, "required", True),
                 "status": (getattr(row, "status", "") or "") if row else "",
-                "value_text": (getattr(row, "value_text", "") or "") if row else "",
+                "value_text": value_text,
                 "last_validation": getattr(row, "last_validation", {}) if row else {},
                 "proposed_by": (getattr(getattr(row, "proposed_by", None), "username", "") or "") if row else "",
                 "locked_by": (getattr(getattr(row, "locked_by", None), "username", "") or "") if row else "",
@@ -797,6 +1286,8 @@ def pde_detail(request, project_id: int):
         chat = topic_key_to_chat.get(topic_key)
         s["topic_chat_id"] = chat.id if chat else None
         s["topic_chat_ctx"] = chat_ctx_map.get(chat.id) if chat else None
+        if s["topic_chat_ctx"]:
+            s["topic_chat_ctx"]["apply_target"] = "pde_field:" + s["key"]
     current_field_key = ""
     for s in specs:
         if (s.get("status") or "") != ProjectDefinitionField.Status.PASS_LOCKED:
@@ -834,6 +1325,8 @@ def pde_detail(request, project_id: int):
         {
             "project": project,
             "seed_text": seed_text,
+            "seed_style": seed_style,
+            "seed_constraints": seed_constraints,
             "specs": specs,
             "pde_status_badge": state["badge"],
             "pde_nav": _pde_nav(specs),

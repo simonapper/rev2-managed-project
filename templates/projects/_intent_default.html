@@ -1,0 +1,19 @@
+<details class="mt-3" data-review-detail-key="anchor-{{ s.marker|lower }}" open>
+  <summary class="fw-semibold">Anchor</summary>
+  {% if s.content_html %}
+    <div class="border rounded p-2 bg-white rw-artefact-doc">
+      {{ s.content_html|safe }}
+    </div>
+  {% elif s.content %}
+    <div class="border rounded p-2 bg-white" style="white-space:pre-wrap;">{{ s.content }}</div>
+  {% else %}
+    <div class="text-muted small">No anchor content yet.</div>
+  {% endif %}
+  {% if s.content_json_text %}
+    <details class="mt-2">
+      <summary class="small text-muted">View JSON</summary>
+      <pre class="mt-2 mb-0" style="white-space:pre-wrap;">{{ s.content_json_text }}</pre>
+    </details>
+  {% endif %}
+</details>
+

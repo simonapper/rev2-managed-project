@@ -7,6 +7,7 @@ from django import forms
 import io
 import json
 import logging
+import os
 import re
 import zipfile
 from django.contrib import messages
@@ -26,14 +27,25 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from chats.models import ChatMessage, ChatWorkspace
+from chats.services_boundaries import resolve_boundary_profile
 from chats.services.chat_bootstrap import bootstrap_chat
 from chats.services.cleanup import delete_empty_sandbox_chats
 from chats.services.llm import generate_panes
 from config.models import ConfigRecord, ConfigScope, ConfigVersion
-from projects.models import Project, ProjectCKO, ProjectMembership, ProjectWKO
+from projects.models import (
+    Project,
+    ProjectAnchor,
+    ProjectCKO,
+    ProjectMembership,
+    ProjectPDO,
+    ProjectPKO,
+    ProjectTKO,
+    ProjectWKO,
+    PolicyDocument,
+)
 from projects.services.project_bootstrap import bootstrap_project
 from projects.services_project_membership import accessible_projects_qs, is_project_manager, can_edit_committee
-from uploads.models import ChatAttachment
+from uploads.models import ChatAttachment, GeneratedImage
 
 _MAX_IMPORT_ZIP_BYTES = 50 * 1024 * 1024
 _MAX_IMPORT_FILES = 2000
@@ -44,6 +56,31 @@ _IMPORT_RATE_LIMIT_WINDOW_SECONDS = 60
 _IMPORT_RATE_LIMIT_MAX = 6
 
 _SECURITY_LOG = logging.getLogger("workbench.security")
+
+
+def _boundary_profile_from_post(post_data) -> dict:
+    topic_tags_raw = (post_data.get("boundary_topic_tags") or "").strip()
+    topic_tags = [v.strip().upper() for v in topic_tags_raw.replace(";", ",").split(",") if v.strip()]
+    jurisdiction = "UK" if any(tag.startswith("UK_") or tag == "UK" for tag in topic_tags) else "NONE"
+
+    return {
+        "strictness": "SOFT",
+        "jurisdiction": jurisdiction,
+        "topic_tags": topic_tags,
+        "authority_set": {
+            "allow_model_general_knowledge": bool(post_data.get("boundary_allow_general")),
+            "allow_internal_docs": bool(post_data.get("boundary_allow_internal_docs")),
+            "allow_public_sources": False,
+        },
+        "out_of_scope_behaviour": "ALLOW_WITH_WARNING",
+        "recency_risk_topics": ["TAX_RATES", "THRESHOLDS", "DEADLINES"],
+        "required_labels": {
+            "scope_flag": True,
+            "assumptions": True,
+            "source_basis": True,
+            "confidence": True,
+        },
+    }
 
 
 def _validate_import_zip_safety(zf: zipfile.ZipFile) -> None:
@@ -258,7 +295,7 @@ def project_create(request):
             request.session.modified = True
 
             if p.kind == Project.Kind.SANDBOX:
-                chat = bootstrap_chat(
+                chat, _ = bootstrap_chat(
                     project=p,
                     user=request.user,
                     title="Chat 1",
@@ -361,12 +398,101 @@ def project_export(request, project_id: int):
             "primary_type": p.primary_type,
             "mode": p.mode,
             "status": p.status,
+            "defined_cko_version": (p.defined_cko.version if p.defined_cko_id else None),
         },
+        "policy_documents": [],
+        "anchors": [],
+        "cko_versions": [],
+        "tko_versions": [],
+        "wko_versions": [],
+        "pko_versions": [],
+        "pdo_versions": [],
         "chats": [],
     }
 
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for a in ProjectAnchor.objects.filter(project=p).order_by("marker", "id"):
+            payload["anchors"].append(
+                {
+                    "marker": a.marker,
+                    "content": a.content or "",
+                    "content_json": a.content_json or {},
+                    "status": a.status,
+                }
+            )
+
+        for row in ProjectCKO.objects.filter(project=p).order_by("version", "id"):
+            payload["cko_versions"].append(
+                {
+                    "version": row.version,
+                    "status": row.status,
+                    "rel_path": row.rel_path or "",
+                    "content_html": row.content_html or "",
+                    "content_text": row.content_text or "",
+                    "content_json": row.content_json or {},
+                    "field_snapshot": row.field_snapshot or {},
+                }
+            )
+
+        for row in ProjectTKO.objects.filter(project=p).order_by("version", "id"):
+            payload["tko_versions"].append(
+                {
+                    "version": row.version,
+                    "status": row.status,
+                    "content_text": row.content_text or "",
+                    "content_json": row.content_json or {},
+                    "content_html": row.content_html or "",
+                }
+            )
+
+        for row in ProjectWKO.objects.filter(project=p).order_by("version", "id"):
+            payload["wko_versions"].append(
+                {
+                    "version": row.version,
+                    "status": row.status,
+                    "structure_contract_key": row.structure_contract_key or "",
+                    "structure_contract_version": row.structure_contract_version,
+                    "transform_contract_key": row.transform_contract_key or "",
+                    "transform_contract_version": row.transform_contract_version,
+                    "content_json": row.content_json or {},
+                    "seed_snapshot": row.seed_snapshot or {},
+                    "change_summary": row.change_summary or "",
+                }
+            )
+
+        for row in ProjectPKO.objects.filter(project=p).order_by("version", "id"):
+            payload["pko_versions"].append(
+                {
+                    "version": row.version,
+                    "status": row.status,
+                    "content_text": row.content_text or "",
+                    "content_json": row.content_json or {},
+                    "content_html": row.content_html or "",
+                }
+            )
+
+        for row in ProjectPDO.objects.filter(project=p).order_by("version", "id"):
+            payload["pdo_versions"].append(
+                {
+                    "version": row.version,
+                    "status": row.status,
+                    "content_json": row.content_json or {},
+                    "seed_snapshot": row.seed_snapshot or {},
+                    "change_summary": row.change_summary or "",
+                }
+            )
+
+        for doc in PolicyDocument.objects.filter(project=p).order_by("id"):
+            payload["policy_documents"].append(
+                {
+                    "title": doc.title or "",
+                    "body_text": doc.body_text or "",
+                    "source_ref": doc.source_ref or "",
+                    "updated_at": doc.updated_at.isoformat() if doc.updated_at else "",
+                }
+            )
+
         for chat in chats:
             chat_payload = {
                 "title": chat.title,
@@ -383,10 +509,12 @@ def project_export(request, project_id: int):
                 "pinned_cursor_message_id": chat.pinned_cursor_message_id,
                 "messages": [],
                 "attachments": [],
+                "generated_images": [],
             }
             for m in ChatMessage.objects.filter(chat=chat).order_by("id"):
                 chat_payload["messages"].append(
                     {
+                        "id": m.id,
                         "role": m.role,
                         "importance": m.importance,
                         "raw_text": m.raw_text or "",
@@ -413,6 +541,28 @@ def project_export(request, project_id: int):
                         "size_bytes": int(a.size_bytes or 0),
                     }
                 )
+            for gi in GeneratedImage.objects.filter(chat=chat).order_by("id"):
+                ext = (str(gi.image_file.name or "").rsplit(".", 1)[-1] if gi.image_file else "png").lower()
+                arc = f"generated_images/chat_{chat.id}/{gi.id}_{(gi.sha256 or 'img')[:16]}.{ext}"
+                try:
+                    with gi.image_file.open("rb") as fh:
+                        zf.writestr(arc, fh.read())
+                except Exception:
+                    continue
+                chat_payload["generated_images"].append(
+                    {
+                        "path": arc,
+                        "message_id": gi.message_id,
+                        "provider": gi.provider or "",
+                        "model": gi.model or "",
+                        "prompt": gi.prompt or "",
+                        "file_id": gi.file_id or "",
+                        "mime_type": gi.mime_type or "image/png",
+                        "width": gi.width,
+                        "height": gi.height,
+                        "sha256": gi.sha256 or "",
+                    }
+                )
 
             payload["chats"].append(chat_payload)
 
@@ -420,11 +570,6 @@ def project_export(request, project_id: int):
 
     project_name = p.name
     project_id_str = str(p.id)
-    _delete_project_permanently(p)
-    request.session.pop("rw_active_project_id", None)
-    if request.session.get("rw_active_chat_id"):
-        request.session.pop("rw_active_chat_id", None)
-    request.session.modified = True
 
     filename = _safe_zip_name(project_name or f"project_{project_id_str}") + ".zip"
     resp = HttpResponse(zip_buffer.getvalue(), content_type="application/zip")
@@ -471,6 +616,175 @@ def project_import(request):
             )
             bootstrap_project(project=project)
 
+            valid_anchor_markers = {k for k, _ in ProjectAnchor.Marker.choices}
+            valid_anchor_statuses = {k for k, _ in ProjectAnchor.Status.choices}
+            for anchor_payload in payload.get("anchors") or []:
+                if not isinstance(anchor_payload, dict):
+                    continue
+                marker = str(anchor_payload.get("marker") or "").strip().upper()
+                if marker not in valid_anchor_markers:
+                    continue
+                status = str(anchor_payload.get("status") or ProjectAnchor.Status.DRAFT).strip().upper()
+                if status not in valid_anchor_statuses:
+                    status = ProjectAnchor.Status.DRAFT
+                ProjectAnchor.objects.update_or_create(
+                    project=project,
+                    marker=marker,
+                    defaults={
+                        "content": str(anchor_payload.get("content") or ""),
+                        "content_json": anchor_payload.get("content_json") if isinstance(anchor_payload.get("content_json"), dict) else {},
+                        "status": status,
+                        "last_edited_by": request.user,
+                        "last_edited_at": timezone.now(),
+                    },
+                )
+
+            valid_cko_statuses = {k for k, _ in ProjectCKO.Status.choices}
+            created_cko_by_version = {}
+            for cko_payload in payload.get("cko_versions") or []:
+                if not isinstance(cko_payload, dict):
+                    continue
+                version = cko_payload.get("version")
+                if not isinstance(version, int):
+                    continue
+                status = str(cko_payload.get("status") or ProjectCKO.Status.DRAFT).strip().upper()
+                if status not in valid_cko_statuses:
+                    status = ProjectCKO.Status.DRAFT
+                row = ProjectCKO.objects.create(
+                    project=project,
+                    version=version,
+                    status=status,
+                    rel_path=str(cko_payload.get("rel_path") or ""),
+                    content_html=str(cko_payload.get("content_html") or ""),
+                    content_text=str(cko_payload.get("content_text") or ""),
+                    content_json=cko_payload.get("content_json") if isinstance(cko_payload.get("content_json"), dict) else {},
+                    field_snapshot=cko_payload.get("field_snapshot") if isinstance(cko_payload.get("field_snapshot"), dict) else {},
+                    created_by=request.user,
+                    accepted_by=request.user if status == ProjectCKO.Status.ACCEPTED else None,
+                    accepted_at=timezone.now() if status == ProjectCKO.Status.ACCEPTED else None,
+                )
+                created_cko_by_version[version] = row
+
+            defined_cko_version = (payload.get("project") or {}).get("defined_cko_version")
+            if isinstance(defined_cko_version, int):
+                defined_cko = created_cko_by_version.get(defined_cko_version)
+                if defined_cko:
+                    project.defined_cko = defined_cko
+                    project.defined_at = timezone.now()
+                    project.defined_by = request.user
+                    project.save(update_fields=["defined_cko", "defined_at", "defined_by", "updated_at"])
+
+            valid_tko_statuses = {k for k, _ in ProjectTKO.Status.choices}
+            for tko_payload in payload.get("tko_versions") or []:
+                if not isinstance(tko_payload, dict):
+                    continue
+                version = tko_payload.get("version")
+                if not isinstance(version, int):
+                    continue
+                status = str(tko_payload.get("status") or ProjectTKO.Status.DRAFT).strip().upper()
+                if status not in valid_tko_statuses:
+                    status = ProjectTKO.Status.DRAFT
+                ProjectTKO.objects.create(
+                    project=project,
+                    version=version,
+                    status=status,
+                    content_text=str(tko_payload.get("content_text") or ""),
+                    content_json=tko_payload.get("content_json") if isinstance(tko_payload.get("content_json"), dict) else {},
+                    content_html=str(tko_payload.get("content_html") or ""),
+                    created_by=request.user,
+                    accepted_by=request.user if status == ProjectTKO.Status.ACCEPTED else None,
+                    accepted_at=timezone.now() if status == ProjectTKO.Status.ACCEPTED else None,
+                )
+
+            valid_wko_statuses = {k for k, _ in ProjectWKO.Status.choices}
+            for wko_payload in payload.get("wko_versions") or []:
+                if not isinstance(wko_payload, dict):
+                    continue
+                version = wko_payload.get("version")
+                if not isinstance(version, int):
+                    continue
+                status = str(wko_payload.get("status") or ProjectWKO.Status.DRAFT).strip().upper()
+                if status not in valid_wko_statuses:
+                    status = ProjectWKO.Status.DRAFT
+                ProjectWKO.objects.create(
+                    project=project,
+                    version=version,
+                    status=status,
+                    structure_contract_key=str(wko_payload.get("structure_contract_key") or ""),
+                    structure_contract_version=(
+                        wko_payload.get("structure_contract_version")
+                        if isinstance(wko_payload.get("structure_contract_version"), int)
+                        else None
+                    ),
+                    transform_contract_key=str(wko_payload.get("transform_contract_key") or ""),
+                    transform_contract_version=(
+                        wko_payload.get("transform_contract_version")
+                        if isinstance(wko_payload.get("transform_contract_version"), int)
+                        else None
+                    ),
+                    content_json=wko_payload.get("content_json") if isinstance(wko_payload.get("content_json"), dict) else {},
+                    seed_snapshot=wko_payload.get("seed_snapshot") if isinstance(wko_payload.get("seed_snapshot"), dict) else {},
+                    change_summary=str(wko_payload.get("change_summary") or ""),
+                    created_by=request.user,
+                    activated_by=request.user if status == ProjectWKO.Status.ACTIVE else None,
+                    activated_at=timezone.now() if status == ProjectWKO.Status.ACTIVE else None,
+                )
+
+            valid_pko_statuses = {k for k, _ in ProjectPKO.Status.choices}
+            for pko_payload in payload.get("pko_versions") or []:
+                if not isinstance(pko_payload, dict):
+                    continue
+                version = pko_payload.get("version")
+                if not isinstance(version, int):
+                    continue
+                status = str(pko_payload.get("status") or ProjectPKO.Status.DRAFT).strip().upper()
+                if status not in valid_pko_statuses:
+                    status = ProjectPKO.Status.DRAFT
+                ProjectPKO.objects.create(
+                    project=project,
+                    version=version,
+                    status=status,
+                    content_text=str(pko_payload.get("content_text") or ""),
+                    content_json=pko_payload.get("content_json") if isinstance(pko_payload.get("content_json"), dict) else {},
+                    content_html=str(pko_payload.get("content_html") or ""),
+                    created_by=request.user,
+                    accepted_by=request.user if status == ProjectPKO.Status.ACCEPTED else None,
+                    accepted_at=timezone.now() if status == ProjectPKO.Status.ACCEPTED else None,
+                )
+
+            valid_pdo_statuses = {k for k, _ in ProjectPDO.Status.choices}
+            for pdo_payload in payload.get("pdo_versions") or []:
+                if not isinstance(pdo_payload, dict):
+                    continue
+                version = pdo_payload.get("version")
+                if not isinstance(version, int):
+                    continue
+                status = str(pdo_payload.get("status") or ProjectPDO.Status.DRAFT).strip().upper()
+                if status not in valid_pdo_statuses:
+                    status = ProjectPDO.Status.DRAFT
+                ProjectPDO.objects.create(
+                    project=project,
+                    version=version,
+                    status=status,
+                    content_json=pdo_payload.get("content_json") if isinstance(pdo_payload.get("content_json"), dict) else {},
+                    seed_snapshot=pdo_payload.get("seed_snapshot") if isinstance(pdo_payload.get("seed_snapshot"), dict) else {},
+                    change_summary=str(pdo_payload.get("change_summary") or ""),
+                    created_by=request.user,
+                )
+
+            for doc_payload in payload.get("policy_documents") or []:
+                if not isinstance(doc_payload, dict):
+                    continue
+                title = str(doc_payload.get("title") or "").strip()[:200]
+                if not title:
+                    continue
+                PolicyDocument.objects.create(
+                    project=project,
+                    title=title,
+                    body_text=str(doc_payload.get("body_text") or ""),
+                    source_ref=str(doc_payload.get("source_ref") or "")[:255],
+                )
+
             for chat_payload in payload.get("chats") or []:
                 if not isinstance(chat_payload, dict):
                     continue
@@ -492,6 +806,7 @@ def project_import(request):
                     pinned_updated_at=timezone.now(),
                 )
 
+                old_to_new_message = {}
                 for m in chat_payload.get("messages") or []:
                     if not isinstance(m, dict):
                         continue
@@ -505,7 +820,7 @@ def project_import(request):
                         ChatMessage.Importance.IGNORE,
                     }:
                         importance = ChatMessage.Importance.NORMAL
-                    ChatMessage.objects.create(
+                    saved_msg = ChatMessage.objects.create(
                         chat=chat,
                         role=role,
                         importance=importance,
@@ -515,6 +830,9 @@ def project_import(request):
                         output_text=str(m.get("output_text") or ""),
                         segment_meta=m.get("segment_meta") if isinstance(m.get("segment_meta"), dict) else {},
                     )
+                    src_id = m.get("id")
+                    if isinstance(src_id, int):
+                        old_to_new_message[src_id] = saved_msg.id
 
                 for a in chat_payload.get("attachments") or []:
                     if not isinstance(a, dict):
@@ -536,6 +854,34 @@ def project_import(request):
                         original_name=original_name,
                         content_type=str(a.get("content_type") or ""),
                         size_bytes=int(a.get("size_bytes") or len(blob)),
+                    )
+                for gi in chat_payload.get("generated_images") or []:
+                    if not isinstance(gi, dict):
+                        continue
+                    arc_path = str(gi.get("path") or "")
+                    if not arc_path:
+                        continue
+                    try:
+                        blob = _safe_zip_read(zf, arc_path, max_bytes=_MAX_IMPORT_MEMBER_BYTES)
+                    except Exception:
+                        continue
+                    ext = "." + (arc_path.rsplit(".", 1)[-1].lower() if "." in arc_path else "png")
+                    name = (str(gi.get("sha256") or "")[:64] or "generated") + ext
+                    src_message_id = gi.get("message_id")
+                    new_message_id = old_to_new_message.get(src_message_id) if isinstance(src_message_id, int) else None
+                    GeneratedImage.objects.create(
+                        project=project,
+                        chat=chat,
+                        message_id=new_message_id,
+                        provider=str(gi.get("provider") or ""),
+                        model=str(gi.get("model") or ""),
+                        prompt=str(gi.get("prompt") or ""),
+                        file_id=str(gi.get("file_id") or ""),
+                        mime_type=str(gi.get("mime_type") or "image/png"),
+                        width=gi.get("width") if isinstance(gi.get("width"), int) else None,
+                        height=gi.get("height") if isinstance(gi.get("height"), int) else None,
+                        sha256=str(gi.get("sha256") or ""),
+                        image_file=ContentFile(blob, name=name),
                     )
     except Exception as exc:
         _record_security_event(request, "project_import_invalid_zip", error=str(exc)[:160])
@@ -720,6 +1066,10 @@ def project_config_info(request, project_id: int):
     accepted_cko = None
     cko_history = []
     latest_wko = None
+    boundary_profile = resolve_boundary_profile(active_project, None)
+    policy_documents = list(
+        PolicyDocument.objects.filter(project=active_project).order_by("-updated_at", "-id")
+    )
 
     if active_project.defined_cko_id:
         accepted_cko = ProjectCKO.objects.filter(
@@ -798,6 +1148,37 @@ def project_config_info(request, project_id: int):
         .exclude(id__in=list(seen_ids))
         .order_by("username")
     )
+
+    if request.method == "POST" and (request.POST.get("action") or "") == "policy_doc_create":
+        title = (request.POST.get("doc_title") or "").strip()
+        body_text = (request.POST.get("doc_body_text") or "").strip()
+        source_ref = (request.POST.get("doc_source_ref") or "").strip()
+        if not title or not body_text:
+            messages.error(request, "Policy document title and text are required.")
+        else:
+            PolicyDocument.objects.create(
+                project=active_project,
+                title=title[:200],
+                body_text=body_text,
+                source_ref=source_ref[:255],
+            )
+            messages.success(request, "Policy document saved.")
+        return redirect("accounts:project_config_info", project_id=active_project.id)
+
+    if request.method == "POST" and (request.POST.get("action") or "") == "policy_doc_delete":
+        doc_id_raw = (request.POST.get("doc_id") or "").strip()
+        if doc_id_raw.isdigit():
+            PolicyDocument.objects.filter(project=active_project, id=int(doc_id_raw)).delete()
+            messages.success(request, "Policy document deleted.")
+        else:
+            messages.error(request, "Invalid policy document.")
+        return redirect("accounts:project_config_info", project_id=active_project.id)
+
+    if request.method == "POST" and (request.POST.get("action") or "") == "boundary_update":
+        active_project.boundary_profile_json = _boundary_profile_from_post(request.POST)
+        active_project.save(update_fields=["boundary_profile_json", "updated_at"])
+        messages.success(request, "Project boundaries updated.")
+        return redirect("accounts:project_config_info", project_id=active_project.id)
 
     if request.method == "POST" and (request.POST.get("action") or "") == "committee_update":
         if not can_edit_team:
@@ -910,9 +1291,27 @@ def project_config_info(request, project_id: int):
             "cko_history": cko_history,
             "active_wko": latest_wko,
             "planning_mode": planning_mode,
+            "boundary_profile": boundary_profile,
+            "policy_documents": policy_documents,
+            "policy_docs_help_url": reverse("projects:policy_docs_help", args=[active_project.id]),
             "member_rows": member_rows,
             "available_users": available_users,
             "can_edit_committee": can_edit_team,
+        },
+    )
+
+
+@login_required
+def policy_docs_help(request, project_id: int):
+    active_project = get_object_or_404(
+        accessible_projects_qs(request.user),
+        pk=project_id,
+    )
+    return render(
+        request,
+        "accounts/policy_docs_help.html",
+        {
+            "project": active_project,
         },
     )
 

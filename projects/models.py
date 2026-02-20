@@ -118,6 +118,7 @@ class Project(models.Model):
 
     # Optional PPDE seed summary (condensed CKO extract for PPDE UI)
     ppde_seed_summary = models.JSONField(default=dict, blank=True)
+    boundary_profile_json = models.JSONField(default=dict, blank=True)
 
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -125,6 +126,26 @@ class Project(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+
+class PolicyDocument(models.Model):
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="policy_documents",
+    )
+    title = models.CharField(max_length=200)
+    body_text = models.TextField(blank=True, default="")
+    source_ref = models.CharField(max_length=255, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "updated_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.title}"
 
 
 class ProjectPolicy(models.Model):

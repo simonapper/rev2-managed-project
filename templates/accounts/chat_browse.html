@@ -146,23 +146,12 @@
                     </a>
                     {% if request.user.is_superuser or c.project.owner_id == request.user.id %}
                         <form method="post"
-                            action="{% url 'accounts:chat_archive' c.id %}"
-                            class="d-inline">
-                        {% csrf_token %}
-                        <button type="submit"
-                                class="btn btn-sm rw-btn-xs btn-outline-warning rw-chat-action"
-                                onclick="return confirm('Archive this chat?');">
-                          Archive
-                        </button>
-                        </form>
-
-                        <form method="post"
                             action="{% url 'accounts:chat_export' c.id %}"
                             class="d-inline">
                         {% csrf_token %}
                         <button type="submit"
                                 class="btn btn-sm rw-btn-xs btn-outline-primary rw-chat-action"
-                                onclick="return confirm('Export and permanently delete this chat?');">
+                                onclick="return confirm('Export this chat to ZIP?');">
                           Export
                         </button>
                         </form>

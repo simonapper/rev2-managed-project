@@ -1,0 +1,124 @@
+{% load rw_extras %}
+<form id="rw-route-save-{{ s.marker }}" method="post" action="{% url 'projects:project_review_anchor_update' project.id %}" class="mt-2" data-ajax-save-form="1">
+  {% csrf_token %}
+  <input type="hidden" name="marker" value="{{ s.marker }}" />
+
+  <div class="border rounded bg-white p-2">
+    <div class="d-flex flex-wrap gap-2 align-items-center justify-content-between">
+      <div class="fw-semibold">Route cockpit</div>
+      <div class="d-flex flex-wrap gap-2">
+        <span class="badge text-bg-secondary">Stages {{ s.route_stages|length }}</span>
+        <span class="badge text-bg-secondary">Constraints {{ s.route_fields.planning_constraints|count_items }}</span>
+        <span class="badge text-bg-secondary">Assumptions {{ s.route_fields.assumptions|count_items }}</span>
+      </div>
+    </div>
+    <label class="form-label small text-muted mt-2 mb-1">PDO summary</label>
+    <textarea class="form-control" name="route_pdo_summary" rows="2">{{ s.route_fields.pdo_summary }}</textarea>
+  </div>
+
+  <details class="mt-2 border rounded bg-white p-2" open>
+    <summary class="fw-semibold">Direction</summary>
+    <div class="mt-2">
+      <label class="form-label small text-muted mb-1">Planning purpose</label>
+      <textarea class="form-control mb-2" name="route_planning_purpose" rows="3">{{ s.route_fields.planning_purpose }}</textarea>
+      <label class="form-label small text-muted mb-1">Planning constraints</label>
+      <textarea class="form-control mb-2" name="route_planning_constraints" rows="3">{{ s.route_fields.planning_constraints }}</textarea>
+      <label class="form-label small text-muted mb-1">Assumptions</label>
+      <textarea class="form-control" name="route_assumptions" rows="3">{{ s.route_fields.assumptions }}</textarea>
+    </div>
+  </details>
+
+  <details class="mt-2 border rounded bg-white p-2">
+    <summary class="fw-semibold">Alignment</summary>
+    <div class="mt-2">
+      <label class="form-label small text-muted mb-1">CKO alignment: stage 1 inputs match</label>
+      <textarea class="form-control mb-2" name="route_cko_stage1" rows="2">{{ s.route_fields.cko_alignment_stage1_inputs_match }}</textarea>
+      <label class="form-label small text-muted mb-1">CKO alignment: final outputs match</label>
+      <textarea class="form-control" name="route_cko_final" rows="2">{{ s.route_fields.cko_alignment_final_outputs_match }}</textarea>
+    </div>
+  </details>
+
+  <details class="mt-2 border rounded bg-white p-2">
+    <summary class="fw-semibold">Stages</summary>
+    <div class="mt-2">
+      {% if s.route_stages %}
+        {% for st in s.route_stages %}
+          <div class="border rounded p-2 mt-2 bg-light-subtle">
+            <input type="hidden" name="route_stage_number" value="{{ st.stage_number }}">
+            <input type="hidden" name="route_stage_{{ forloop.counter }}_stage_id" value="{{ st.stage_id }}">
+            <div class="small fw-semibold mb-2">Stage {{ st.stage_number }}{% if st.stage_id %} ({{ st.stage_id }}){% endif %}: {{ st.title }}</div>
+            <div class="row g-2">
+              <div class="col-12 col-md-4">
+                <label class="form-label small text-muted">Status</label>
+                <input class="form-control" name="route_stage_{{ forloop.counter }}_status" value="{{ st.status }}">
+              </div>
+              <div class="col-12 col-md-8">
+                <label class="form-label small text-muted">Title</label>
+                <input class="form-control" name="route_stage_{{ forloop.counter }}_title" value="{{ st.title }}">
+              </div>
+              <div class="col-12">
+                <label class="form-label small text-muted">Purpose</label>
+                <textarea class="form-control" name="route_stage_{{ forloop.counter }}_purpose" rows="2">{{ st.purpose }}</textarea>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small text-muted">Inputs</label>
+                <textarea class="form-control" name="route_stage_{{ forloop.counter }}_inputs" rows="2">{{ st.inputs }}</textarea>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small text-muted">Outputs</label>
+                <textarea class="form-control" name="route_stage_{{ forloop.counter }}_outputs" rows="2">{{ st.outputs }}</textarea>
+              </div>
+              <div class="col-12">
+                <label class="form-label small text-muted">Stage process</label>
+                <textarea class="form-control" name="route_stage_{{ forloop.counter }}_stage_process" rows="2">{{ st.stage_process }}</textarea>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small text-muted">Assumptions</label>
+                <textarea class="form-control" name="route_stage_{{ forloop.counter }}_assumptions" rows="2">{{ st.assumptions }}</textarea>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small text-muted">Duration estimate</label>
+                <textarea class="form-control" name="route_stage_{{ forloop.counter }}_duration_estimate" rows="2">{{ st.duration_estimate }}</textarea>
+              </div>
+              <div class="col-12">
+                <label class="form-label small text-muted">Risks / notes</label>
+                <textarea class="form-control" name="route_stage_{{ forloop.counter }}_risks_notes" rows="2">{{ st.risks_notes }}</textarea>
+              </div>
+            </div>
+            <div class="mt-2 d-flex gap-2">
+              {% if st.stage_chat_id %}
+                <a class="btn btn-sm btn-outline-primary"
+                   href="?review_chat_id={{ st.stage_chat_id }}&review_chat_open=1#review-{{ s.marker|lower }}">
+                  Open stage review
+                </a>
+              {% else %}
+                <button class="btn btn-sm btn-outline-primary"
+                        type="button"
+                        data-open-stage-review="1"
+                        data-action-url="{% url 'projects:project_review_stage_chat_open' project.id %}"
+                        data-marker="ROUTE"
+                        data-stage-number="{{ st.stage_number }}"
+                        data-stage-id="{{ st.stage_id|default:'' }}"
+                        data-chat-container-id="rw-stage-chat-container-ROUTE-{{ st.stage_number }}">
+                  Open stage review
+                </button>
+              {% endif %}
+            </div>
+            <div id="rw-stage-chat-container-ROUTE-{{ st.stage_number }}">
+              {% include "projects/review_inline_chat.html" with chat_ctx=st.stage_chat_ctx %}
+            </div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="text-muted small">No stages yet.</div>
+      {% endif %}
+    </div>
+  </details>
+
+  <div class="mt-2">
+    <button type="button" class="btn btn-sm btn-outline-secondary"
+            onclick="var d=document.getElementById('rw-route-editor-{{ s.marker }}'); if(d){d.open=false;}">
+      Exit
+    </button>
+  </div>
+</form>

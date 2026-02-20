@@ -19,6 +19,7 @@
                 <div class="small text-secondary">Draft -> validate -> lock -> commit (DEFINED).</div>
               </div>
             </div>
+            <div id="pde-inline-status" class="small text-secondary mt-2 d-none"></div>
 
             <hr class="my-3" />
 
@@ -31,7 +32,23 @@
 
               <form method="post" class="m-0">
                 {% csrf_token %}
-                <input type="hidden" name="action" value="draft" />
+
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                  <label class="small text-secondary mb-0" for="pde-seed-style">Seed style</label>
+                  <select id="pde-seed-style" class="form-select form-select-sm" name="seed_style" style="min-width: 9rem;">
+                    <option value="concise" {% if seed_style == "concise" %}selected{% endif %}>Concise</option>
+                    <option value="balanced" {% if seed_style == "balanced" %}selected{% endif %}>Balanced</option>
+                    <option value="detailed" {% if seed_style == "detailed" %}selected{% endif %}>Detailed</option>
+                  </select>
+                  <input type="text" class="form-control form-control-sm" name="seed_constraints"
+                         value="{{ seed_constraints }}" placeholder="Extra constraints"
+                         style="min-width: 14rem;">
+                  <label class="form-check-label small text-secondary d-flex align-items-center gap-1 mb-0">
+                    <input class="form-check-input mt-0" type="checkbox" name="make_default" value="1">
+                    Make default
+                  </label>
+                  <button class="btn btn-sm btn-outline-secondary" type="submit" name="action" value="apply_seed_controls">Apply</button>
+                </div>
 
                 <textarea class="form-control"
                           name="seed_text"
@@ -42,7 +59,7 @@
                 <div class="d-flex align-items-center justify-content-between mt-2">
                   <div class="small text-secondary">Tip: keep it concrete. One or two paragraphs is enough.</div>
                   {% if pde_can_commit %}
-                    <button class="btn btn-sm btn-outline-primary" type="submit">Draft PDE from Seed</button>
+                    <button class="btn btn-sm btn-outline-primary" type="submit" name="action" value="draft">Draft PDE from Seed</button>
                   {% endif %}
                 </div>
               </form>
@@ -74,7 +91,7 @@
                       <div class="small text-muted mt-1">
                         {{ spec.tier }}{% if spec.required %} — required{% endif %}
                         {% if spec.status %}
-                          — <span class="fw-semibold">
+                          — <span class="fw-semibold rw-pde-status">
                             {% if spec.status == "PROPOSED" %}
                               PROPOSED{% if spec.proposed_by %} ({{ spec.proposed_by }}){% endif %}
                             {% elif spec.status == "PASS_LOCKED" %}
@@ -87,13 +104,13 @@
                       </div>
                     </div>
 
-                    <div class="text-end">
+                    <div class="text-end rw-pde-badge">
                       {% if spec.status == "PASS_LOCKED" %}
-                        <span class="badge bg-success">Locked</span>
+                        <span class="badge bg-success" data-pde-field-status-badge="1">Locked</span>
                       {% elif spec.status == "PROPOSED" %}
-                        <span class="badge bg-warning text-dark">Proposed</span>
+                        <span class="badge bg-warning text-dark" data-pde-field-status-badge="1">Proposed</span>
                       {% else %}
-                        <span class="badge bg-secondary">Draft</span>
+                        <span class="badge bg-secondary" data-pde-field-status-badge="1">Draft</span>
                       {% endif %}
                     </div>
                   </div>
@@ -106,21 +123,71 @@
                   {% endif %}
 
                   <div class="mt-2">
-                    <textarea class="form-control"
+                    {% if spec.key == "identity.project_type" %}
+                      <select class="form-select"
                               id="{{ ta_id }}"
                               name="{{ spec.key }}"
-                              rows="4"
                               style="font-size:0.9rem;"
-                              {% if spec.status == "PASS_LOCKED" or spec.status == "PROPOSED" and not pde_can_commit %}readonly{% endif %}>{{ spec.value_text }}</textarea>
+                              {% if spec.status == "PASS_LOCKED" or spec.status == "PROPOSED" and not pde_can_commit %}disabled{% endif %}>
+                        {% with v=spec.value_text|default:'' %}
+                          <option value="" {% if not v %}selected{% endif %}>Select project type</option>
+                          <option value="META" {% if v == "META" %}selected{% endif %}>META</option>
+                          <option value="KNOWLEDGE" {% if v == "KNOWLEDGE" %}selected{% endif %}>KNOWLEDGE</option>
+                          <option value="DELIVERY" {% if v == "DELIVERY" %}selected{% endif %}>DELIVERY</option>
+                          <option value="RESEARCH" {% if v == "RESEARCH" %}selected{% endif %}>RESEARCH</option>
+                          <option value="OPERATIONS" {% if v == "OPERATIONS" %}selected{% endif %}>OPERATIONS</option>
+                          {% if v and v != "META" and v != "KNOWLEDGE" and v != "DELIVERY" and v != "RESEARCH" and v != "OPERATIONS" %}
+                            <option value="{{ v }}" selected>{{ v }}</option>
+                          {% endif %}
+                        {% endwith %}
+                      </select>
+                    {% elif spec.key == "identity.project_status" %}
+                      <select class="form-select"
+                              id="{{ ta_id }}"
+                              name="{{ spec.key }}"
+                              style="font-size:0.9rem;"
+                              {% if spec.status == "PASS_LOCKED" or spec.status == "PROPOSED" and not pde_can_commit %}disabled{% endif %}>
+                        {% with v=spec.value_text|default:'' %}
+                          <option value="" {% if not v %}selected{% endif %}>Select project status</option>
+                          <option value="ACTIVE" {% if v == "ACTIVE" %}selected{% endif %}>ACTIVE</option>
+                          <option value="PAUSED" {% if v == "PAUSED" %}selected{% endif %}>PAUSED</option>
+                          <option value="ARCHIVED" {% if v == "ARCHIVED" %}selected{% endif %}>ARCHIVED</option>
+                          {% if v and v != "ACTIVE" and v != "PAUSED" and v != "ARCHIVED" %}
+                            <option value="{{ v }}" selected>{{ v }}</option>
+                          {% endif %}
+                        {% endwith %}
+                      </select>
+                    {% elif spec.key == "storage.artefact_root_ref" %}
+                      <input class="form-control"
+                             id="{{ ta_id }}"
+                             name="{{ spec.key }}"
+                             type="text"
+                             style="font-size:0.9rem;"
+                             value="{{ spec.value_text|default:'' }}"
+                             placeholder="SYSTEM or folder path (e.g. C:\\Projects\\X or /projects/x)"
+                             {% if spec.status == "PASS_LOCKED" or spec.status == "PROPOSED" and not pde_can_commit %}readonly{% endif %} />
+                      <div class="small text-secondary mt-1">Use <code>SYSTEM</code> to use the default storage root.</div>
+                    {% else %}
+                      <textarea class="form-control"
+                                id="{{ ta_id }}"
+                                name="{{ spec.key }}"
+                                rows="4"
+                                style="font-size:0.9rem;"
+                                {% if spec.status == "PASS_LOCKED" or spec.status == "PROPOSED" and not pde_can_commit %}readonly{% endif %}>{{ spec.value_text }}</textarea>
+                    {% endif %}
                   </div>
 
-                  <div class="d-flex gap-2 mt-2">
+                  <div class="d-flex gap-2 mt-2" id="pde-btns-{{ spec.key }}">
                     {% if spec.status == "DRAFT" %}
                       <button class="btn btn-sm btn-outline-primary rw-field-action"
                               type="button"
                               data-action="propose_lock"
                               data-field-key="{{ spec.key }}">
-                        {% if pde_can_commit %}Validate &amp; Lock{% else %}Propose Lock{% endif %}
+                        {% if pde_can_commit %}
+                          {% if spec.key == "identity.project_type" or spec.key == "identity.project_status" or spec.key == "storage.artefact_root_ref" %}Lock{% else %}Validate &amp; Lock{% endif %}
+                        {% else %}
+                          Propose Lock
+                        {% endif %}
                       </button>
                     {% endif %}
 
@@ -129,7 +196,7 @@
                               type="button"
                               data-action="approve_lock"
                               data-field-key="{{ spec.key }}">
-                        Approve Lock
+                        {% if spec.key == "identity.project_type" or spec.key == "identity.project_status" or spec.key == "storage.artefact_root_ref" %}Lock{% else %}Approve Lock{% endif %}
                       </button>
                     {% endif %}
 
@@ -151,11 +218,22 @@
                       </button>
                     {% endif %}
 
-                    {% if spec.status != "PASS_LOCKED" %}
+                    {% if spec.status != "PASS_LOCKED" and pde_can_commit and spec.key != "identity.project_type" and spec.key != "identity.project_status" and spec.key != "storage.artefact_root_ref" %}
+                      <button class="btn btn-sm btn-outline-secondary rw-override-lock-btn"
+                              type="button"
+                              data-field-key="{{ spec.key }}">
+                        Override Lock
+                      </button>
+                    {% endif %}
+
+                        {% if spec.status != "PASS_LOCKED" %}
                       {% if spec.status != "PROPOSED" or pde_can_commit %}
                         {% if spec.topic_chat_id %}
-                          <a class="btn btn-sm btn-outline-primary"
-                             href="?pde_chat_id={{ spec.topic_chat_id }}&pde_chat_open=1#pde-field-{{ spec.key }}">Open topic chat</a>
+                          <button class="btn btn-sm btn-outline-primary rw-open-topic-chat-btn"
+                                  type="button"
+                                  data-chat-id="{{ spec.topic_chat_id }}">
+                            Open topic chat
+                          </button>
                         {% else %}
                           <button class="btn btn-sm btn-outline-primary rw-topic-chat-btn"
                                   type="button"
@@ -168,55 +246,59 @@
                   </div>
 
                   <!-- Validation output -->
-                  {% if spec.last_validation and show_validation_key and show_validation_key == spec.key %}
-                    {% if spec.last_validation.issues %}
-                      <div class="mt-2 text-danger small">
-                        <div class="fw-semibold">Issues</div>
-                        <ul class="mb-0">
-                          {% for it in spec.last_validation.issues %}
-                            <li>{{ it }}</li>
-                          {% endfor %}
-                        </ul>
-                      </div>
+                  <div id="pde-validation-{{ spec.key }}">
+                    {% if spec.last_validation and show_validation_key and show_validation_key == spec.key or spec.last_validation and spec.last_validation.verdict != "PASS" %}
+                      {% if spec.last_validation.issues %}
+                        <div class="mt-2 text-danger small">
+                          <div class="fw-semibold">Issues</div>
+                          <ul class="mb-0">
+                            {% for it in spec.last_validation.issues %}
+                              <li>{{ it }}</li>
+                            {% endfor %}
+                          </ul>
+                        </div>
+                      {% endif %}
+
+                      {% if spec.last_validation.questions %}
+                        <div class="mt-2 small">
+                          <div class="fw-semibold">Questions</div>
+                          <ul class="mb-0">
+                            {% for q in spec.last_validation.questions %}
+                              <li>{{ q }}</li>
+                            {% endfor %}
+                          </ul>
+                        </div>
+                      {% endif %}
+
+                      {% if spec.last_validation.suggested_revision %}
+                        <div class="rw-cde-suggestion mt-2">
+                          <div class="fw-semibold mb-1">Suggested revision</div>
+
+                          <div class="rw-cde-suggest-text" style="white-space:pre-wrap;">{{ spec.last_validation.suggested_revision|default:"" }}</div>
+
+                          {% if spec.status != "PASS_LOCKED" %}
+                            {% with suggest_id="pde-suggest-"|add:idx %}
+                              <textarea id="{{ suggest_id }}" class="d-none" aria-hidden="true">{{ spec.last_validation.suggested_revision|default:"" }}</textarea>
+
+                              <div class="rw-suggest-actions mt-2">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-primary rw-suggest-btn"
+                                        data-target="{{ ta_id }}"
+                                        data-suggest-id="{{ suggest_id }}">
+                                  <div class="rw-suggest-title">Use suggested text</div>
+                                  <div class="rw-suggest-sub">(fills box only)</div>
+                                </button>
+                              </div>
+                            {% endwith %}
+                          {% endif %}
+                        </div>
+                      {% endif %}
                     {% endif %}
+                  </div>
 
-                    {% if spec.last_validation.questions %}
-                      <div class="mt-2 small">
-                        <div class="fw-semibold">Questions</div>
-                        <ul class="mb-0">
-                          {% for q in spec.last_validation.questions %}
-                            <li>{{ q }}</li>
-                          {% endfor %}
-                        </ul>
-                      </div>
-                    {% endif %}
-
-                    {% if spec.last_validation.suggested_revision %}
-                      <div class="rw-cde-suggestion mt-2">
-                        <div class="fw-semibold mb-1">Suggested revision</div>
-
-                        <div class="rw-cde-suggest-text" style="white-space:pre-wrap;">{{ spec.last_validation.suggested_revision|default:"" }}</div>
-
-                        {% if spec.status != "PASS_LOCKED" %}
-                          {% with suggest_id="pde-suggest-"|add:idx %}
-                            <textarea id="{{ suggest_id }}" class="d-none" aria-hidden="true">{{ spec.last_validation.suggested_revision|default:"" }}</textarea>
-
-                            <div class="rw-suggest-actions mt-2">
-                              <button type="button"
-                                      class="btn btn-sm btn-outline-primary rw-suggest-btn"
-                                      data-target="{{ ta_id }}"
-                                      data-suggest-id="{{ suggest_id }}">
-                                <div class="rw-suggest-title">Use suggested text</div>
-                                <div class="rw-suggest-sub">(fills box only)</div>
-                              </button>
-                            </div>
-                          {% endwith %}
-                        {% endif %}
-                      </div>
-                    {% endif %}
-                  {% endif %}
-
-                  {% include "projects/ppde_inline_chat.html" with chat_ctx=spec.topic_chat_ctx %}
+                  <div id="pde-topic-chat-container-{{ spec.key }}">
+                    {% include "projects/ppde_inline_chat.html" with chat_ctx=spec.topic_chat_ctx %}
+                  </div>
 
                   <hr class="mt-3" />
                 </div>
@@ -241,16 +323,302 @@
 
 <script>
 (function () {
+  var pdeCanCommit = {% if pde_can_commit %}true{% else %}false{% endif %};
+
+  function updateNavDotLocked(fieldKey) {
+    var dot = document.querySelector('[data-pde-nav-dot="' + fieldKey + '"]');
+    if (!dot) return;
+    dot.style.background = "#198754";
+  }
+
+  function refreshTopStatusBadge() {
+    var badge = document.getElementById("rwPdeStatusBadge");
+    var topActions = document.getElementById("rwPdeTopActions");
+    if (!badge) return;
+
+    var badges = document.querySelectorAll("#pdeFieldsForm [data-pde-field-status-badge='1']");
+    if (!badges.length) return;
+
+    var lockedCount = 0;
+    var proposedCount = 0;
+    var totalCount = 0;
+    badges.forEach(function (el) {
+      var txt = (el.textContent || "").toUpperCase().trim();
+      if (!txt) return;
+      totalCount += 1;
+      if (txt.indexOf("LOCKED") === 0) {
+        lockedCount += 1;
+        return;
+      }
+      if (txt.indexOf("PROPOSED") === 0) {
+        proposedCount += 1;
+      }
+    });
+    if (!totalCount) return;
+
+    function renderTopActions(mode) {
+      if (!topActions) return;
+      var uiReturn = topActions.getAttribute("data-ui-return") || "";
+      var csrf = getCsrfToken();
+      if (mode === "commit") {
+        if (pdeCanCommit) {
+          topActions.innerHTML = '<form method="post" class="m-0 d-inline">'
+            + '<input type="hidden" name="csrfmiddlewaretoken" value="' + csrf + '"/>'
+            + '<input type="hidden" name="action" value="commit" />'
+            + '<button class="btn btn-sm btn-success rw-topbar-btn rw-btn-xs" type="submit">Commit</button>'
+            + '</form>'
+            + '<a class="btn btn-sm btn-secondary rw-topbar-btn rw-btn-xs" href="' + uiReturn + '">Exit PDE</a>';
+        } else {
+          topActions.innerHTML = '<div class="small text-danger">Only the Project Committer can commit this project.</div>'
+            + '<button class="btn btn-sm btn-success rw-topbar-btn rw-btn-xs" type="button" disabled>Commit</button>'
+            + '<a class="btn btn-sm btn-secondary rw-topbar-btn rw-btn-xs" href="' + uiReturn + '">Exit PDE</a>';
+        }
+        return;
+      }
+      topActions.innerHTML = '<form method="post" class="m-0 d-inline">'
+        + '<input type="hidden" name="csrfmiddlewaretoken" value="' + csrf + '"/>'
+        + '<input type="hidden" name="action" value="save_exit" />'
+        + '<button class="btn btn-sm btn-secondary rw-topbar-btn rw-btn-xs" type="submit">Save draft</button>'
+        + '</form>'
+        + '<button class="btn btn-sm rw-pde-validate-btn rw-topbar-btn rw-btn-xs" style="background-color:transparent; border-color:#3b82f6; color:#3b82f6;" type="button">Validate and Lock</button>';
+    }
+
+    badge.className = "badge";
+    if (proposedCount > 0) {
+      badge.classList.add("bg-warning", "text-dark");
+      badge.textContent = "Proposed";
+      badge.title = "Proposed";
+      renderTopActions("draft");
+      return;
+    }
+    if (lockedCount === totalCount) {
+      badge.classList.add("bg-success");
+      badge.textContent = "Ready to Commit";
+      badge.title = "Ready to Commit";
+      renderTopActions("commit");
+      return;
+    }
+    if (lockedCount > 0) {
+      badge.classList.add("bg-warning", "text-dark");
+      badge.textContent = "Partially Locked";
+      badge.title = "Partially Locked";
+      renderTopActions("draft");
+      return;
+    }
+    badge.classList.add("bg-secondary");
+    badge.textContent = "Draft";
+    badge.title = "Draft";
+    renderTopActions("draft");
+  }
+
+  function getCsrfToken() {
+    var csrfEl = document.querySelector('#pdeFieldsForm [name=csrfmiddlewaretoken]');
+    return csrfEl ? (csrfEl.value || "") : "";
+  }
+
+  function escapeHtml(s) {
+    return String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function renderValidationFeedback(fieldKey, issues, suggested) {
+    var host = document.getElementById("pde-validation-" + fieldKey);
+    if (!host) return;
+    var html = "";
+    var safeIssues = Array.isArray(issues) ? issues : [];
+    if (safeIssues.length) {
+      html += '<div class="mt-2 text-danger small"><div class="fw-semibold">Issues</div><ul class="mb-0">';
+      safeIssues.forEach(function (it) {
+        html += "<li>" + escapeHtml(it) + "</li>";
+      });
+      html += "</ul></div>";
+    }
+    var txt = String(suggested || "").trim();
+    if (txt) {
+      var ta = document.querySelector('textarea[name="' + fieldKey + '"]');
+      var targetId = ta ? (ta.getAttribute("id") || "") : "";
+      var sid = "pde-suggest-inline-" + fieldKey.replace(/[^A-Za-z0-9_-]/g, "-");
+      html += '<div class="rw-cde-suggestion mt-2">';
+      html += '<div class="fw-semibold mb-1">Suggested revision</div>';
+      html += '<div class="rw-cde-suggest-text" style="white-space:pre-wrap;">' + escapeHtml(txt) + "</div>";
+      if (targetId) {
+        html += '<textarea id="' + sid + '" class="d-none" aria-hidden="true">' + escapeHtml(txt) + "</textarea>";
+        html += '<div class="rw-suggest-actions mt-2">';
+        html += '<button type="button" class="btn btn-sm btn-outline-primary rw-suggest-btn" data-target="' + escapeHtml(targetId) + '" data-suggest-id="' + escapeHtml(sid) + '">';
+        html += '<div class="rw-suggest-title">Use suggested text</div><div class="rw-suggest-sub">(fills box only)</div></button></div>';
+      }
+      html += "</div>";
+    }
+    host.innerHTML = html;
+  }
+
+  function parseBlockedFieldKey(message) {
+    var m = String(message || "").match(/Blocked at:\s*([A-Za-z0-9_.-]+)/i);
+    return m && m[1] ? m[1] : "";
+  }
+
+  function setInlineStatus(message, kind) {
+    var el = document.getElementById("pde-inline-status");
+    if (!el) return;
+    var k = String(kind || "secondary").toLowerCase();
+    var cls = "text-secondary";
+    if (k === "danger") cls = "text-danger";
+    if (k === "success") cls = "text-success";
+    if (k === "warning") cls = "text-warning";
+    var txt = String(message || "").trim();
+    el.className = "small mt-2 " + cls;
+    if (!txt) {
+      el.textContent = "";
+      el.classList.add("d-none");
+      return;
+    }
+    el.textContent = txt;
+    el.classList.remove("d-none");
+  }
+
+  function setFieldUiState(fieldKey, status, actorName) {
+    var block = document.getElementById('pde-field-' + fieldKey);
+    if (!block) return;
+    var badgeDiv = block.querySelector('.rw-pde-badge');
+    var statusSpan = block.querySelector('.rw-pde-status');
+    var btnsDiv = document.getElementById('pde-btns-' + fieldKey);
+    var taList = document.getElementsByName(fieldKey);
+    var ta = (taList && taList.length) ? taList[0] : null;
+    var isSelect = !!(ta && ta.tagName && ta.tagName.toLowerCase() === "select");
+    var isDirectLockField = (fieldKey === "identity.project_type" || fieldKey === "identity.project_status" || fieldKey === "storage.artefact_root_ref");
+
+    if (status === "PASS_LOCKED") {
+      if (badgeDiv) badgeDiv.innerHTML = '<span class="badge bg-success" data-pde-field-status-badge="1">Locked</span>';
+      if (statusSpan) statusSpan.textContent = 'LOCKED' + (actorName ? ' (' + actorName + ')' : '');
+      if (ta) {
+        if (isSelect) ta.setAttribute('disabled', '');
+        else ta.setAttribute('readonly', '');
+      }
+      if (btnsDiv) {
+        btnsDiv.innerHTML = pdeCanCommit
+          ? '<button class="btn btn-sm btn-outline-secondary rw-field-action" type="button" data-action="reopen_field" data-field-key="' + fieldKey + '">Reopen</button>'
+          : '';
+      }
+      updateNavDotLocked(fieldKey);
+    } else if (status === "PROPOSED") {
+      if (badgeDiv) badgeDiv.innerHTML = '<span class="badge bg-warning text-dark" data-pde-field-status-badge="1">Proposed</span>';
+      if (statusSpan) statusSpan.textContent = 'PROPOSED' + (actorName ? ' (' + actorName + ')' : '');
+      if (ta && !pdeCanCommit) {
+        if (isSelect) ta.setAttribute('disabled', '');
+        else ta.setAttribute('readonly', '');
+      }
+      if (btnsDiv) {
+        if (pdeCanCommit) {
+          var approveLabel = isDirectLockField ? "Lock" : "Approve Lock";
+          var proposedButtons =
+            '<button class="btn btn-sm btn-success rw-field-action" type="button" data-action="approve_lock" data-field-key="' + fieldKey + '">' + approveLabel + '</button>' +
+            '<button class="btn btn-sm btn-outline-secondary rw-field-action" type="button" data-action="reopen_field" data-field-key="' + fieldKey + '">Reopen</button>';
+          if (!isDirectLockField) {
+            proposedButtons += '<button class="btn btn-sm btn-outline-secondary rw-override-lock-btn" type="button" data-field-key="' + fieldKey + '">Override Lock</button>';
+          }
+          btnsDiv.innerHTML = proposedButtons;
+        } else {
+          btnsDiv.innerHTML = '';
+        }
+      }
+    } else {
+      if (badgeDiv) badgeDiv.innerHTML = '<span class="badge bg-secondary" data-pde-field-status-badge="1">Draft</span>';
+      if (statusSpan) statusSpan.textContent = 'DRAFT';
+      if (ta) {
+        ta.removeAttribute('readonly');
+        ta.removeAttribute('disabled');
+      }
+      if (btnsDiv) {
+        var lockLabel = pdeCanCommit ? (isDirectLockField ? 'Lock' : 'Validate &amp; Lock') : 'Propose Lock';
+        var base = '<button class="btn btn-sm btn-outline-primary rw-field-action" type="button" data-action="propose_lock" data-field-key="' + fieldKey + '">' + lockLabel + '</button>';
+        if (pdeCanCommit && !isDirectLockField) {
+          base += '<button class="btn btn-sm btn-outline-secondary rw-override-lock-btn" type="button" data-field-key="' + fieldKey + '">Override Lock</button>';
+        }
+        btnsDiv.innerHTML = base;
+      }
+    }
+    refreshTopStatusBadge();
+  }
+
   document.addEventListener('click', function (ev) {
+    var openExistingBtn = ev.target && ev.target.closest ? ev.target.closest(".rw-open-topic-chat-btn") : null;
+    if (openExistingBtn) {
+      var chatId = openExistingBtn.getAttribute("data-chat-id") || "";
+      if (!chatId) return;
+      var drawer = document.querySelector("details[data-pde-topic-chat-id='" + chatId + "']");
+      if (drawer) {
+        drawer.open = true;
+      }
+      var params = new URLSearchParams(window.location.search || "");
+      params.set("pde_chat_id", chatId);
+      params.set("pde_chat_open", "1");
+      history.replaceState({}, "", window.location.pathname + "?" + params.toString());
+      return;
+    }
+
     var topicBtn = ev.target && ev.target.closest ? ev.target.closest(".rw-topic-chat-btn") : null;
     if (topicBtn) {
+      ev.preventDefault();
       var specKey = topicBtn.getAttribute("data-spec-key") || "";
       var form = document.getElementById("pdeTopicChatForm");
       var input = document.getElementById("pdeTopicChatSpecKey");
-      if (form && input && specKey) {
-        input.value = specKey;
-        form.submit();
-      }
+      if (!form || !input || !specKey) return;
+      input.value = specKey;
+
+      var actionUrl = form.getAttribute("action") || window.location.pathname;
+      var fd = new FormData(form);
+      var body = new URLSearchParams();
+      fd.forEach(function (v, k) { body.append(k, String(v || "")); });
+      topicBtn.disabled = true;
+      var oldText = topicBtn.textContent;
+      topicBtn.textContent = "Opening...";
+      fetch(actionUrl, {
+        method: "POST",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: body.toString()
+      })
+      .then(function (r) {
+        var ct = (r.headers.get("content-type") || "").toLowerCase();
+        if (ct.indexOf("application/json") !== -1) return r.json();
+        return null;
+      })
+      .then(function (data) {
+        if (!data || !data.ok) {
+          if (form) form.submit();
+          return;
+        }
+        var container = document.getElementById("pde-topic-chat-container-" + specKey);
+        if (container && data.drawer_html) {
+          container.innerHTML = data.drawer_html;
+          var drawer = container.querySelector("details[data-pde-topic-chat-id]");
+          if (drawer) drawer.open = true;
+        }
+        topicBtn.classList.remove("rw-topic-chat-btn");
+        topicBtn.classList.add("rw-open-topic-chat-btn");
+        topicBtn.setAttribute("data-chat-id", String(data.chat_id || ""));
+        topicBtn.removeAttribute("data-spec-key");
+        topicBtn.textContent = "Open topic chat";
+        var params = new URLSearchParams(window.location.search || "");
+        params.set("pde_chat_id", String(data.chat_id || ""));
+        params.set("pde_chat_open", "1");
+        history.replaceState({}, "", window.location.pathname + "?" + params.toString());
+      })
+      .catch(function () {
+        if (form) form.submit();
+      })
+      .finally(function () {
+        topicBtn.disabled = false;
+        if (topicBtn.classList.contains("rw-topic-chat-btn")) {
+          topicBtn.textContent = oldText;
+        }
+      });
       return;
     }
     var btn = ev.target.closest('.rw-suggest-btn');
@@ -265,50 +633,183 @@
     var suggestEl = document.getElementById(suggestId);
 
     if (!ta || !suggestEl) return;
-    if (ta.hasAttribute('readonly')) return;
+    if (ta.hasAttribute('readonly') || ta.hasAttribute('disabled')) return;
 
     ta.value = (suggestEl.value || suggestEl.textContent || '');
     ta.focus();
   });
 
-  function submitFieldAction(action, fieldKey) {
-    var form = document.getElementById('pdeFieldsForm');
-    if (!form) return;
-    var actionEl = document.getElementById('pdeAction');
-    var keyEl = document.getElementById('pdeFieldKey');
-    var valEl = document.getElementById('pdeValueText');
-    if (actionEl) actionEl.value = action || '';
-    if (keyEl) keyEl.value = fieldKey || '';
-    if (valEl) valEl.value = '';
-
+  function submitFieldActionAjax(action, fieldKey, buttonEl) {
+    var csrf = getCsrfToken();
+    var valueText = "";
     if ((action === 'propose_lock' || action === 'approve_lock') && fieldKey) {
-      var ta = null;
-      try {
-        var list = document.getElementsByName(fieldKey);
-        if (list && list.length) ta = list[0];
-      } catch (e) {}
-      if (ta && valEl) valEl.value = ta.value || '';
+      var taList = document.getElementsByName(fieldKey);
+      var ta = (taList && taList.length) ? taList[0] : null;
+      valueText = ta ? (ta.value || "") : "";
     }
-    form.submit();
+    var body = new URLSearchParams();
+    body.append("csrfmiddlewaretoken", csrf);
+    body.append("action", action);
+    body.append("field_key", fieldKey);
+    body.append("value_text", valueText);
+    if (buttonEl) {
+      buttonEl.disabled = true;
+    }
+    return fetch(window.location.pathname, {
+      method: "POST",
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: body.toString()
+    })
+    .then(function (r) {
+      return r.json().then(function (data) { return { ok: r.ok, data: data }; });
+    })
+    .then(function (resp) {
+      var data = (resp && resp.data) || {};
+      if (!resp.ok || !data || !data.ok) {
+        var fk = String((data && data.field_key) || fieldKey || "");
+        if (fk) {
+          setFieldUiState(fk, "PROPOSED", "");
+          renderValidationFeedback(fk, data.issues || (data.message ? [data.message] : []), data.suggested_revision || "");
+          var blk = document.getElementById("pde-field-" + fk);
+          if (blk && blk.scrollIntoView) {
+            blk.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        }
+        setInlineStatus((data && data.message) || "Action failed.", "warning");
+        return;
+      }
+      var actor = data.locked_by || data.proposed_by || "";
+      setFieldUiState(fieldKey, data.status || "", actor);
+      setInlineStatus("", "secondary");
+    })
+    .catch(function () {
+      setInlineStatus("Action failed. Please retry.", "danger");
+    })
+    .finally(function () {
+      if (buttonEl) buttonEl.disabled = false;
+    });
   }
 
   document.addEventListener('click', function (ev) {
     var btn = ev.target.closest('.rw-field-action');
     if (!btn) return;
+    ev.preventDefault();
     var action = btn.getAttribute('data-action') || '';
     var fieldKey = btn.getAttribute('data-field-key') || '';
     if (!action || !fieldKey) return;
-    submitFieldAction(action, fieldKey);
+    submitFieldActionAjax(action, fieldKey, btn);
   });
 
   document.addEventListener('click', function (ev) {
     var btn = ev.target.closest('.rw-pde-validate-btn');
     if (!btn) return;
+    ev.preventDefault();
+    if (ev.stopPropagation) ev.stopPropagation();
     var form = document.getElementById('pdeFieldsForm');
     if (!form) return;
-    var actionEl = document.getElementById('pdeAction');
-    if (actionEl) actionEl.value = 'validate_lock';
-    form.submit();
+    var body = new URLSearchParams();
+    var fd = new FormData(form);
+    fd.forEach(function (v, k) {
+      body.append(k, String(v || ""));
+    });
+    body.set("action", "validate_lock");
+    btn.disabled = true;
+    fetch(window.location.pathname, {
+      method: "POST",
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: body.toString()
+    })
+    .then(function (r) {
+      var ct = (r.headers.get("content-type") || "").toLowerCase();
+      if (ct.indexOf("application/json") !== -1) {
+        return r.json().then(function (data) { return { ok: r.ok, data: data }; });
+      }
+      return { ok: false, data: null };
+    })
+    .then(function (resp) {
+      var data = (resp && resp.data) || {};
+      var lockedKeys = Array.isArray(data.locked_keys) ? data.locked_keys : [];
+      lockedKeys.forEach(function (k) {
+        setFieldUiState(String(k || ""), "PASS_LOCKED", data.locked_by || "");
+      });
+      if (resp.ok && data.ok) {
+        setInlineStatus(data.message || "Proposed fields locked.", "success");
+        refreshTopStatusBadge();
+        return;
+      }
+      var fk = String(data.field_key || parseBlockedFieldKey(data.message || ""));
+      if (fk) {
+        setFieldUiState(fk, "PROPOSED", "");
+        renderValidationFeedback(fk, data.issues || (data.message ? [data.message] : []), data.suggested_revision || "");
+        var block = document.getElementById("pde-field-" + fk);
+        if (block && block.scrollIntoView) {
+          block.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+        setInlineStatus(data.message || "Validation blocked.", "warning");
+        return;
+      }
+      setInlineStatus(data.message || "Validate and lock failed.", "danger");
+    })
+    .catch(function () {
+      setInlineStatus("Validate and lock failed. Please retry.", "danger");
+    })
+    .finally(function () {
+      btn.disabled = false;
+    });
+  });
+
+  document.addEventListener('click', function (ev) {
+    var btn = ev.target.closest('.rw-override-lock-btn');
+    if (!btn) return;
+    var fieldKey = btn.getAttribute('data-field-key') || '';
+    if (!fieldKey) return;
+
+    var ta = null;
+    try { var list = document.getElementsByName(fieldKey); if (list && list.length) ta = list[0]; } catch (e) {}
+    var valueText = ta ? (ta.value || '') : '';
+
+    var csrf = '';
+    var csrfEl = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (csrfEl) csrf = csrfEl.value;
+
+    btn.disabled = true;
+    btn.textContent = 'Locking...';
+
+    var body = new URLSearchParams();
+    body.append('csrfmiddlewaretoken', csrf);
+    body.append('action', 'override_lock');
+    body.append('field_key', fieldKey);
+    body.append('value_text', valueText);
+
+    fetch(window.location.pathname, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.ok) { btn.disabled = false; btn.textContent = 'Override Lock'; return; }
+      var lockedBy = data.locked_by || '';
+      var block = document.getElementById('pde-field-' + fieldKey);
+      if (block) {
+        var badgeDiv = block.querySelector('.rw-pde-badge');
+        if (badgeDiv) badgeDiv.innerHTML = '<span class="badge bg-success" data-pde-field-status-badge="1">Locked</span>';
+        var statusSpan = block.querySelector('.rw-pde-status');
+        if (statusSpan) statusSpan.textContent = 'LOCKED' + (lockedBy ? ' (' + lockedBy + ')' : '');
+        if (ta) ta.setAttribute('readonly', '');
+        var btnsDiv = document.getElementById('pde-btns-' + fieldKey);
+        if (btnsDiv) btnsDiv.innerHTML = '<button class="btn btn-sm btn-outline-secondary rw-field-action" type="button" data-action="reopen_field" data-field-key="' + fieldKey + '">Reopen</button>';
+      }
+      updateNavDotLocked(fieldKey);
+      refreshTopStatusBadge();
+    })
+    .catch(function () { btn.disabled = false; btn.textContent = 'Override Lock'; });
   });
 })();
 </script>
@@ -331,6 +832,35 @@
   forms.forEach(function (f) {
     f.addEventListener("submit", function () {
       sessionStorage.setItem(key, String(window.scrollY || 0));
+    });
+  });
+})();
+</script>
+
+<script>
+(function () {
+  var storageKey = "pde_details_" + "{{ project.id }}";
+  var details = document.querySelectorAll("details[data-ppde-detail-key]");
+  if (!details.length) return;
+
+  var saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(storageKey) || "{}");
+  } catch (e) {
+    saved = {};
+  }
+
+  details.forEach(function (el) {
+    var k = el.getAttribute("data-ppde-detail-key");
+    if (!k) return;
+    if (Object.prototype.hasOwnProperty.call(saved, k)) {
+      el.open = !!saved[k];
+    }
+    el.addEventListener("toggle", function () {
+      saved[k] = !!el.open;
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(saved));
+      } catch (e) {}
     });
   });
 })();

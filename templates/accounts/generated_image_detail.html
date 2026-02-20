@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Generated Image{% endblock %}
+
+{% block content %}
+<div class="rw-main rw-browse">
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <h5 class="mb-0">Generated image</h5>
+        <div class="d-flex gap-2">
+          {% if image.chat_id %}
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:chat_detail' image.chat_id %}">Back to chat</a>
+          {% endif %}
+          <a class="btn btn-sm btn-primary" href="{% url 'accounts:generated_image_download' image.id %}">Download</a>
+        </div>
+      </div>
+      <hr>
+      <div class="mb-2 small text-secondary">
+        Provider: {{ image.provider|default:"-" }} |
+        Model: {{ image.model|default:"-" }} |
+        Created: {{ image.created_at|date:"Y-m-d H:i:s" }}
+      </div>
+      <div class="mb-3">
+        <img src="{{ image.image_file.url }}" alt="Generated image {{ image.id }}" class="img-fluid border rounded">
+      </div>
+      {% if image.prompt %}
+        <div>
+          <div class="small text-secondary mb-1">Prompt</div>
+          <div class="border rounded p-2" style="white-space: pre-wrap;">{{ image.prompt }}</div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+

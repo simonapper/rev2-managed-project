@@ -1,0 +1,46 @@
+{% load rw_extras %}
+<form method="post" action="{% url 'projects:project_review_anchor_update' project.id %}" class="mt-3" data-ajax-save-form="1">
+  {% csrf_token %}
+  <input type="hidden" name="marker" value="{{ s.marker }}" />
+  <div class="border rounded bg-white p-3">
+    <div class="small text-muted">Mission view</div>
+    <label class="form-label small text-muted mb-1 mt-2">Canonical summary</label>
+    <input class="form-control form-control-sm mb-2" name="cko_canonical_summary" value="{{ s.intent_fields.canonical_summary }}">
+    <label class="form-label small text-muted mb-1">Statement</label>
+    <textarea class="form-control" rows="4" name="cko_statement">{{ s.intent_fields.statement }}</textarea>
+
+    {% with basis=s.intent_fields.supporting_basis|list_items %}
+      {% if basis %}
+        <div class="small text-muted mb-1 mt-2">Top basis points</div>
+        <ul class="mb-0">
+          {% for item in basis|slice:":3" %}
+            <li>{{ item }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+  </div>
+
+  <details class="mt-3">
+    <summary class="fw-semibold">Reference</summary>
+    <div class="mt-2">
+      <div class="small text-muted mb-1">Scope</div>
+      <textarea class="form-control mb-2" rows="3" name="cko_scope">{{ s.intent_fields.scope }}</textarea>
+
+      <div class="small text-muted mb-1">Supporting basis</div>
+      <textarea class="form-control mb-2" rows="4" name="cko_supporting_basis">{{ s.intent_fields.supporting_basis }}</textarea>
+
+      <div class="small text-muted mb-1">Assumptions</div>
+      <textarea class="form-control mb-2" rows="3" name="cko_assumptions">{{ s.intent_fields.assumptions }}</textarea>
+
+      <div class="small text-muted mb-1">Alternatives considered</div>
+      <textarea class="form-control mb-2" rows="3" name="cko_alternatives_considered">{{ s.intent_fields.alternatives_considered }}</textarea>
+
+      <div class="small text-muted mb-1">Uncertainties / limits</div>
+      <textarea class="form-control mb-2" rows="3" name="cko_uncertainties_limits">{{ s.intent_fields.uncertainties_limits }}</textarea>
+
+      <div class="small text-muted mb-1">Provenance</div>
+      <textarea class="form-control" rows="3" name="cko_provenance">{{ s.intent_fields.provenance }}</textarea>
+    </div>
+  </details>
+</form>

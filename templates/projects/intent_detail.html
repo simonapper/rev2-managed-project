@@ -1,0 +1,8 @@
+{% if intent_view_style == "cockpit" %}
+  {% include "projects/_intent_cockpit.html" %}
+{% elif intent_view_style == "mission" %}
+  {% include "projects/_intent_mission.html" %}
+{% else %}
+  {% include "projects/_intent_default.html" %}
+{% endif %}
+

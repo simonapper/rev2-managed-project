@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Policy Docs Help{% endblock %}
+
+{% block content %}
+<div class="rw-main rw-browse">
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="d-flex align-items-center justify-content-between">
+        <h5 class="mb-0">Policy documents help</h5>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:project_config_info' project.id %}">Back</a>
+      </div>
+      <hr>
+
+      <p class="small text-secondary mb-2">Use this later when you are ready to load policy docs.</p>
+
+      <h6>Expected fields</h6>
+      <ul class="small">
+        <li><strong>Title</strong>: short name for the policy.</li>
+        <li><strong>Source ref</strong>: optional provenance, version, or URL.</li>
+        <li><strong>Body text</strong>: plain text content used for keyword retrieval.</li>
+      </ul>
+
+      <h6>Recommended format</h6>
+      <ul class="small">
+        <li>Use clear section headings in plain text.</li>
+        <li>Keep dates and version info in source ref.</li>
+        <li>Use tags in boundary constraints, for example <code>UK_LAW, COMPANY_POLICY</code>.</li>
+      </ul>
+
+      <h6>LLM pre-processing</h6>
+      <p class="small mb-1">You can ask the LLM to convert raw policy files into clean text.</p>
+      <ul class="small">
+        <li>Remove tables/images that do not matter for retrieval.</li>
+        <li>Keep obligations, thresholds, exceptions, and deadlines.</li>
+        <li>Paste the final cleaned text into Body text.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
