@@ -200,7 +200,7 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # MEDIA (User-generated files)
 # ============================================================
 
-MEDIA_ROOT = BASE_DIR.parent / "media"
+MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", str(BASE_DIR / "media")))
 MEDIA_URL = "/media/"
 # --------------------------------------------------
 # Default primary key field type

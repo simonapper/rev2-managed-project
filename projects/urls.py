@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.conf.urls.static import static
-from django.urls import path
+from django.urls import path, re_path
 from projects import views
 from projects import views_project
 from projects import views_pde_ui
@@ -34,6 +34,13 @@ urlpatterns = [
     path("<int:project_id>/review/", views_review.project_review, name="project_review"),
     path("<int:project_id>/planning-mode/", views_project.set_planning_mode, name="set_planning_mode"),
     path("<int:project_id>/policy-docs/help/", views_project.policy_docs_help, name="policy_docs_help"),
+    path("<int:project_id>/documents/<int:doc_id>/download/", views_project.project_document_download, name="project_document_download"),
+    path("<int:project_id>/documents/<int:doc_id>/edit/", views_project.project_document_collabora_edit, name="project_document_collabora_edit"),
+    path("wopi/files/<int:doc_id>/", views_project.wopi_check_file_info, name="wopi_check_file_info"),
+    path("wopi/files/<int:doc_id>/contents", views_project.wopi_file_contents, name="wopi_file_contents"),
+    path("wopi/files/<int:doc_id>/contents/", views_project.wopi_file_contents, name="wopi_file_contents_slash"),
+    re_path(r"^wopi/files/(?P<doc_id>\d+)//contents$", views_project.wopi_file_contents, name="wopi_file_contents_double_slash"),
+    re_path(r"^wopi/files/(?P<doc_id>\d+)//contents/$", views_project.wopi_file_contents, name="wopi_file_contents_double_slash_slash"),
     path("<int:project_id>/review/open-chat/", views_review.project_review_chat_open, name="project_review_chat_open"),
     path("<int:project_id>/review/seed-intent/", views_review.project_review_intent_seed, name="project_review_intent_seed"),
     path("<int:project_id>/review/seed-route/", views_review.project_review_route_seed_from_intent, name="project_review_route_seed_from_intent"),

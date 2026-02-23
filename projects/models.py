@@ -148,6 +148,41 @@ class PolicyDocument(models.Model):
         return f"{self.project_id}:{self.title}"
 
 
+def project_document_upload_to(instance: "ProjectDocument", filename: str) -> str:
+    base = str(filename or "document.bin")
+    return f"projects/{instance.project_id}/documents/{base}"
+
+
+class ProjectDocument(models.Model):
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="project_documents",
+    )
+    title = models.CharField(max_length=200, blank=True, default="")
+    original_name = models.CharField(max_length=255, blank=True, default="")
+    file = models.FileField(upload_to=project_document_upload_to)
+    content_type = models.CharField(max_length=120, blank=True, default="")
+    size_bytes = models.BigIntegerField(default=0)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="uploaded_project_documents",
+    )
+    wopi_lock = models.CharField(max_length=255, blank=True, default="")
+    wopi_lock_updated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "updated_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.id}:{self.original_name or self.title}"
+
+
 class ProjectPolicy(models.Model):
     """
     Project-wide constraints / defaults ("rails").

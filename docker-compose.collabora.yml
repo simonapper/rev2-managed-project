@@ -1,0 +1,13 @@
+services:
+  collabora:
+    image: collabora/code:latest
+    container_name: rw-collabora
+    restart: unless-stopped
+    ports:
+      - "9980:9980"
+    environment:
+      - domain=localhost|127\\.0\\.0\\.1|192\\.168\\.1\\.101
+      - username=rw_admin
+      - password=EXAMS-walk-out
+      - extra_params=--o:ssl.enable=false --o:ssl.termination=false
+      - dictionaries=en_GB

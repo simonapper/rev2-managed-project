@@ -248,6 +248,87 @@
         <hr class="my-3" />
 
         <details class="rw-drawer">
+          <summary class="fw-semibold">Project files</summary>
+          <div class="pt-2">
+            <div class="small text-secondary mb-2">Upload and edit project documents in Collabora Online.</div>
+            <form method="post" class="row g-2 mb-3">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="project_doc_create_blank">
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1">New file type</label>
+                <select name="project_doc_kind" class="form-select form-select-sm" required>
+                  <option value="document">Document (.odt)</option>
+                  <option value="spreadsheet">Spreadsheet (.ods)</option>
+                  <option value="presentation">Presentation (.odp)</option>
+                </select>
+              </div>
+              <div class="col-12 col-md-5">
+                <label class="form-label small mb-1">Title</label>
+                <input type="text" name="project_doc_title" class="form-control form-control-sm" placeholder="Optional">
+              </div>
+              <div class="col-12 col-md-3 d-flex align-items-end">
+                <button type="submit" class="btn btn-sm btn-outline-primary w-100">Create and edit</button>
+              </div>
+            </form>
+
+            <form method="post" enctype="multipart/form-data" class="row g-2 mb-3">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="project_doc_upload">
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1">Title</label>
+                <input type="text" name="project_doc_title" class="form-control form-control-sm" placeholder="Optional">
+              </div>
+              <div class="col-12 col-md-8">
+                <label class="form-label small mb-1">File</label>
+                <input type="file" name="project_doc_file" class="form-control form-control-sm" required>
+              </div>
+              <div class="col-12">
+                <button type="submit" class="btn btn-sm btn-primary">Upload file</button>
+              </div>
+            </form>
+
+            {% if project_documents %}
+              <div class="small text-muted mb-2">Saved files</div>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Name</th>
+                      <th>Updated</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for d in project_documents %}
+                      <tr>
+                        <td>{{ d.title|default:"-" }}</td>
+                        <td class="small">{{ d.original_name }}</td>
+                        <td class="small">{{ d.updated_at|date:"Y-m-d H:i" }}</td>
+                        <td class="text-end">
+                          <a class="btn btn-sm btn-outline-primary" href="{% url 'projects:project_document_collabora_edit' project.id d.id %}">Edit</a>
+                          <a class="btn btn-sm btn-outline-secondary" href="{% url 'projects:project_document_download' project.id d.id %}">Download</a>
+                          <form method="post" class="d-inline">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="project_doc_delete">
+                            <input type="hidden" name="doc_id" value="{{ d.id }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                          </form>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <div class="small text-secondary">No project files uploaded yet.</div>
+            {% endif %}
+          </div>
+        </details>
+
+        <hr class="my-3" />
+
+        <details class="rw-drawer">
           <summary class="fw-semibold">Core team</summary>
           <div class="pt-2">
             <div class="small text-secondary mb-2">

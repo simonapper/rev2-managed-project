@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Edit file - {{ project.name }}{% endblock %}
+
+{% block content %}
+<div class="rw-main-inner">
+  <div class="rw-workarea">
+    <div class="card shadow-sm mb-2">
+      <div class="card-body d-flex align-items-center justify-content-between gap-2">
+        <div>
+          <div class="fw-semibold">{{ doc.title|default:doc.original_name }}</div>
+          <div class="small text-muted">{{ doc.original_name }}</div>
+        </div>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ back_url }}">Back to project</a>
+      </div>
+    </div>
+    <div class="card shadow-sm">
+      <div class="card-body p-0" style="height:80vh;">
+        <iframe
+          title="Collabora editor"
+          src="{{ collabora_editor_url }}"
+          style="width:100%; height:100%; border:0;"
+          allowfullscreen>
+        </iframe>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

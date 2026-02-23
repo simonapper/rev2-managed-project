@@ -4,27 +4,31 @@
 from __future__ import annotations
 
 from django import forms
+from django.conf import settings
 import io
 import json
 import logging
 import os
 import re
 import zipfile
+from urllib.parse import quote
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.files.base import ContentFile
 from django.core.cache import cache
+from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, Q
 from django.db.models.functions import Coalesce
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse, FileResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt
 
 from chats.models import ChatMessage, ChatWorkspace
 from chats.services_boundaries import resolve_boundary_profile
@@ -42,6 +46,7 @@ from projects.models import (
     ProjectTKO,
     ProjectWKO,
     PolicyDocument,
+    ProjectDocument,
 )
 from projects.services.project_bootstrap import bootstrap_project
 from projects.services_project_membership import accessible_projects_qs, is_project_manager, can_edit_committee
@@ -56,6 +61,220 @@ _IMPORT_RATE_LIMIT_WINDOW_SECONDS = 60
 _IMPORT_RATE_LIMIT_MAX = 6
 
 _SECURITY_LOG = logging.getLogger("workbench.security")
+_ALLOWED_COLLABORA_EXTS = {
+    "odt", "ods", "odp", "odg",
+    "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+    "txt", "rtf", "csv",
+}
+_ODF_KIND_TO_EXT = {
+    "document": "odt",
+    "spreadsheet": "ods",
+    "presentation": "odp",
+}
+_ODF_MIMETYPES = {
+    "odt": "application/vnd.oasis.opendocument.text",
+    "ods": "application/vnd.oasis.opendocument.spreadsheet",
+    "odp": "application/vnd.oasis.opendocument.presentation",
+}
+
+
+def _collabora_public_url() -> str:
+    return (os.getenv("COLLABORA_PUBLIC_URL") or "http://127.0.0.1:9980").rstrip("/")
+
+
+def _collabora_token_ttl_seconds() -> int:
+    try:
+        return max(60, int(os.getenv("COLLABORA_TOKEN_TTL_SECONDS", "3600")))
+    except Exception:
+        return 3600
+
+
+def _wopi_signer() -> TimestampSigner:
+    secret = (os.getenv("COLLABORA_WOPI_SECRET") or settings.SECRET_KEY or "").strip()
+    return TimestampSigner(key=secret, salt="rw-collabora-wopi")
+
+
+def _build_wopi_token(*, doc_id: int, user_id: int) -> str:
+    return _wopi_signer().sign(f"{doc_id}:{user_id}")
+
+
+def _resolve_wopi_access(request, *, doc_id: int):
+    token = (request.GET.get("access_token") or request.POST.get("access_token") or "").strip()
+    if not token:
+        return None, None
+    try:
+        raw = _wopi_signer().unsign(token, max_age=_collabora_token_ttl_seconds())
+    except (BadSignature, SignatureExpired):
+        return None, None
+    parts = raw.split(":", 1)
+    if len(parts) != 2:
+        return None, None
+    try:
+        token_doc_id = int(parts[0])
+        token_user_id = int(parts[1])
+    except Exception:
+        return None, None
+    if token_doc_id != int(doc_id):
+        return None, None
+    User = get_user_model()
+    user = User.objects.filter(id=token_user_id, is_active=True).first()
+    if not user:
+        return None, None
+    doc = ProjectDocument.objects.select_related("project").filter(id=doc_id).first()
+    if not doc:
+        return None, None
+    allowed = accessible_projects_qs(user).filter(id=doc.project_id).exists()
+    if not allowed:
+        return None, None
+    return doc, user
+
+
+def _normalise_file_stem(raw: str, *, fallback: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", (raw or "").strip())
+    cleaned = cleaned.strip("._-")
+    return cleaned or fallback
+
+
+def _build_minimal_odf_bytes(*, ext: str) -> bytes:
+    mime = _ODF_MIMETYPES.get(ext)
+    if not mime:
+        raise ValueError("Unsupported ODF extension.")
+
+    content_by_ext = {
+        "odt": (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<office:document-content "
+            "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+            "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
+            "office:version=\"1.2\">"
+            "<office:body><office:text><text:p/></office:text></office:body>"
+            "</office:document-content>"
+        ),
+        "ods": (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<office:document-content "
+            "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+            "xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\" "
+            "office:version=\"1.2\">"
+            "<office:body><office:spreadsheet><table:table table:name=\"Sheet1\"/>"
+            "</office:spreadsheet></office:body>"
+            "</office:document-content>"
+        ),
+        "odp": (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<office:document-content "
+            "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+            "xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" "
+            "xmlns:presentation=\"urn:oasis:names:tc:opendocument:xmlns:presentation:1.0\" "
+            "office:version=\"1.2\">"
+            "<office:body><office:presentation><draw:page draw:name=\"page1\" "
+            "presentation:presentation-page-layout-name=\"AL1T0\"/>"
+            "</office:presentation></office:body>"
+            "</office:document-content>"
+        ),
+    }
+    content_xml = content_by_ext.get(ext)
+    if not content_xml:
+        raise ValueError("Unsupported ODF extension.")
+
+    styles_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<office:document-styles "
+        "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+        "office:version=\"1.2\"/>"
+    )
+    meta_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<office:document-meta "
+        "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+        "office:version=\"1.2\"/>"
+    )
+    settings_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<office:document-settings "
+        "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+        "office:version=\"1.2\"/>"
+    )
+    manifest_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<manifest:manifest "
+        "xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\" "
+        "manifest:version=\"1.2\">"
+        f"<manifest:file-entry manifest:full-path=\"/\" manifest:media-type=\"{mime}\"/>"
+        "<manifest:file-entry manifest:full-path=\"content.xml\" manifest:media-type=\"text/xml\"/>"
+        "<manifest:file-entry manifest:full-path=\"styles.xml\" manifest:media-type=\"text/xml\"/>"
+        "<manifest:file-entry manifest:full-path=\"meta.xml\" manifest:media-type=\"text/xml\"/>"
+        "<manifest:file-entry manifest:full-path=\"settings.xml\" manifest:media-type=\"text/xml\"/>"
+        "</manifest:manifest>"
+    )
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w") as zf:
+        zf.writestr("mimetype", mime, compress_type=zipfile.ZIP_STORED)
+        zf.writestr("content.xml", content_xml)
+        zf.writestr("styles.xml", styles_xml)
+        zf.writestr("meta.xml", meta_xml)
+        zf.writestr("settings.xml", settings_xml)
+        zf.writestr("META-INF/manifest.xml", manifest_xml)
+    return buf.getvalue()
+
+
+def _handle_wopi_lock_override(*, doc: ProjectDocument, override: str, lock_value: str):
+    if override in {"LOCK", "REFRESH_LOCK"}:
+        if doc.wopi_lock and lock_value and doc.wopi_lock != lock_value:
+            resp = HttpResponse(status=409)
+            resp["X-WOPI-Lock"] = doc.wopi_lock
+            return resp
+        doc.wopi_lock = lock_value
+        doc.wopi_lock_updated_at = timezone.now()
+        doc.save(update_fields=["wopi_lock", "wopi_lock_updated_at", "updated_at"])
+        resp = HttpResponse(status=200)
+        if doc.wopi_lock:
+            resp["X-WOPI-Lock"] = doc.wopi_lock
+        return resp
+    if override == "UNLOCK":
+        if doc.wopi_lock and lock_value and doc.wopi_lock != lock_value:
+            resp = HttpResponse(status=409)
+            resp["X-WOPI-Lock"] = doc.wopi_lock
+            return resp
+        doc.wopi_lock = ""
+        doc.wopi_lock_updated_at = timezone.now()
+        doc.save(update_fields=["wopi_lock", "wopi_lock_updated_at", "updated_at"])
+        return HttpResponse(status=200)
+    if override == "GET_LOCK":
+        resp = HttpResponse(status=200)
+        if doc.wopi_lock:
+            resp["X-WOPI-Lock"] = doc.wopi_lock
+        return resp
+    if override == "UNLOCK_AND_RELOCK":
+        if doc.wopi_lock and lock_value and doc.wopi_lock != lock_value:
+            resp = HttpResponse(status=409)
+            resp["X-WOPI-Lock"] = doc.wopi_lock
+            return resp
+        doc.wopi_lock = lock_value
+        doc.wopi_lock_updated_at = timezone.now()
+        doc.save(update_fields=["wopi_lock", "wopi_lock_updated_at", "updated_at"])
+        resp = HttpResponse(status=200)
+        if doc.wopi_lock:
+            resp["X-WOPI-Lock"] = doc.wopi_lock
+        return resp
+    return None
+
+
+def _handle_wopi_put_override(*, doc: ProjectDocument, lock_value: str, raw: bytes):
+    if doc.wopi_lock and lock_value and doc.wopi_lock != lock_value:
+        resp = HttpResponse(status=409)
+        resp["X-WOPI-Lock"] = doc.wopi_lock
+        return resp
+    current_name = doc.file.name or f"projects/{doc.project_id}/documents/document_{doc.id}.bin"
+    doc.file.save(current_name, ContentFile(raw), save=False)
+    doc.size_bytes = len(raw)
+    doc.wopi_lock_updated_at = timezone.now()
+    doc.save(update_fields=["file", "size_bytes", "wopi_lock_updated_at", "updated_at"])
+    resp = HttpResponse(status=200)
+    if doc.updated_at:
+        resp["X-WOPI-ItemVersion"] = str(int(doc.updated_at.timestamp()))
+    return resp
 
 
 def _boundary_profile_from_post(post_data) -> dict:
@@ -1180,6 +1399,84 @@ def project_config_info(request, project_id: int):
         messages.success(request, "Project boundaries updated.")
         return redirect("accounts:project_config_info", project_id=active_project.id)
 
+    if request.method == "POST" and (request.POST.get("action") or "") == "project_doc_upload":
+        f = request.FILES.get("project_doc_file")
+        if not f:
+            messages.error(request, "Choose a file to upload.")
+            return redirect("accounts:project_config_info", project_id=active_project.id)
+        original_name = str(getattr(f, "name", "document.bin") or "document.bin")
+        ext = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
+        if ext not in _ALLOWED_COLLABORA_EXTS:
+            allowed_text = ", ".join(sorted(_ALLOWED_COLLABORA_EXTS))
+            messages.error(request, "Unsupported file type for Collabora. Allowed: " + allowed_text)
+            return redirect("accounts:project_config_info", project_id=active_project.id)
+        title = (request.POST.get("project_doc_title") or "").strip()
+        row = ProjectDocument.objects.create(
+            project=active_project,
+            title=title[:200],
+            original_name=original_name[:255],
+            file=f,
+            content_type=str(getattr(f, "content_type", "") or "")[:120],
+            size_bytes=int(getattr(f, "size", 0) or 0),
+            uploaded_by=request.user,
+        )
+        messages.success(request, "Project file uploaded.")
+        return redirect("projects:project_document_collabora_edit", project_id=active_project.id, doc_id=row.id)
+
+    if request.method == "POST" and (request.POST.get("action") or "") == "project_doc_create_blank":
+        kind = (request.POST.get("project_doc_kind") or "").strip().lower()
+        ext = _ODF_KIND_TO_EXT.get(kind)
+        if not ext:
+            messages.error(request, "Choose a valid file type.")
+            return redirect("accounts:project_config_info", project_id=active_project.id)
+
+        title = (request.POST.get("project_doc_title") or "").strip()
+        default_title_by_kind = {
+            "document": "New document",
+            "spreadsheet": "New spreadsheet",
+            "presentation": "New presentation",
+        }
+        effective_title = (title or default_title_by_kind.get(kind) or "New file")[:200]
+        stem = _normalise_file_stem(effective_title, fallback=f"new_{kind}")
+        original_name = f"{stem}.{ext}"
+        content_type = _ODF_MIMETYPES.get(ext, "application/octet-stream")
+
+        try:
+            payload = _build_minimal_odf_bytes(ext=ext)
+        except Exception:
+            messages.error(request, "Could not create starter file.")
+            return redirect("accounts:project_config_info", project_id=active_project.id)
+
+        row = ProjectDocument(
+            project=active_project,
+            title=effective_title,
+            original_name=original_name[:255],
+            content_type=content_type[:120],
+            size_bytes=len(payload),
+            uploaded_by=request.user,
+        )
+        row.file.save(original_name, ContentFile(payload), save=False)
+        row.save()
+        messages.success(request, "Blank file created.")
+        return redirect("projects:project_document_collabora_edit", project_id=active_project.id, doc_id=row.id)
+
+    if request.method == "POST" and (request.POST.get("action") or "") == "project_doc_delete":
+        doc_id_raw = (request.POST.get("doc_id") or "").strip()
+        if not doc_id_raw.isdigit():
+            messages.error(request, "Invalid project document.")
+            return redirect("accounts:project_config_info", project_id=active_project.id)
+        row = ProjectDocument.objects.filter(project=active_project, id=int(doc_id_raw)).first()
+        if not row:
+            messages.error(request, "Project document not found.")
+            return redirect("accounts:project_config_info", project_id=active_project.id)
+        try:
+            row.file.delete(save=False)
+        except Exception:
+            pass
+        row.delete()
+        messages.success(request, "Project file deleted.")
+        return redirect("accounts:project_config_info", project_id=active_project.id)
+
     if request.method == "POST" and (request.POST.get("action") or "") == "committee_update":
         if not can_edit_team:
             messages.error(request, "Only the Project Committer can edit the committee.")
@@ -1293,6 +1590,9 @@ def project_config_info(request, project_id: int):
             "planning_mode": planning_mode,
             "boundary_profile": boundary_profile,
             "policy_documents": policy_documents,
+            "project_documents": list(
+                ProjectDocument.objects.filter(project=active_project).order_by("-updated_at", "-id")
+            ),
             "policy_docs_help_url": reverse("projects:policy_docs_help", args=[active_project.id]),
             "member_rows": member_rows,
             "available_users": available_users,
@@ -1314,6 +1614,111 @@ def policy_docs_help(request, project_id: int):
             "project": active_project,
         },
     )
+
+
+@login_required
+def project_document_download(request, project_id: int, doc_id: int):
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+    row = get_object_or_404(ProjectDocument, project=project, id=doc_id)
+    filename = row.original_name or row.title or f"document_{row.id}"
+    try:
+        fh = row.file.open("rb")
+    except Exception:
+        messages.error(request, "Could not open project file.")
+        return redirect("accounts:project_config_info", project_id=project.id)
+    return FileResponse(
+        fh,
+        as_attachment=True,
+        filename=filename,
+        content_type=row.content_type or "application/octet-stream",
+    )
+
+
+@login_required
+def project_document_collabora_edit(request, project_id: int, doc_id: int):
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+    row = get_object_or_404(ProjectDocument, project=project, id=doc_id)
+    token = _build_wopi_token(doc_id=row.id, user_id=request.user.id)
+    wopi_src = request.build_absolute_uri(reverse("projects:wopi_check_file_info", args=[row.id]))
+    ttl_ms = int(timezone.now().timestamp() * 1000) + (_collabora_token_ttl_seconds() * 1000)
+    collabora_url = _collabora_public_url()
+    editor_url = (
+        f"{collabora_url}/browser/dist/cool.html"
+        f"?WOPISrc={quote(wopi_src, safe='')}"
+        f"&access_token={quote(token, safe='')}"
+        f"&access_token_ttl={ttl_ms}"
+    )
+    return render(
+        request,
+        "projects/collabora_editor.html",
+        {
+            "project": project,
+            "doc": row,
+            "collabora_editor_url": editor_url,
+            "back_url": reverse("accounts:project_config_info", args=[project.id]),
+        },
+    )
+
+
+@csrf_exempt
+def wopi_check_file_info(request, doc_id: int):
+    doc, user = _resolve_wopi_access(request, doc_id=doc_id)
+    if not doc or not user:
+        return JsonResponse({"error": "Unauthorised."}, status=401)
+    if request.method == "POST":
+        override = (request.headers.get("X-WOPI-Override") or "").strip().upper()
+        lock_value = (request.headers.get("X-WOPI-Lock") or "").strip()
+        lock_resp = _handle_wopi_lock_override(doc=doc, override=override, lock_value=lock_value)
+        if lock_resp is not None:
+            return lock_resp
+        if override in {"PUT", ""}:
+            return _handle_wopi_put_override(doc=doc, lock_value=lock_value, raw=(request.body or b""))
+        if override == "PUT_USER_INFO":
+            return HttpResponse(status=200)
+        return HttpResponse(status=501)
+    if request.method != "GET":
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+    version = str(int(doc.updated_at.timestamp())) if doc.updated_at else str(doc.id)
+    payload = {
+        "BaseFileName": doc.original_name or f"document_{doc.id}",
+        "OwnerId": str(doc.project.owner_id or user.id),
+        "Size": int(doc.size_bytes or 0),
+        "UserId": str(user.id),
+        "UserFriendlyName": getattr(user, "username", "") or str(user.id),
+        "Version": version,
+        "UserCanWrite": True,
+        "SupportsUpdate": True,
+        "SupportsLocks": True,
+        "SupportsGetLock": True,
+        "SupportsRename": False,
+    }
+    return JsonResponse(payload)
+
+
+@csrf_exempt
+def wopi_file_contents(request, doc_id: int):
+    doc, _user = _resolve_wopi_access(request, doc_id=doc_id)
+    if not doc:
+        return HttpResponse(status=401)
+    if request.method == "GET":
+        try:
+            fh = doc.file.open("rb")
+        except Exception:
+            return HttpResponse(status=404)
+        return FileResponse(fh, content_type=doc.content_type or "application/octet-stream")
+    if request.method == "POST":
+        override = (request.headers.get("X-WOPI-Override") or "").strip().upper()
+        lock_value = (request.headers.get("X-WOPI-Lock") or "").strip()
+        lock_resp = _handle_wopi_lock_override(doc=doc, override=override, lock_value=lock_value)
+        if lock_resp is not None:
+            return lock_resp
+        if override == "PUT_USER_INFO":
+            # Collabora may send user metadata updates during edit sessions.
+            return HttpResponse(status=200)
+        if override in {"PUT", ""}:
+            return _handle_wopi_put_override(doc=doc, lock_value=lock_value, raw=(request.body or b""))
+        return HttpResponse(status=501)
+    return HttpResponse(status=405)
 
 
 @require_POST
