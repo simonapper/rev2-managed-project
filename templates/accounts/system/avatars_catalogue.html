@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-3">
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h2 class="mb-1">Avatar Catalogue</h2>
+      <div class="text-muted small">Available presets from PROTOCOL_LIBRARY_V2.</div>
+    </div>
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:system_settings_home' %}">Back</a>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header"><strong>Current active selections</strong></div>
+    <div class="card-body">
+      {% if project %}
+      <div class="small text-muted mb-2">Project context: {{ project.name }}</div>
+      {% else %}
+      <div class="small text-muted mb-2">No project context selected.</div>
+      {% endif %}
+      <div class="row g-2">
+        <div class="col-12 col-md-3"><strong>Tone:</strong> {{ active_level4.tone|default:"Brief" }}</div>
+        <div class="col-12 col-md-3"><strong>Reasoning:</strong> {{ active_level4.reasoning|default:"Careful" }}</div>
+        <div class="col-12 col-md-3"><strong>Approach:</strong> {{ active_level4.approach|default:"Step-by-step" }}</div>
+        <div class="col-12 col-md-3"><strong>Control:</strong> {{ active_level4.control|default:"User" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th style="width: 120px;">Axis</th>
+          <th style="width: 180px;">Preset name</th>
+          <th>Preview</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.axis }}</td>
+          <td>{{ row.preset_name }}</td>
+          <td><pre class="mb-0" style="white-space: pre-wrap;">{{ row.preview }}</pre></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

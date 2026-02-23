@@ -5,12 +5,16 @@ from __future__ import annotations
 import base64
 import importlib.util
 import json
+import logging
 import os
 import re
 import urllib.request
 import anthropic
 from typing import Any, Dict, List, Optional
 
+from django.conf import settings
+
+from chats.services.contracts.pipeline import ContractContext, build_system_blocks
 from config.models import SystemConfigPointers
 
 
@@ -20,6 +24,7 @@ _DEEPSEEK_CLIENT = None
 _ALLOWED_PROVIDERS = {"openai", "anthropic", "deepseek", "copilot"}
 _PANE_KEYS = ("answer", "key_info", "visuals", "reasoning", "output")
 _COPILOT_SPEC_OK: Optional[bool] = None
+_LOGGER = logging.getLogger(__name__)
 
 
 def _normalise_provider(value: Optional[str]) -> str:
@@ -516,29 +521,49 @@ def generate_panes(
     force_model: Optional[str] = None,
     user: Any = None,
     provider: Optional[str] = None,
+    work_item: Any = None,
+    contract_ctx: Optional[ContractContext] = None,
 ) -> Dict[str, str]:
     image_parts = image_parts or []
-    system_blocks = system_blocks or []
+    system_blocks = list(system_blocks or [])
     history_messages = history_messages or []
+    pipeline_enabled = bool(getattr(settings, "CONTRACT_PIPELINE_ENABLED", True))
+    contract_trace: dict = {}
+    if pipeline_enabled:
+        if contract_ctx is None:
+            contract_ctx = ContractContext(
+                user=user,
+                work_item=work_item,
+                user_text=user_text,
+                legacy_system_blocks=system_blocks,
+                is_cde=False,
+            )
+        system_blocks, contract_trace = build_system_blocks(contract_ctx)
+        if settings.DEBUG:
+            _LOGGER.debug("contracts.pipeline.generate_panes trace=%s", contract_trace)
 
     model = (force_model or _get_default_model_key(user=user)).strip()
     selected_provider = _resolve_provider(provider=provider, user=user)
-
-    system_contract = (
-        "Return JSON with keys:\n"
-        "- answer: direct response\n"
-        "- key_info: bullets / anchors\n"
-        "- visuals: emojis, steps, breadcrumbs, ASCII diagrams\n"
-        "- reasoning: reasoning summary\n"
-        "- output: extractable artefact text\n"
-    )
+    system_contract = ""
+    if not pipeline_enabled:
+        system_contract = (
+            "Return JSON with keys:\n"
+            "- answer: direct response\n"
+            "- key_info: bullets / anchors\n"
+            "- visuals: emojis, steps, breadcrumbs, ASCII diagrams\n"
+            "- reasoning: reasoning summary\n"
+            "- output: extractable artefact text\n"
+        )
 
     if selected_provider == "copilot":
         if image_parts:
             raise ValueError("copilot provider does not support image_parts")
-        copilot_contract = system_contract + "\nReturn strict JSON only. No markdown. No prose outside JSON."
+        copilot_contract = (
+            system_contract + "\nReturn strict JSON only. No markdown. No prose outside JSON."
+            if system_contract else ""
+        )
         prompt = _flatten_prompt(
-            system_blocks=[copilot_contract] + system_blocks,
+            system_blocks=([copilot_contract] if copilot_contract else []) + system_blocks,
             messages=history_messages,
             user_text=user_text,
         )
@@ -560,13 +585,16 @@ def generate_panes(
         return panes
 
     if selected_provider == "anthropic":
-        system_text = "\n\n".join(
-            [
-                system_contract,
-                *[b for b in system_blocks if b],
-                "Return strict JSON only. No markdown. No prose outside JSON.",
-            ]
-        ).strip()
+        if system_contract:
+            system_text = "\n\n".join(
+                [
+                    system_contract,
+                    *[b for b in system_blocks if b],
+                    "Return strict JSON only. No markdown. No prose outside JSON.",
+                ]
+            ).strip()
+        else:
+            system_text = "\n\n".join([b for b in system_blocks if b]).strip()
 
         anthropic_messages: List[Dict[str, Any]] = []
         for msg in history_messages:
@@ -623,7 +651,11 @@ def generate_panes(
             raise ValueError("deepseek provider does not support image_parts")
 
         prompt = _flatten_prompt(
-            system_blocks=[system_contract, *system_blocks, "Return strict JSON only. No markdown. No prose outside JSON."],
+            system_blocks=(
+                [system_contract, *system_blocks, "Return strict JSON only. No markdown. No prose outside JSON."]
+                if system_contract
+                else system_blocks
+            ),
             messages=history_messages,
             user_text=user_text,
         )
@@ -648,7 +680,9 @@ def generate_panes(
             panes["answer"] = raw_text or "[deepseek] empty pane payload"
         return panes
 
-    input_msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_contract}]
+    input_msgs: List[Dict[str, Any]] = []
+    if system_contract:
+        input_msgs.append({"role": "system", "content": system_contract})
     for block in system_blocks:
         if block:
             input_msgs.append({"role": "system", "content": block})
@@ -802,6 +836,7 @@ def generate_text(
     messages: list[dict],
     user: Any = None,
     provider: Optional[str] = None,
+    contract_ctx: Optional[ContractContext] = None,
 ) -> str:
     """
     Plain text generation for normal turns.
@@ -809,6 +844,19 @@ def generate_text(
     messages: [{'role': 'user'|'assistant', 'content': str}, ...]
     """
     selected_provider = _resolve_provider(provider=provider, user=user)
+    pipeline_enabled = bool(getattr(settings, "CONTRACT_PIPELINE_ENABLED", True))
+    contract_trace: dict = {}
+    if pipeline_enabled:
+        if contract_ctx is None:
+            contract_ctx = ContractContext(
+                user=user,
+                user_text="",
+                legacy_system_blocks=list(system_blocks or []),
+                include_envelope=False,
+            )
+        system_blocks, contract_trace = build_system_blocks(contract_ctx)
+        if settings.DEBUG:
+            _LOGGER.debug("contracts.pipeline.generate_text trace=%s", contract_trace)
     if selected_provider == "copilot":
         prompt = _flatten_prompt(
             system_blocks=system_blocks,

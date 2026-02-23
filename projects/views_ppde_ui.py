@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from chats.services.contracts.pipeline import ContractContext
 from chats.services.llm import generate_panes
 from chats.services.turns import build_chat_turn_context
 from chats.models import ChatWorkspace
@@ -383,8 +384,15 @@ def _ppde_help_answer(*, question: str, project: Project, user) -> str:
     panes = generate_panes(
         user_text,
         image_parts=None,
-        system_blocks=system_blocks,
+        system_blocks=[],
         user=user,
+        contract_ctx=ContractContext(
+            user=user,
+            project=project,
+            user_text=user_text,
+            is_ppde=True,
+            tier5_blocks=system_blocks,
+        ),
     )
     return (panes.get("output") or "").strip()
 
@@ -548,6 +556,7 @@ def _parse_planning_purpose_json(raw_output: str) -> tuple[str | None, str | Non
 
 def _ppde_validate_block(
     *,
+    project: Project,
     block_key: str,
     block_kind: str,
     payload: Dict[str, Any],
@@ -587,15 +596,20 @@ def _ppde_validate_block(
 
     user_text = "Block key: " + block_key + "\n" + seed_text + "\n\n" + block_text
     system_blocks = [PPDE_VALIDATOR_BOILERPLATE]
-    contract_text = _contract_text(transform_contract)
-    if contract_text:
-        system_blocks.append(contract_text)
 
     panes = generate_panes(
         user_text,
         image_parts=None,
-        system_blocks=system_blocks,
+        system_blocks=[],
         user=user,
+        contract_ctx=ContractContext(
+            user=user,
+            project=project,
+            user_text=user_text,
+            is_ppde=True,
+            ppde_phase_contract=transform_contract,
+            tier5_blocks=system_blocks,
+        ),
     )
     raw = str(panes.get("output") or "")
     out = _parse_validation_json(raw_output=raw, block_key=block_key)
@@ -928,8 +942,16 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
         panes = generate_panes(
             user_text,
             image_parts=None,
-            system_blocks=[PPDE_SEED_SUMMARY_BOILERPLATE],
+            system_blocks=[],
             user=request.user,
+            contract_ctx=ContractContext(
+                user=request.user,
+                project=project,
+                user_text=user_text,
+                is_ppde=True,
+                ppde_phase_contract=structure_contract,
+                tier5_blocks=[PPDE_SEED_SUMMARY_BOILERPLATE],
+            ),
         )
         summary = _parse_seed_summary_json(str(panes.get("output") or ""), seed_keys)
         if not summary:
@@ -983,12 +1005,19 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             + "\n\nREQUEST:\n"
             + question
         )
-        contract_text = _contract_text(structure_contract)
         panes = generate_panes(
             user_text,
             image_parts=None,
-            system_blocks=[t for t in [contract_text, PPDE_STAGE_MAP_BOILERPLATE] if t],
+            system_blocks=[],
             user=request.user,
+            contract_ctx=ContractContext(
+                user=request.user,
+                project=project,
+                user_text=user_text,
+                is_ppde=True,
+                ppde_phase_contract=structure_contract,
+                tier5_blocks=[PPDE_STAGE_MAP_BOILERPLATE],
+            ),
         )
         stages_updated, err = _parse_stage_map_json(str(panes.get("output") or ""))
         if err:
@@ -1041,12 +1070,19 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             user_text += "\n\nSEED_SUMMARY:\n" + json.dumps(project.ppde_seed_summary, indent=2, ensure_ascii=True)
         user_text += "\n\nINSTRUCTION:\nGenerate planning_purpose only."
 
-        contract_text = _contract_text(structure_contract)
         panes = generate_panes(
             user_text,
             image_parts=None,
-            system_blocks=[t for t in [contract_text, PPDE_SEED_PURPOSE_BOILERPLATE] if t],
+            system_blocks=[],
             user=request.user,
+            contract_ctx=ContractContext(
+                user=request.user,
+                project=project,
+                user_text=user_text,
+                is_ppde=True,
+                ppde_phase_contract=structure_contract,
+                tier5_blocks=[PPDE_SEED_PURPOSE_BOILERPLATE],
+            ),
         )
         purpose_text, err = _parse_planning_purpose_json(str(panes.get("output") or ""))
         if err:
@@ -1091,7 +1127,6 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             messages.error(request, "No accepted CKO snapshot available.")
             return redirect("projects:ppde_detail", project_id=project.id)
 
-        contract_text = _contract_text(structure_contract)
         accepted = ProjectCKO.objects.filter(id=project.defined_cko_id, project=project).first()
         full_snapshot = accepted.field_snapshot if accepted and isinstance(accepted.field_snapshot, dict) else {}
         user_text = "Seed context JSON:\n" + json.dumps(seed_snapshot, indent=2, ensure_ascii=True)
@@ -1100,8 +1135,16 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
         panes = generate_panes(
             user_text,
             image_parts=None,
-            system_blocks=[t for t in [contract_text, PPDE_STAGE_MAP_BOILERPLATE] if t],
+            system_blocks=[],
             user=request.user,
+            contract_ctx=ContractContext(
+                user=request.user,
+                project=project,
+                user_text=user_text,
+                is_ppde=True,
+                ppde_phase_contract=structure_contract,
+                tier5_blocks=[PPDE_STAGE_MAP_BOILERPLATE],
+            ),
         )
         stages_out, err = _parse_stage_map_json(str(panes.get("output") or ""))
         if err:
@@ -1175,6 +1218,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             "cko_alignment_final_outputs_match": (purpose.cko_alignment_final_outputs_match or "").strip(),
         }
         purpose.last_validation = _ppde_validate_block(
+            project=project,
             block_key="purpose",
             block_kind="purpose",
             payload=purpose_payload,
@@ -1187,6 +1231,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
         for stage in stages:
             payload = _stage_payload_from_model(stage)
             stage.last_validation = _ppde_validate_block(
+                project=project,
                 block_key="stage:" + str(stage.id),
                 block_kind="stage",
                 payload=payload,
@@ -1214,6 +1259,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
             "cko_alignment_final_outputs_match": (purpose.cko_alignment_final_outputs_match or "").strip(),
         }
         purpose.last_validation = _ppde_validate_block(
+            project=project,
             block_key="purpose",
             block_kind="purpose",
             payload=purpose_payload,
@@ -1226,6 +1272,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
         for stage in stages:
             payload = _stage_payload_from_model(stage)
             stage.last_validation = _ppde_validate_block(
+                project=project,
                 block_key="stage:" + str(stage.id),
                 block_kind="stage",
                 payload=payload,
@@ -1481,6 +1528,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                     messages.error(request, "No active contract configured. Contact administrator.")
                     return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
                 vobj = _ppde_validate_block(
+                    project=project,
                     block_key=block_key,
                     block_kind="purpose",
                     payload=proposed_fields,
@@ -1669,6 +1717,7 @@ def ppde_detail(request, project_id: int) -> HttpResponse:
                     messages.error(request, "No active contract configured. Contact administrator.")
                     return redirect(reverse("projects:ppde_detail", kwargs={"project_id": project.id}) + anchor)
                 vobj = _ppde_validate_block(
+                    project=project,
                     block_key=block_key,
                     block_kind="stage",
                     payload=payload,

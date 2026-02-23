@@ -1,0 +1,15 @@
+<div class="border rounded p-2 mb-2" style="max-height: 320px; overflow-y: auto;">
+  {% if define_history %}
+    {% for row in define_history %}
+      <div class="mb-2">
+        <div class="small">
+          <strong>{% if row.role == "assistant" %}LLM{% else %}You{% endif %}</strong>
+          <span class="text-muted">{{ row.timestamp|default:"" }}</span>
+        </div>
+        <div style="white-space: pre-wrap;">{{ row.text }}</div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="small text-muted">No DEFINE turns yet.</div>
+  {% endif %}
+</div>

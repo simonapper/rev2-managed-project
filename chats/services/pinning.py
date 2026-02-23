@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from django.utils import timezone
 
 from chats.models import ChatMessage, ChatRollupEvent, ChatWorkspace
+from chats.services.contracts.pipeline import ContractContext
 from chats.services.llm import generate_text
 
 
@@ -194,6 +195,15 @@ def rollup_segment(
             system_blocks=system_blocks,
             messages=[{"role": "user", "content": user_text}],
             user=(user or getattr(chat, "created_by", None)),
+            contract_ctx=ContractContext(
+                user=(user or getattr(chat, "created_by", None)),
+                chat=chat,
+                project=getattr(chat, "project", None),
+                user_text=user_text,
+                is_rollup=True,
+                tier6_blocks=system_blocks,
+                include_envelope=False,
+            ),
         )
         payload = _extract_json_dict(raw)
         if payload is not None:

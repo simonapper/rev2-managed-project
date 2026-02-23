@@ -431,6 +431,9 @@ def project_home(request, project_id: int):
     request.session.pop("rw_active_chat_id", None)
     request.session.modified = True
 
+    if project.workflow_mode == Project.WorkflowMode.DERAX_WORK:
+        return redirect("projects:derax_project_home", project_id=project.id)
+
     if project.kind == Project.Kind.SANDBOX:
         return redirect("accounts:chat_browse")
 
@@ -1866,10 +1869,15 @@ def project_config_edit(request, project_id):
     if request.method == "POST":
         new_name = (request.POST.get("name") or "").strip()
         description = request.POST.get("description", "")
+        workflow_mode = (request.POST.get("workflow_mode") or "").strip().upper()
+        valid_modes = {Project.WorkflowMode.PDE, Project.WorkflowMode.DERAX_WORK}
+        if workflow_mode not in valid_modes:
+            workflow_mode = Project.WorkflowMode.PDE
         if new_name:
             project.name = new_name
             project.description = description
-            project.save()
+            project.workflow_mode = workflow_mode
+            project.save(update_fields=["name", "description", "workflow_mode", "updated_at"])
             return redirect("accounts:project_config_list")
         error = "Project name cannot be empty."
     else:

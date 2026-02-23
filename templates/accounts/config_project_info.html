@@ -93,6 +93,10 @@
             </div>
 
             <div class="pc-toolbar-row">
+              <a class="btn btn-sm btn-outline-primary pc-action-btn"
+                 href="{% url 'accounts:project_config_edit' project.id %}">
+                Edit
+              </a>
               {% if active_wko %}
                 <a class="btn btn-sm btn-primary pc-action-btn"
                    href="{% url 'projects:ppde_detail' project.id %}">
@@ -250,7 +254,10 @@
         <details class="rw-drawer">
           <summary class="fw-semibold">Project files</summary>
           <div class="pt-2">
-            <div class="small text-secondary mb-2">Upload and edit project documents in Collabora Online.</div>
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <div class="small text-secondary">Upload and edit project documents in Collabora Online.</div>
+              <a class="btn btn-sm btn-outline-dark" href="{% url 'projects:work_item_detail' project.id %}">Open WorkItem</a>
+            </div>
             <form method="post" class="row g-2 mb-3">
               {% csrf_token %}
               <input type="hidden" name="action" value="project_doc_create_blank">
@@ -441,6 +448,13 @@
                 <tr><th>Kind</th><td>{{ project.kind }}</td></tr>
                 <tr><th>Primary type</th><td>{{ project.primary_type }}</td></tr>
                 <tr><th>Mode</th><td>{{ project.mode }}</td></tr>
+                <tr>
+                  <th>Workflow mode</th>
+                  <td>
+                    {{ project.workflow_mode }}
+                    <a class="btn btn-sm btn-outline-primary ms-2" href="{% url 'accounts:project_config_edit' project.id %}">Edit mode</a>
+                  </td>
+                </tr>
                 <tr><th>Created</th><td>{{ project.created_at }}</td></tr>
                 <tr><th>Updated</th><td>{{ project.updated_at }}</td></tr>
               </tbody>

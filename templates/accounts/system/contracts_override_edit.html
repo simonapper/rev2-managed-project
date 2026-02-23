@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-3">
+  <h2>Edit Contract Override</h2>
+  <p class="text-muted"><code>{{ contract_key }}</code></p>
+  <form method="post" class="card">
+    {% csrf_token %}
+    <div class="card-body">
+      <div class="form-check mb-3">
+        <input class="form-check-input" type="checkbox" id="is_enabled" name="is_enabled" {% if is_enabled %}checked{% endif %}>
+        <label class="form-check-label" for="is_enabled">Override enabled</label>
+      </div>
+      <div class="mb-3">
+        <label for="override_text" class="form-label">Override text</label>
+        <textarea class="form-control" id="override_text" name="override_text" rows="16">{{ override_text }}</textarea>
+      </div>
+      <button class="btn btn-primary" type="submit">Save</button>
+      <a class="btn btn-outline-secondary" href="{% url 'accounts:system_contracts_dashboard' %}?key={{ contract_key|urlencode }}&mode=effective">Back</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

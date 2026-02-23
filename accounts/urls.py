@@ -73,11 +73,32 @@ urlpatterns = [
         name="system_config_version_new",
     ),
     path("config/system/contracts/", views_system.system_phase_contracts_home, name="system_phase_contracts_home"),
+    path("config/system/avatars/", views_system.system_avatars_catalogue, name="system_avatars_catalogue"),
     path("config/system/contracts/new/", views_system.system_phase_contract_edit, name="system_phase_contract_new"),
     path(
         "config/system/contracts/<int:contract_id>/",
         views_system.system_phase_contract_edit,
         name="system_phase_contract_edit",
+    ),
+    path(
+        "config/system/contracts/dashboard/",
+        views_system.system_contracts_dashboard,
+        name="system_contracts_dashboard",
+    ),
+    path(
+        "config/system/contracts/dashboard/export/",
+        views_system.system_contract_pack_export,
+        name="system_contract_pack_export",
+    ),
+    path(
+        "config/system/contracts/dashboard/import/",
+        views_system.system_contract_pack_import,
+        name="system_contract_pack_import",
+    ),
+    path(
+        "config/system/contracts/override/<path:key>/",
+        views_system.system_contract_override_edit,
+        name="system_contract_override_edit",
     ),
 
 

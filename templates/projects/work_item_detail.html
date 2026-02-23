@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}WorkItem - {{ project.name }}{% endblock %}
+
+{% block content %}
+<div class="rw-main-inner">
+  <div class="rw-workarea">
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <div class="h5 mb-1">{{ work_item_title }}</div>
+            <div class="small text-muted">Project: {{ project.name }}</div>
+            <div class="small mt-1">
+              <span class="badge text-bg-primary">Active phase: {{ work_item.active_phase }}</span>
+              <span class="badge text-bg-secondary">Active contract source: {{ active_contract_source|default:"workitem" }}</span>
+              {% if active_contract_key %}
+                <span class="badge text-bg-light">Contract key: {{ active_contract_key }}</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="d-flex gap-2">
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'projects:work_item_export' project.id %}">Export JSON</a>
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:project_config_info' project.id %}">Back</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-md-3"><strong>Active phase:</strong> {{ work_item.active_phase }}</div>
+          <div class="col-md-3"><strong>Active seed revision:</strong> {{ work_item.active_seed_revision }}</div>
+          <div class="col-md-6"><strong>Latest seed text:</strong> {{ latest_seed_text|default:"-" }}</div>
+          <div class="col-md-12 mt-2">
+            <strong>DERAX endpoint:</strong>
+            {% if work_item.derax_endpoint_locked %}
+              <span class="badge text-bg-success">LOCKED</span>
+            {% else %}
+              <span class="badge text-bg-secondary">DRAFT</span>
+            {% endif %}
+          </div>
+        </div>
+        <hr>
+        <div>
+          <strong>Deliverables</strong>
+          {% if work_item.deliverables %}
+            <ul class="mb-0 mt-2">
+              {% for d in work_item.deliverables %}
+                <li><code>{{ d }}</code></li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <div class="small text-muted mt-2">No deliverables yet.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-header"><strong>Actions</strong></div>
+      <div class="card-body">
+        <form method="post" class="mb-3">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="propose_seed">
+          <div class="row g-2">
+            <div class="col-md-8">
+              <label class="form-label small mb-1">Propose new seed</label>
+              <textarea class="form-control form-control-sm" name="seed_text" rows="3" required></textarea>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small mb-1">Reason</label>
+              <input class="form-control form-control-sm" type="text" name="reason" placeholder="Why this revision">
+            </div>
+            <div class="col-12">
+              <button class="btn btn-sm btn-primary" type="submit">Propose new seed</button>
+            </div>
+          </div>
+        </form>
+
+        <form method="post" class="mb-3">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="lock_seed">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label small mb-1">Lock seed revision</label>
+              <select class="form-select form-select-sm" name="revision_number">
+                {% for row in seed_history %}
+                  <option value="{{ row.revision }}">Revision {{ row.revision }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2">
+              <button class="btn btn-sm btn-outline-primary w-100" type="submit">Lock seed</button>
+            </div>
+          </div>
+        </form>
+
+        <form method="post" class="mb-3">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="rollback_seed">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label small mb-1">Rollback to revision</label>
+              <select class="form-select form-select-sm" name="revision_number">
+                {% for row in seed_history %}
+                  <option value="{{ row.revision }}">Revision {{ row.revision }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2">
+              <button class="btn btn-sm btn-outline-warning w-100" type="submit">Rollback</button>
+            </div>
+          </div>
+        </form>
+
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="advance_phase">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label small mb-1">Advance phase</label>
+              <select class="form-select form-select-sm" name="to_phase">
+                {% for row in phase_options %}
+                  <option value="{{ row.phase }}" {% if not row.allowed %}disabled{% endif %}>{{ row.phase }}{% if not row.allowed %} (blocked){% endif %}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2">
+              <button class="btn btn-sm btn-outline-success w-100" type="submit">Advance phase</button>
+            </div>
+          </div>
+        </form>
+
+        <hr>
+        <form method="post" class="mb-2">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="save_derax_endpoint">
+          <label class="form-label small mb-1">DERAX endpoint specification</label>
+          <textarea class="form-control form-control-sm mb-2" name="derax_endpoint_spec" rows="6" placeholder="Define the endpoint process and success tests.">{{ work_item.derax_endpoint_spec }}</textarea>
+          <button class="btn btn-sm btn-outline-primary" type="submit">Save endpoint draft</button>
+        </form>
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="lock_derax_endpoint">
+          <input type="hidden" name="derax_endpoint_spec" value="">
+          <button class="btn btn-sm btn-outline-success" type="submit">Lock endpoint</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-header"><strong>Seed history</strong></div>
+      <div class="card-body">
+        {% if seed_history %}
+          {% for row in seed_history %}
+            <details class="mb-2">
+              <summary>
+                Revision {{ row.revision }}
+                <span class="badge text-bg-secondary">{{ row.status }}</span>
+                {% if row.is_active %}<span class="badge text-bg-primary">ACTIVE</span>{% endif %}
+              </summary>
+              <div class="small text-muted mt-2">Timestamp: {{ row.created_at|default:"-" }}</div>
+              <div class="small mt-1"><strong>Reason:</strong> {{ row.reason|default:"-" }}</div>
+              <pre class="mt-2 mb-0" style="white-space:pre-wrap;">{{ row.seed_text|default:"-" }}</pre>
+            </details>
+          {% endfor %}
+        {% else %}
+          <div class="small text-muted">No seed revisions yet.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

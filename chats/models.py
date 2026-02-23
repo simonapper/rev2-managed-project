@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.db import models, transaction
+from django.db.models import Q
 from django.db.models import Max
 
 
@@ -298,3 +299,83 @@ class ChatSnapshot(models.Model):
         if self.pk is not None:
             raise ValueError("ChatSnapshot is immutable.")
         return super().save(*args, **kwargs)
+
+
+class ContractOverride(models.Model):
+    class ScopeType(models.TextChoices):
+        GLOBAL = "GLOBAL", "Global"
+
+    key = models.CharField(max_length=120, unique=True)
+    scope_type = models.CharField(max_length=20, choices=ScopeType.choices, default=ScopeType.GLOBAL)
+    scope_id = models.IntegerField(null=True, blank=True)
+    is_enabled = models.BooleanField(default=True)
+    override_text = models.TextField(blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contract_overrides_updated",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["key"]),
+            models.Index(fields=["scope_type", "scope_id"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.scope_type}:{self.key}"
+
+
+class ContractText(models.Model):
+    class ScopeType(models.TextChoices):
+        GLOBAL_DEFAULT = "GLOBAL_DEFAULT", "Global default"
+        USER = "USER", "User"
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        RETIRED = "RETIRED", "Retired"
+
+    key = models.CharField(max_length=120)
+    scope_type = models.CharField(max_length=20, choices=ScopeType.choices)
+    scope_id = models.IntegerField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+    text = models.TextField(blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contract_texts_updated",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["key", "scope_type", "scope_id"]),
+            models.Index(fields=["scope_type", "scope_id", "status"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    (Q(scope_type="GLOBAL_DEFAULT") & Q(scope_id__isnull=True))
+                    | (Q(scope_type="USER") & Q(scope_id__isnull=False))
+                ),
+                name="ck_contracttext_scope_shape",
+            ),
+            models.UniqueConstraint(
+                fields=["key", "scope_type", "scope_id"],
+                condition=Q(status="ACTIVE", scope_id__isnull=False),
+                name="uq_contracttext_active_scoped",
+            ),
+            models.UniqueConstraint(
+                fields=["key", "scope_type"],
+                condition=Q(status="ACTIVE", scope_id__isnull=True),
+                name="uq_contracttext_active_global",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.scope_type}:{self.scope_id}:{self.key}:{self.status}"

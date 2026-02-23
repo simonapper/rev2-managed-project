@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-3">
+  <h2>Contracts Dashboard</h2>
+  <p class="text-muted mb-3">Inherited defaults, your overrides, and effective contract text.</p>
+  <style>
+    .contracts-table a.param-link {
+      color: #0d6efd;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .contracts-table a.param-link:hover,
+    .contracts-table a.param-link:focus {
+      text-decoration: underline;
+    }
+    .contracts-table td,
+    .contracts-table th,
+    .contracts-table code,
+    .contracts-table a,
+    .contracts-panel,
+    .contracts-panel label,
+    .contracts-panel textarea,
+    .contracts-panel .alert {
+      font-family: inherit;
+    }
+    .contracts-table .meta-cell {
+      font-size: 0.75rem;
+      line-height: 1.2;
+      color: #198754;
+      white-space: nowrap;
+    }
+  </style>
+
+  <div class="d-flex gap-2 align-items-center mb-3 flex-wrap">
+    <form method="post" action="{% url 'accounts:system_contract_pack_export' %}" id="export-selected-form" class="d-flex gap-2 align-items-center">
+      {% csrf_token %}
+      <button class="btn btn-sm btn-outline-primary" type="submit">Export selected</button>
+      <button class="btn btn-sm btn-outline-secondary" type="button" onclick="toggleExportKeys(true)">Select all</button>
+      <button class="btn btn-sm btn-outline-secondary" type="button" onclick="toggleExportKeys(false)">Clear</button>
+    </form>
+    <form method="post" action="{% url 'accounts:system_contract_pack_import' %}" enctype="multipart/form-data" class="d-flex gap-2 align-items-center">
+      {% csrf_token %}
+      <input id="contract-pack-file" class="form-control form-control-sm" type="file" name="contract_pack" accept="application/json,.json">
+      <button class="btn btn-sm btn-outline-secondary text-nowrap" type="submit">Import overrides</button>
+    </form>
+    <a class="btn btn-sm {% if show_overridden %}btn-primary{% else %}btn-outline-primary{% endif %}" href="?show_overridden={% if show_overridden %}0{% else %}1{% endif %}">
+      {% if show_overridden %}Show all{% else %}Show only overridden{% endif %}
+    </a>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle contracts-table">
+      <thead>
+        <tr>
+          <th>Export</th>
+          <th>Contract</th>
+          <th>Flows</th>
+          <th>User override</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        {% ifchanged row.section %}
+        <tr class="table-light">
+          <td colspan="4" class="fw-semibold">{{ row.section }}</td>
+        </tr>
+        {% endifchanged %}
+        <tr>
+          <td>
+            <input type="checkbox" class="form-check-input export-key"
+                   form="export-selected-form"
+                   name="keys"
+                   value="{{ row.key }}"
+                   {% if row.has_user_override %}checked{% endif %}>
+          </td>
+          <td>
+            <a class="param-link" href="?key={{ row.key|urlencode }}{% if show_overridden %}&show_overridden=1{% endif %}">
+              {{ row.key }}
+            </a>
+          </td>
+          <td>{{ row.flows }}</td>
+          <td>{% if row.has_user_override %}Yes{% else %}No{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div id="contracts-selected-panel">
+    {% include "accounts/system/_contracts_selected_panel.html" %}
+  </div>
+</div>
+<script>
+function toggleExportKeys(value) {
+  var boxes = document.querySelectorAll(".export-key");
+  for (var i = 0; i < boxes.length; i += 1) {
+    boxes[i].checked = !!value;
+  }
+}
+
+function bindContractSelectionAjax() {
+  var links = document.querySelectorAll(".contracts-table a.param-link");
+  for (var i = 0; i < links.length; i += 1) {
+    links[i].addEventListener("click", function (event) {
+      event.preventDefault();
+      var href = this.getAttribute("href") || "";
+      if (!href) return;
+      var sep = href.indexOf("?") >= 0 ? "&" : "?";
+      var ajaxUrl = href + sep + "ajax=1";
+      fetch(ajaxUrl, { headers: { "X-Requested-With": "XMLHttpRequest" } })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data || !data.ok) return;
+          var target = document.getElementById("contracts-selected-panel");
+          if (target) {
+            target.innerHTML = data.selected_html || "";
+            bindContractPreviewAjax();
+          }
+          if (window.history && window.history.replaceState) {
+            window.history.replaceState({}, "", href);
+          }
+        })
+        .catch(function () {});
+    });
+  }
+}
+
+bindContractSelectionAjax();
+bindContractPreviewAjax();
+
+function applyPresetToOverride(buttonEl) {
+  var panel = document.getElementById("contracts-selected-panel");
+  if (!panel) return;
+  var target = panel.querySelector("textarea.js-user-override-text");
+  if (!target) return;
+  var text = (buttonEl && buttonEl.getAttribute("data-preset-text")) || "";
+  target.value = text;
+  target.focus();
+}
+
+function bindContractPreviewAjax() {
+  var panel = document.getElementById("contracts-selected-panel");
+  if (!panel) return;
+  var forms = panel.querySelectorAll("form.js-contract-preview-form");
+  for (var i = 0; i < forms.length; i += 1) {
+    forms[i].addEventListener("submit", function (event) {
+      event.preventDefault();
+      var form = event.currentTarget;
+      var output = form.querySelector(".js-contract-preview-output");
+      var hidden = form.querySelector("input[name='preview_contract_text']");
+      var draft = panel.querySelector("textarea.js-user-override-text");
+      if (hidden) {
+        hidden.value = draft ? (draft.value || "") : "";
+      }
+      if (output) {
+        output.textContent = "Generating preview...";
+      }
+      var data = new FormData(form);
+      fetch(form.getAttribute("action") || window.location.href, {
+        method: "POST",
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+        body: data
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (payload) {
+          if (!output) return;
+          if (payload && payload.ok) {
+            output.textContent = payload.preview_text || "(No preview text)";
+            return;
+          }
+          output.textContent = (payload && payload.error) ? payload.error : "Preview failed";
+        })
+        .catch(function () {
+          if (output) output.textContent = "Preview failed";
+        });
+    });
+  }
+}
+</script>
+{% endblock %}

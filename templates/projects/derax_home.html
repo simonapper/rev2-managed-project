@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+
+{% block title %}DERAX - {{ project.name }}{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h4 class="mb-1">{{ project.name }}</h4>
+      <div class="small text-muted">DERAX work home</div>
+    </div>
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:project_config_info' project.id %}">Project settings</a>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-xl-8">
+      <div class="card mb-3">
+        <div class="card-body">
+          <div class="d-flex gap-3 flex-wrap">
+            <div><strong>WorkItem:</strong> {{ work_item.id }}</div>
+            <div><strong>Active phase:</strong> <span class="badge text-bg-primary">{{ work_item.active_phase }}</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-header">
+          DEFINE
+        </div>
+        <div class="card-body">
+          <p class="small text-muted mb-2">{{ define_help_text }}</p>
+
+          <form method="post" class="mb-3">
+        {% csrf_token %}
+        <label class="form-label small mb-1" for="id_end_in_mind">End in mind</label>
+        <textarea id="id_end_in_mind" name="end_in_mind" class="form-control mb-2" rows="5" placeholder="Describe the outcome you want from this DERAX process.">{{ work_item.intent_raw }}</textarea>
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+          <span id="end-in-mind-save-status" class="small text-muted"></span>
+        </div>
+          </form>
+
+      <div class="mb-3">
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="use_define_response_as_intent">
+          <label class="form-label small mb-1" for="id_refined_intent">Latest DEFINE response (editable)</label>
+          <textarea id="id_refined_intent" name="candidate_text" class="form-control mb-2" rows="4">{{ latest_define_assistant_text }}</textarea>
+          <button type="submit" class="btn btn-sm btn-outline-success" {% if not latest_define_assistant_text %}disabled{% endif %}>Use this as intent</button>
+        </form>
+      </div>
+
+          <div class="small text-muted mb-2">DEFINE conversation with LLM (DEFINE contract enforced, last 20 turns included).</div>
+          <div id="derax-define-history-panel">
+            {% include "projects/_derax_define_history.html" with define_history=define_history %}
+          </div>
+
+          <form method="post" id="define-llm-turn-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="define_llm_turn">
+        <label class="form-label small mb-1" for="id_define_user_input">Message to DEFINE LLM</label>
+        <textarea id="id_define_user_input" name="define_user_input" class="form-control mb-2" rows="4" placeholder="Ask the LLM to sharpen your intent.">{{ work_item.intent_raw }}</textarea>
+        <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Send DEFINE turn</button>
+        <span id="define-turn-status" class="small text-muted ms-2"></span>
+          </form>
+          <form method="post" class="mt-2">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="lock_define_and_explore">
+        <button type="submit" class="btn btn-sm btn-primary">Lock DEFINE and move to EXPLORE</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          Definition lock history (seed log)
+        </div>
+        <div class="card-body">
+          {% if seed_history %}
+          <div class="list-group list-group-flush">
+            {% for row in seed_history %}
+            <div class="list-group-item">
+              <div class="d-flex justify-content-between">
+                <div>
+                  <strong>Revision {{ row.revision }}</strong>
+                  <span class="badge text-bg-secondary">{{ row.status }}</span>
+                </div>
+                <div class="small text-muted">{{ row.created_at }}</div>
+              </div>
+              <div class="small mt-2"><strong>Reason:</strong> {{ row.reason|default:"-" }}</div>
+              <pre class="small mb-0 mt-2" style="white-space: pre-wrap;">{{ row.seed_text }}</pre>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="text-muted small">No seed revisions yet.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% if show_contract_debug %}
+    <div class="col-12 col-xl-4">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>Active Contract (Debug)</span>
+          <span class="badge text-bg-light">{{ work_item.active_phase }}</span>
+        </div>
+        <div class="card-body">
+          {% if active_phase_contract %}
+            <div class="small text-muted mb-2">
+              Source: {{ active_phase_contract.source|default:"-" }}<br>
+              Key: {{ active_phase_contract.effective_phase_contract|default:"-" }}
+            </div>
+            <div class="small mb-0" style="white-space: pre-wrap; font-family: inherit;">{{ active_phase_contract.content }}</div>
+          {% else %}
+            <div class="small text-muted">No active phase contract resolved.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+<script>
+(function () {
+  function getCookie(name) {
+    var value = "; " + document.cookie;
+    var parts = value.split("; " + name + "=");
+    if (parts.length === 2) return parts.pop().split(";").shift();
+    return "";
+  }
+
+  var csrfToken = getCookie("csrftoken");
+  var endBox = document.getElementById("id_end_in_mind");
+  var saveStatus = document.getElementById("end-in-mind-save-status");
+  var defineForm = document.getElementById("define-llm-turn-form");
+  var defineInput = document.getElementById("id_define_user_input");
+  var defineStatus = document.getElementById("define-turn-status");
+  var defineButton = document.getElementById("btn-send-define-turn");
+  var historyPanel = document.getElementById("derax-define-history-panel");
+  var latestBox = document.getElementById("id_refined_intent");
+
+  function postAction(payload, onOk, onErr) {
+    var body = new FormData();
+    body.append("csrfmiddlewaretoken", csrfToken);
+    Object.keys(payload).forEach(function (k) {
+      body.append(k, payload[k]);
+    });
+    fetch(window.location.href, {
+      method: "POST",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      body: body
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.ok) {
+          onOk(data);
+          return;
+        }
+        onErr((data && data.error) || "Request failed");
+      })
+      .catch(function () {
+        onErr("Request failed");
+      });
+  }
+
+  if (endBox) {
+    endBox.addEventListener("blur", function () {
+      var text = (endBox.value || "").trim();
+      postAction(
+        { action: "autosave_end_in_mind", end_in_mind: text },
+        function () {
+          if (saveStatus) saveStatus.textContent = "Autosaved";
+        },
+        function (err) {
+          if (saveStatus) saveStatus.textContent = err;
+        }
+      );
+    });
+  }
+
+  if (defineForm && defineInput) {
+    defineForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var text = (defineInput.value || "").trim();
+      if (!text) {
+        if (defineStatus) defineStatus.textContent = "Enter text for the DEFINE LLM turn.";
+        return;
+      }
+      if (defineButton) defineButton.disabled = true;
+      if (defineStatus) defineStatus.textContent = "Sending...";
+      postAction(
+        { action: "define_llm_turn", define_user_input: text },
+        function (data) {
+          if (historyPanel && data.history_html) {
+            historyPanel.innerHTML = data.history_html;
+          }
+          var latest = (data.latest_define_assistant_text || "").trim();
+          if (latestBox) latestBox.value = latest;
+          if (defineStatus) defineStatus.textContent = "Response received.";
+          if (defineButton) defineButton.disabled = false;
+        },
+        function (err) {
+          if (defineStatus) defineStatus.textContent = err;
+          if (defineButton) defineButton.disabled = false;
+        }
+      );
+    });
+  }
+})();
+</script>
+{% endblock %}

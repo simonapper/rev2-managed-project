@@ -6,6 +6,7 @@ from __future__ import annotations
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 from .enums import ChatReadScope
 from accounts.models_avatars import Avatar
@@ -34,6 +35,10 @@ class Project(models.Model):
         EXECUTE = "EXECUTE", "Execute"
         REVIEW = "REVIEW", "Review"
 
+    class WorkflowMode(models.TextChoices):
+        PDE = "PDE", "PDE"
+        DERAX_WORK = "DERAX_WORK", "DERAX work"
+
     class Status(models.TextChoices):
         ACTIVE = "ACTIVE", "Active"
         PAUSED = "PAUSED", "Paused"
@@ -61,6 +66,11 @@ class Project(models.Model):
         max_length=10,
         choices=Mode.choices,
         default=Mode.PLAN,
+    )
+    workflow_mode = models.CharField(
+        max_length=20,
+        choices=WorkflowMode.choices,
+        default=WorkflowMode.PDE,
     )
     status = models.CharField(
         max_length=10,
@@ -181,6 +191,385 @@ class ProjectDocument(models.Model):
 
     def __str__(self) -> str:
         return f"{self.project_id}:{self.id}:{self.original_name or self.title}"
+
+
+class WorkItem(models.Model):
+    PHASE_DEFINE = "DEFINE"
+    PHASE_EXPLORE = "EXPLORE"
+    PHASE_REFINE = "REFINE"
+    PHASE_APPROVE = "APPROVE"
+    PHASE_EXECUTE = "EXECUTE"
+    PHASE_COMPLETE = "COMPLETE"
+    ALLOWED_PHASES = (
+        PHASE_DEFINE,
+        PHASE_EXPLORE,
+        PHASE_REFINE,
+        PHASE_APPROVE,
+        PHASE_EXECUTE,
+        PHASE_COMPLETE,
+    )
+
+    SEED_STATUS_DRAFT = "DRAFT"
+    SEED_STATUS_PROPOSED = "PROPOSED"
+    SEED_STATUS_PASS_LOCKED = "PASS_LOCKED"
+    SEED_STATUS_RETIRED = "RETIRED"
+    SEED_STATUS_ACTIVE = "ACTIVE"  # legacy alias
+
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="work_items",
+    )
+    is_primary = models.BooleanField(default=False)
+    title = models.CharField(max_length=200, blank=True, default="")
+    intent_raw = models.TextField(blank=True, default="")
+    state = models.CharField(max_length=40, default="NEW")
+    active_phase = models.CharField(max_length=80, blank=True, default="")
+    seed_log = models.JSONField(default=list, blank=True)
+    active_seed_revision = models.PositiveIntegerField(default=0)
+    deliverables = models.JSONField(default=list, blank=True)
+    activity_log = models.JSONField(default=list, blank=True)
+    boundary_profile_json = models.JSONField(default=dict, blank=True)
+    derax_endpoint_spec = models.TextField(blank=True, default="")
+    derax_endpoint_locked = models.BooleanField(default=False)
+    derax_define_history = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project", "updated_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project"],
+                condition=Q(is_primary=True),
+                name="uq_workitem_primary_per_project",
+            ),
+        ]
+
+    @classmethod
+    def create_minimal(
+        cls,
+        *,
+        project: Project,
+        state: str = "NEW",
+        active_phase: str = "",
+        title: str = "",
+        intent_raw: str = "",
+    ) -> "WorkItem":
+        phase = str(active_phase or cls.PHASE_DEFINE).strip().upper()
+        if phase not in cls.ALLOWED_PHASES:
+            raise ValueError("Invalid active phase.")
+        return cls.objects.create(
+            project=project,
+            title=(title or "")[:200],
+            intent_raw=(intent_raw or ""),
+            state=(state or "NEW")[:40],
+            active_phase=phase[:80],
+            seed_log=[],
+            active_seed_revision=0,
+            deliverables=[],
+            activity_log=[],
+            boundary_profile_json={},
+            derax_endpoint_spec="",
+            derax_endpoint_locked=False,
+            derax_define_history=[],
+        )
+
+    @staticmethod
+    def _normalise_phase(raw_phase: str) -> str:
+        return str(raw_phase or "").strip().upper()
+
+    def _current_phase(self) -> str:
+        phase = self._normalise_phase(self.active_phase) or self.PHASE_DEFINE
+        if phase not in self.ALLOWED_PHASES:
+            raise ValueError("Current active_phase is invalid.")
+        return phase
+
+    def _has_pass_locked_seed(self) -> bool:
+        log = self._validated_seed_log()
+        for item in log:
+            if str(item.get("status") or "") == self.SEED_STATUS_PASS_LOCKED:
+                return True
+        return False
+
+    def _has_proposed_seed_revision(self) -> bool:
+        log = self._validated_seed_log()
+        for item in log:
+            status = str(item.get("status") or "").strip().upper()
+            if status in {
+                self.SEED_STATUS_PROPOSED,
+                self.SEED_STATUS_PASS_LOCKED,
+                self.SEED_STATUS_RETIRED,
+                self.SEED_STATUS_ACTIVE,  # legacy
+            }:
+                return True
+        return False
+
+    def _has_execute_deliverables(self) -> bool:
+        items = list(self.deliverables or [])
+        return any(str(v or "").strip() for v in items)
+
+    def _requires_derax_endpoint(self) -> bool:
+        project = getattr(self, "project", None)
+        mode = str(getattr(project, "workflow_mode", "") or "").strip().upper()
+        return mode == str(Project.WorkflowMode.DERAX_WORK).strip().upper()
+
+    def _has_locked_derax_endpoint(self) -> bool:
+        return bool(self.derax_endpoint_locked and str(self.derax_endpoint_spec or "").strip())
+
+    def evaluate_phase_transition(self, to_phase: str) -> tuple[bool, str]:
+        target = self._normalise_phase(to_phase)
+        if target not in self.ALLOWED_PHASES:
+            return False, "Target phase is invalid."
+        try:
+            current = self._current_phase()
+        except ValueError:
+            return False, "Current phase is invalid."
+
+        phase_order = list(self.ALLOWED_PHASES)
+        current_idx = phase_order.index(current)
+        target_idx = phase_order.index(target)
+        if target_idx < current_idx:
+            return False, "Backward phase transitions are not allowed."
+
+        if target == self.PHASE_APPROVE and not self._has_proposed_seed_revision():
+            return False, "APPROVE requires a proposed seed revision."
+
+        if target == self.PHASE_EXECUTE and not self._has_pass_locked_seed():
+            return False, "EXECUTE requires a PASS_LOCKED seed revision."
+        if target == self.PHASE_EXECUTE and self._requires_derax_endpoint() and not self._has_locked_derax_endpoint():
+            return False, "EXECUTE requires a locked DERAX endpoint specification."
+
+        if target == self.PHASE_COMPLETE and current != self.PHASE_EXECUTE:
+            return False, "COMPLETE requires current phase EXECUTE."
+        if target == self.PHASE_COMPLETE and not self._has_execute_deliverables():
+            return False, "COMPLETE requires EXECUTE deliverables."
+
+        return True, ""
+
+    def can_transition(self, to_phase: str) -> bool:
+        ok, _reason = self.evaluate_phase_transition(to_phase)
+        return bool(ok)
+
+    def set_phase(self, new_phase: str) -> str:
+        before = self._current_phase()
+        target = self._normalise_phase(new_phase)
+        if target not in self.ALLOWED_PHASES:
+            raise ValueError("Invalid phase.")
+        ok, reason = self.evaluate_phase_transition(target)
+        if not ok:
+            raise ValueError(reason or "Illegal phase transition.")
+        self.active_phase = target
+        self.save(update_fields=["active_phase", "updated_at"])
+        if before != target:
+            self.append_activity(
+                actor="system",
+                action="phase_changed",
+                notes=f"{before} -> {target}",
+            )
+        return self.active_phase
+
+    def set_derax_endpoint(self, spec_text: str, *, actor="user", lock: bool = False) -> None:
+        text = str(spec_text or "").strip()
+        self.derax_endpoint_spec = text
+        if lock:
+            if not text:
+                raise ValueError("Cannot lock an empty DERAX endpoint specification.")
+            self.derax_endpoint_locked = True
+            self.save(update_fields=["derax_endpoint_spec", "derax_endpoint_locked", "updated_at"])
+            self.append_activity(
+                actor=actor,
+                action="derax_endpoint_locked",
+                notes="DERAX endpoint specification locked.",
+            )
+            return
+        self.derax_endpoint_locked = False
+        self.save(update_fields=["derax_endpoint_spec", "derax_endpoint_locked", "updated_at"])
+        self.append_activity(
+            actor=actor,
+            action="derax_endpoint_saved",
+            notes="DERAX endpoint specification updated.",
+        )
+
+    def lock_derax_endpoint(self, *, actor="user") -> None:
+        text = str(self.derax_endpoint_spec or "").strip()
+        if not text:
+            raise ValueError("Cannot lock an empty DERAX endpoint specification.")
+        self.derax_endpoint_locked = True
+        self.save(update_fields=["derax_endpoint_locked", "updated_at"])
+        self.append_activity(
+            actor=actor,
+            action="derax_endpoint_locked",
+            notes="DERAX endpoint specification locked.",
+        )
+
+    def append_activity(self, *, actor, action: str, notes: str = "") -> int:
+        actor_value = str(getattr(actor, "id", actor) or "system").strip().lower()
+        if actor_value.isdigit():
+            actor_value = "user"
+        if actor_value not in {"user", "llm", "system"}:
+            actor_value = "system"
+
+        log = list(self.activity_log or [])
+        log.append(
+            {
+                "timestamp": timezone.now().isoformat(),
+                "actor": actor_value,
+                "action": str(action or "").strip(),
+                "notes": str(notes or "").strip(),
+            }
+        )
+        self.activity_log = log
+        self.save(update_fields=["activity_log", "updated_at"])
+        return len(log)
+
+    def add_deliverable(self, ref: str, note: str | None = None, actor: str = "system") -> int:
+        ref_text = str(ref or "").strip()
+        if not ref_text:
+            raise ValueError("Deliverable ref is required.")
+        note_text = str(note or "").strip()
+        line = ref_text if not note_text else f"{ref_text} | {note_text}"
+        items = list(self.deliverables or [])
+        items.append(line)
+        self.deliverables = items
+        self.save(update_fields=["deliverables", "updated_at"])
+        self.append_activity(
+            actor=actor,
+            action="deliverable_generated",
+            notes=line,
+        )
+        return len(items)
+
+    @staticmethod
+    def _actor_id(created_by) -> int | None:
+        if created_by is None:
+            return None
+        actor_id = getattr(created_by, "id", created_by)
+        try:
+            return int(actor_id)
+        except (TypeError, ValueError):
+            raise ValueError("created_by must be a user or integer id.")
+
+    def _validated_seed_log(self) -> list[dict]:
+        log = list(self.seed_log or [])
+        expected_revision = 1
+        pass_locked_count = 0
+        for item in log:
+            if not isinstance(item, dict):
+                raise ValueError("seed_log entries must be dict objects.")
+            revision = item.get("revision")
+            if not isinstance(revision, int):
+                raise ValueError("seed_log revision must be an integer.")
+            if revision != expected_revision:
+                raise ValueError("seed_log revisions must increase by exactly 1.")
+            if str(item.get("status") or "") == self.SEED_STATUS_PASS_LOCKED:
+                pass_locked_count += 1
+            expected_revision += 1
+        if pass_locked_count > 1:
+            raise ValueError("Only one PASS_LOCKED seed revision is allowed.")
+        if self.active_seed_revision < 0:
+            raise ValueError("active_seed_revision cannot be negative.")
+        if self.active_seed_revision > len(log):
+            raise ValueError("active_seed_revision cannot exceed seed_log length.")
+        return log
+
+    def append_seed_revision(self, seed_text: str, created_by, reason: str) -> int:
+        log = self._validated_seed_log()
+        next_revision = len(log) + 1
+        entry = {
+            "revision": next_revision,
+            "status": self.SEED_STATUS_PROPOSED,
+            "seed_text": str(seed_text or ""),
+            "created_by_id": self._actor_id(created_by),
+            "reason": str(reason or ""),
+            "event": "APPEND",
+            "created_at": timezone.now().isoformat(),
+        }
+        log.append(entry)
+        self.seed_log = log
+        self.active_seed_revision = next_revision
+        self._validated_seed_log()
+        self.save(update_fields=["seed_log", "active_seed_revision", "updated_at"])
+        self.append_activity(
+            actor=created_by,
+            action="seed_proposed",
+            notes=f"revision={next_revision}; reason={str(reason or '').strip()}",
+        )
+        return self.active_seed_revision
+
+    def lock_seed(self, revision_number: int) -> int:
+        log = self._validated_seed_log()
+        try:
+            revision_number = int(revision_number)
+        except (TypeError, ValueError):
+            raise ValueError("revision_number must be an integer.")
+        if revision_number < 1 or revision_number > len(log):
+            raise ValueError("revision_number is out of range.")
+
+        for item in log:
+            if str(item.get("status") or "") == self.SEED_STATUS_PASS_LOCKED and item.get("revision") != revision_number:
+                item["status"] = self.SEED_STATUS_RETIRED
+
+        target = log[revision_number - 1]
+        target["status"] = self.SEED_STATUS_PASS_LOCKED
+        target["locked_at"] = timezone.now().isoformat()
+
+        self.seed_log = log
+        self.active_seed_revision = revision_number
+        self._validated_seed_log()
+        self.save(update_fields=["seed_log", "active_seed_revision", "updated_at"])
+        self.append_activity(
+            actor="user",
+            action="seed_locked",
+            notes=f"revision={revision_number}",
+        )
+        return self.active_seed_revision
+
+    def rollback_to(self, revision_number: int) -> int:
+        log = self._validated_seed_log()
+        try:
+            revision_number = int(revision_number)
+        except (TypeError, ValueError):
+            raise ValueError("revision_number must be an integer.")
+        if revision_number < 1 or revision_number > len(log):
+            raise ValueError("revision_number is out of range.")
+
+        target = log[revision_number - 1]
+        next_revision = len(log) + 1
+        rollback_entry = {
+            "revision": next_revision,
+            "status": self.SEED_STATUS_PROPOSED,
+            "seed_text": str(target.get("seed_text") or ""),
+            "created_by_id": None,
+            "reason": f"ROLLBACK_TO:{revision_number}",
+            "event": "ROLLBACK",
+            "rollback_to_revision": revision_number,
+            "created_at": timezone.now().isoformat(),
+        }
+        log.append(rollback_entry)
+        self.seed_log = log
+        self.active_seed_revision = next_revision
+        self._validated_seed_log()
+        self.save(update_fields=["seed_log", "active_seed_revision", "updated_at"])
+        self.append_activity(
+            actor="user",
+            action="seed_rollback",
+            notes=f"to_revision={revision_number}; new_revision={next_revision}",
+        )
+        return self.active_seed_revision
+
+    def append_seed_entry(self, entry: dict) -> int:
+        payload = dict(entry or {})
+        return self.append_seed_revision(
+            seed_text=str(payload.get("seed_text") or ""),
+            created_by=payload.get("created_by") or payload.get("created_by_id"),
+            reason=str(payload.get("reason") or ""),
+        )
+
+    def __str__(self) -> str:
+        return f"{self.project_id}:{self.id}:{self.state}"
 
 
 class ProjectPolicy(models.Model):

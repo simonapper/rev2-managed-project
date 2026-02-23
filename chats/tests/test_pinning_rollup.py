@@ -81,7 +81,7 @@ class PinningRollupTests(TestCase):
         a1.importance = ChatMessage.Importance.IGNORE
         a1.save(update_fields=["raw_text", "answer_text", "importance"])
 
-        def _fake_generate_text(*, system_blocks, messages, user=None, provider=None):
+        def _fake_generate_text(*, system_blocks, messages, user=None, provider=None, **kwargs):
             payload = messages[0]["content"]
             self.assertNotIn("IGNORE-ME", payload)
             return '{"summary":"ok","conclusion":"ok"}'

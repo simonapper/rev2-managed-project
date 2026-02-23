@@ -13,8 +13,10 @@ from projects import views_project
 from projects import views_pde_ui
 from projects import views_ppde_ui
 from projects import views_review
+from projects import views_derax
 from projects import views_wko
 from projects import views_execution
+from projects import views_workitem
 from projects.views_pde import pde_create_project_cko, pde_field_lock, pde_field_verify, pde_home, pde_commit
 from projects import views_cko
 
@@ -56,6 +58,9 @@ urlpatterns = [
     path("<int:project_id>/pde/topic-chat/", views_pde_ui.pde_topic_chat_open, name="pde_topic_chat_open"),
     path("<int:project_id>/wko/preview/", views_wko.wko_preview, name="wko_preview"),
     path("<int:project_id>/execution/", views_execution.execution_board, name="execution_board"),
+    path("<int:project_id>/workitem/", views_workitem.work_item_detail, name="work_item_detail"),
+    path("<int:project_id>/workitem/export/", views_workitem.work_item_export, name="work_item_export"),
+    path("<int:project_id>/derax/", views_derax.derax_project_home, name="derax_project_home"),
     path("<int:project_id>/home/", views_project.project_home, name="project_home"),
     path("<int:project_id>/cko/preview/", views_cko.cko_preview, name="cko_preview"),
     path("<int:project_id>/cko/print/", views_cko.cko_print, name="cko_print"),

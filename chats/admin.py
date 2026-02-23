@@ -3,7 +3,7 @@
 
 from django.contrib import admin
 
-from .models import ChatWorkspace, ChatMessage
+from .models import ChatWorkspace, ChatMessage, ContractOverride
 
 
 class ChatMessageInline(admin.TabularInline):
@@ -38,3 +38,10 @@ class ChatMessageAdmin(admin.ModelAdmin):
     search_fields = ("raw_text", "answer_text", "reasoning_text", "output_text")
     autocomplete_fields = ("chat",)
     readonly_fields = ("created_at",)
+
+
+@admin.register(ContractOverride)
+class ContractOverrideAdmin(admin.ModelAdmin):
+    list_display = ("key", "scope_type", "scope_id", "is_enabled", "updated_at", "updated_by")
+    list_filter = ("scope_type", "is_enabled")
+    search_fields = ("key", "override_text")

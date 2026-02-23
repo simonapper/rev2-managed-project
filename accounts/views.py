@@ -156,6 +156,7 @@ from chats.services_boundaries import build_boundary_contract_blocks, is_boundar
 from chats.services_boundary_validator import validate_boundary_labels
 from chats.services.cde_injection import build_cde_system_blocks
 from chats.services.cde_loop import validate_cde_inputs
+from chats.services.contracts.pipeline import ContractContext, build_system_blocks
 from chats.services_assets import persist_generated_images_from_text, save_generated_image_bytes
 from chats.services.chat_bootstrap import bootstrap_chat
 from chats.services.llm import _get_default_model_key, generate_openai_image_bytes, generate_panes, generate_text
@@ -182,6 +183,7 @@ from projects.models import (
     ProjectReviewChat,
     ProjectReviewStageChat,
     ProjectTopicChat,
+    WorkItem,
 )
 from projects.services.artefact_render import render_artefact_html
 from projects.services_text_normalise import normalise_sections
@@ -190,11 +192,26 @@ from projects.services_execute_validator import validate_execute_update, merge_e
 from projects.services.context_resolution import resolve_effective_context
 from projects.services.llm_instructions import PROTOCOL_LIBRARY, build_system_messages
 from projects.services_policy_retrieval import looks_policy_related, policy_retrieve
+from projects.services_phase_output_validator import (
+    build_phase_correction_request,
+    validate_phase_output,
+)
 from projects.services_project_membership import accessible_projects_qs, can_edit_pde, can_edit_ppde, is_project_committer
 from uploads.models import ChatAttachment, GeneratedImage
 
 
 User = get_user_model()
+
+
+def _active_work_item_for_project(project):
+    if project is None:
+        return None
+    return (
+        WorkItem.objects
+        .filter(project=project)
+        .order_by("-updated_at", "-id")
+        .first()
+    )
 
 ALLOWED_MODELS = [
     ("gpt-5.2", "gpt-5.2"),
@@ -366,6 +383,12 @@ def chat_suggest_goals(request):
         system_blocks=system_blocks,
         messages=[{"role": "user", "content": user_msg}],
         user=request.user,
+        contract_ctx=ContractContext(
+            user=request.user,
+            user_text=user_msg,
+            tier5_blocks=system_blocks,
+            include_envelope=False,
+        ),
     )
 
     alts = []
@@ -673,6 +696,7 @@ _IMPORT_RATE_LIMIT_WINDOW_SECONDS = 60
 _IMPORT_RATE_LIMIT_MAX = 6
 _MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 _SECURITY_LOG = logging.getLogger("workbench.security")
+_CHAT_LOG = logging.getLogger("workbench.chat")
 
 
 def _validate_import_zip_safety(zf: zipfile.ZipFile) -> None:
@@ -1097,17 +1121,6 @@ def chat_message_create(request):
         session_overrides=session_overrides,
         chat_overrides=chat_overrides,
     )
-    system_blocks = build_system_messages(resolved)
-    pinned_block = build_pinned_system_block(chat)
-    if pinned_block:
-        system_blocks.append(pinned_block)
-    system_blocks.extend(build_cde_system_blocks(chat))
-
-    request.session["rw_last_system_preview"] = "\n\n".join(system_blocks)
-    request.session["rw_last_system_preview_chat_id"] = chat.id
-    request.session["rw_last_system_preview_at"] = timezone.now().isoformat()
-    request.session.modified = True
-
     include_last_image = (request.POST.get("include_last_image") == "1")
     image_parts = []
     if include_last_image:
@@ -1160,7 +1173,43 @@ def chat_message_create(request):
                 policy_mode = True
         if allow_internal_docs and policy_mode:
             boundary_excerpts = policy_retrieve(project, content, max_chars=700)
-        system_blocks.extend(build_boundary_contract_blocks(boundary, boundary_excerpts))
+
+    pinned_block = build_pinned_system_block(chat)
+    active_work_item = _active_work_item_for_project(project)
+    contract_pipeline_enabled = bool(getattr(settings, "CONTRACT_PIPELINE_ENABLED", False))
+    contract_ctx = None
+    contract_trace = {}
+    if contract_pipeline_enabled:
+        contract_ctx = ContractContext(
+            user=request.user,
+            chat=chat,
+            project=project,
+            work_item=active_work_item,
+            user_text=content,
+            effective_context=resolved,
+            boundary_excerpts=boundary_excerpts,
+            is_cde=True,
+            tier6_blocks=[pinned_block] if pinned_block else [],
+        )
+        system_blocks, contract_trace = build_system_blocks(contract_ctx)
+        if settings.DEBUG:
+            _CHAT_LOG.debug("contracts.pipeline.main_turn chat_id=%s trace=%s", chat.id, contract_trace)
+    else:
+        system_blocks = build_system_messages(resolved)
+        if pinned_block:
+            system_blocks.append(pinned_block)
+        system_blocks.extend(build_cde_system_blocks(chat))
+        if boundary_active:
+            system_blocks.extend(build_boundary_contract_blocks(boundary, boundary_excerpts))
+
+    request.session["rw_last_system_preview"] = "\n\n".join(system_blocks)
+    request.session["rw_last_system_preview_chat_id"] = chat.id
+    request.session["rw_last_system_preview_at"] = timezone.now().isoformat()
+    if settings.DEBUG and contract_pipeline_enabled:
+        request.session["rw_last_contract_trace"] = contract_trace
+    else:
+        request.session.pop("rw_last_contract_trace", None)
+    request.session.modified = True
 
     sys_text = "\n\n".join([b for b in system_blocks if (b or "").strip()]).strip()
     if sys_text:
@@ -1248,6 +1297,8 @@ def chat_message_create(request):
             system_blocks=system_blocks,
             history_messages=history_messages,
             user=request.user,
+            work_item=active_work_item,
+            contract_ctx=contract_ctx,
         )
     except Exception as e:
         messages.error(request, "LLM call failed: " + str(e))
@@ -1278,6 +1329,8 @@ def chat_message_create(request):
                 system_blocks=system_blocks,
                 history_messages=history_messages,
                 user=request.user,
+                work_item=active_work_item,
+                contract_ctx=contract_ctx,
             )
             assistant_answer = (panes.get("answer") or "")
             labels_ok, label_errors = validate_boundary_labels(boundary, assistant_answer, boundary_excerpts=boundary_excerpts)
@@ -1295,6 +1348,44 @@ def chat_message_create(request):
                     ):
                         return redirect(_next_with_status(next_url, "boundary"))
                     return redirect(_next_with_status(reverse("accounts:chat_detail", args=[chat.id]), "boundary"))
+
+    phase_ok, phase_missing = validate_phase_output(work_item=active_work_item, text=assistant_answer)
+    if not phase_ok:
+        if active_work_item is not None:
+            active_work_item.append_activity(
+                actor="llm",
+                action="validation_failure",
+                notes="missing_sections=" + ", ".join(phase_missing),
+            )
+        correction_request = build_phase_correction_request(
+            missing_headers=phase_missing,
+            draft_text=assistant_answer,
+        )
+        panes = generate_panes(
+            correction_request,
+            image_parts=image_parts,
+            system_blocks=system_blocks,
+            history_messages=history_messages,
+            user=request.user,
+            work_item=active_work_item,
+        )
+        assistant_answer = (panes.get("answer") or "")
+        phase_ok, phase_missing = validate_phase_output(work_item=active_work_item, text=assistant_answer)
+        if not phase_ok:
+            if active_work_item is not None:
+                active_work_item.append_activity(
+                    actor="llm",
+                    action="validation_failure",
+                    notes="missing_sections_after_retry=" + ", ".join(phase_missing),
+                )
+            messages.error(request, "Phase output check failed: missing sections: " + ", ".join(phase_missing))
+            if next_url and url_has_allowed_host_and_scheme(
+                url=next_url,
+                allowed_hosts={request.get_host()},
+                require_https=request.is_secure(),
+            ):
+                return redirect(_next_with_status(next_url, "phase"))
+            return redirect(_next_with_status(reverse("accounts:chat_detail", args=[chat.id]), "phase"))
 
     provider_name, model_name = _active_provider_and_model_for_user(request.user)
     assistant_reasoning = (panes.get("reasoning") or "")
@@ -2673,12 +2764,20 @@ def _push_override_update(request, chat, changed_axes: list[tuple[str, str, str]
         chat_overrides=chat_overrides_now,
     )
 
-    system_blocks = build_system_messages(resolved_now)
-
     internal_user = "Internal: acknowledge the override is active. Say: Ready."
-    panes = generate_panes(
-        "\n\n".join(system_blocks) + "\n\n" + "User:\n" + internal_user,
+    contract_ctx = ContractContext(
         user=request.user,
+        chat=chat,
+        project=chat.project,
+        work_item=_active_work_item_for_project(chat.project),
+        user_text=internal_user,
+        effective_context=resolved_now,
+        is_cde=True,
+    )
+    panes = generate_panes(
+        internal_user,
+        user=request.user,
+        contract_ctx=contract_ctx,
     )
 
     assistant_raw = (
@@ -2712,9 +2811,11 @@ def _push_override_update(request, chat, changed_axes: list[tuple[str, str, str]
     request.session["rw_last_override_push_sig"] = push_sig
     request.session["rw_last_override_push_at"] = timezone.now().isoformat()
 
-    request.session["rw_last_system_preview"] = "\n\n".join(system_blocks)
+    sys_blocks, sys_trace = build_system_blocks(contract_ctx)
+    request.session["rw_last_system_preview"] = "\n\n".join(sys_blocks)
     request.session["rw_last_system_preview_chat_id"] = chat.id
     request.session["rw_last_system_preview_at"] = timezone.now().isoformat()
+    request.session["rw_last_contract_trace"] = sys_trace
 
     request.session.modified = True
 
@@ -2899,12 +3000,20 @@ def chat_config_overrides(request):
                             chat_overrides=chat_overrides_now,
                         )
 
-                        system_blocks = build_system_messages(resolved_now)
-
                         internal_user = "Internal: acknowledge the override is active. Say: Ready."
-                        panes = generate_panes(
-                            "\n\n".join(system_blocks) + "\n\n" + "User:\n" + internal_user,
+                        contract_ctx = ContractContext(
                             user=request.user,
+                            chat=chat,
+                            project=chat.project,
+                            work_item=_active_work_item_for_project(chat.project),
+                            user_text=internal_user,
+                            effective_context=resolved_now,
+                            is_cde=True,
+                        )
+                        panes = generate_panes(
+                            internal_user,
+                            user=request.user,
+                            contract_ctx=contract_ctx,
                         )
 
                         assistant_raw = (
@@ -2938,9 +3047,11 @@ def chat_config_overrides(request):
                         request.session["rw_last_override_push_sig"] = push_sig
                         request.session["rw_last_override_push_at"] = timezone.now().isoformat()
 
-                        request.session["rw_last_system_preview"] = "\n\n".join(system_blocks)
+                        sys_blocks, sys_trace = build_system_blocks(contract_ctx)
+                        request.session["rw_last_system_preview"] = "\n\n".join(sys_blocks)
                         request.session["rw_last_system_preview_chat_id"] = chat.id
                         request.session["rw_last_system_preview_at"] = timezone.now().isoformat()
+                        request.session["rw_last_contract_trace"] = sys_trace
 
                         request.session.modified = True
 

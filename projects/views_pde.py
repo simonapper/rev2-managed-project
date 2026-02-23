@@ -20,6 +20,7 @@ from projects.models import ProjectDefinitionField
 
 # NOTE: this import is used only by verify
 from projects.services.pde import validate_field
+from chats.services.contracts.pipeline import ContractContext
 from chats.services.llm import generate_panes
 
 from django.contrib import messages
@@ -190,7 +191,18 @@ def pde_field_verify(request):
 
     result = validate_field(
         generate_panes_func=lambda *args, **kwargs: generate_panes(
-            *args, user=request.user, **kwargs
+            *args,
+            user=request.user,
+            contract_ctx=kwargs.pop(
+                "contract_ctx",
+                ContractContext(
+                    user=request.user,
+                    project=project,
+                    user_text=str(args[0] if args else ""),
+                    is_pde=True,
+                ),
+            ),
+            **kwargs,
         ),
         field_key=field_key,
         value_text=value_text,

@@ -12,6 +12,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from chats.services.contracts.pipeline import ContractContext
 from chats.services.llm import generate_panes
 from chats.models import ChatWorkspace
 from chats.services.turns import build_chat_turn_context
@@ -196,7 +197,12 @@ def _extract_json_dict_from_text(raw_text: str) -> dict | None:
 
 
 def _build_route_seed_from_intent_llm(
-    *, intent_payload: dict, user, seed_style: str = "balanced", seed_constraints: str = ""
+    *,
+    intent_payload: dict,
+    user,
+    project=None,
+    seed_style: str = "balanced",
+    seed_constraints: str = "",
 ) -> dict | None:
     intent_text = build_cko_seed_text(intent_payload) or json.dumps(intent_payload, ensure_ascii=True, indent=2)
     base_route = _build_route_seed_from_intent(intent_payload)
@@ -223,8 +229,15 @@ def _build_route_seed_from_intent_llm(
     panes = generate_panes(
         "INTENT anchor source:\n" + intent_text + "\n\nProduce stage map now.",
         image_parts=None,
-        system_blocks=system_blocks + _seed_style_blocks(seed_style, seed_constraints),
+        system_blocks=[],
         user=user,
+        contract_ctx=ContractContext(
+            user=user,
+            project=project,
+            user_text="INTENT anchor source:\n" + intent_text + "\n\nProduce stage map now.",
+            is_review=True,
+            tier5_blocks=system_blocks + _seed_style_blocks(seed_style, seed_constraints),
+        ),
     )
     obj = _extract_json_dict_from_text(str(panes.get("output") or ""))
     if isinstance(obj, dict):
@@ -260,10 +273,41 @@ def _normalise_intent_payload(payload: dict | None, *, default_provenance: str =
 
 
 def _build_intent_seed_from_cko_llm(
-    *, source_payload: dict, user, seed_style: str = "balanced", seed_constraints: str = ""
+    *,
+    source_payload: dict,
+    user,
+    project=None,
+    seed_style: str = "balanced",
+    seed_constraints: str = "",
 ) -> dict | None:
     source = _normalise_intent_payload(source_payload)
-    system_blocks = [
+    system_blocks = build_cko_review_system_block_lines()
+    prompt = (
+        "Accepted CKO source JSON:\n"
+        + json.dumps(source, ensure_ascii=True, indent=2)
+        + "\n\nReturn INTENT CKO JSON now."
+    )
+    panes = generate_panes(
+        prompt,
+        image_parts=None,
+        system_blocks=[],
+        user=user,
+        contract_ctx=ContractContext(
+            user=user,
+            project=project,
+            user_text=prompt,
+            is_review=True,
+            tier5_blocks=system_blocks + _seed_style_blocks(seed_style, seed_constraints),
+        ),
+    )
+    obj = _extract_json_dict_from_text(str(panes.get("output") or ""))
+    if not isinstance(obj, dict):
+        return None
+    return _normalise_intent_payload(obj)
+
+
+def build_cko_review_system_block_lines() -> list[str]:
+    return [
         "You are producing an INTENT CKO payload.",
         "Return strict JSON only in output, no markdown.",
         "Fill all required fields with concise content.",
@@ -280,25 +324,19 @@ def _build_intent_seed_from_cko_llm(
         '  "provenance": "string"',
         "}",
     ]
-    prompt = (
-        "Accepted CKO source JSON:\n"
-        + json.dumps(source, ensure_ascii=True, indent=2)
-        + "\n\nReturn INTENT CKO JSON now."
-    )
-    panes = generate_panes(
-        prompt,
-        image_parts=None,
-        system_blocks=system_blocks + _seed_style_blocks(seed_style, seed_constraints),
-        user=user,
-    )
-    obj = _extract_json_dict_from_text(str(panes.get("output") or ""))
-    if not isinstance(obj, dict):
-        return None
-    return _normalise_intent_payload(obj)
+
+
+def build_cko_review_system_block() -> str:
+    return "\n".join(build_cko_review_system_block_lines()).strip()
 
 
 def _build_execute_stage_actions_llm(
-    *, route_payload: dict, user, seed_style: str = "balanced", seed_constraints: str = ""
+    *,
+    route_payload: dict,
+    user,
+    project=None,
+    seed_style: str = "balanced",
+    seed_constraints: str = "",
 ) -> dict[str, dict] | None:
     route_norm = normalise_pdo_payload(route_payload or {})
     stages = route_norm.get("stages") if isinstance(route_norm.get("stages"), list) else []
@@ -334,8 +372,15 @@ def _build_execute_stage_actions_llm(
     panes = generate_panes(
         prompt,
         image_parts=None,
-        system_blocks=system_blocks + _seed_style_blocks(seed_style, seed_constraints),
+        system_blocks=[],
         user=user,
+        contract_ctx=ContractContext(
+            user=user,
+            project=project,
+            user_text=prompt,
+            is_review=True,
+            tier5_blocks=system_blocks + _seed_style_blocks(seed_style, seed_constraints),
+        ),
     )
     obj = _extract_json_dict_from_text(str(panes.get("output") or ""))
     if not isinstance(obj, dict):
@@ -1542,6 +1587,7 @@ def project_review_chat_open(request, project_id: int):
         route_payload = _build_route_seed_from_intent_llm(
             intent_payload=intent_payload,
             user=request.user,
+            project=project,
             seed_style=seed_style,
             seed_constraints=seed_constraints,
         )
@@ -1679,6 +1725,7 @@ def project_review_route_seed_from_intent(request, project_id: int):
     route_payload = _build_route_seed_from_intent_llm(
         intent_payload=intent_payload,
         user=request.user,
+        project=project,
         seed_style=seed_style,
         seed_constraints=seed_constraints,
     )
@@ -1874,6 +1921,7 @@ def project_review_intent_seed(request, project_id: int):
     llm_payload = _build_intent_seed_from_cko_llm(
         source_payload=source_payload,
         user=request.user,
+        project=project,
         seed_style=seed_style,
         seed_constraints=seed_constraints,
     )
@@ -2176,6 +2224,7 @@ def project_review_execute_reseed(request, project_id: int):
         llm_actions = _build_execute_stage_actions_llm(
             route_payload=route_payload,
             user=request.user,
+            project=project,
             seed_style=seed_style,
             seed_constraints=seed_constraints,
         )

@@ -17,6 +17,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 from django.urls import reverse
 from django.utils import timezone
 
+from chats.services.contracts.pipeline import ContractContext
 from chats.services.llm import generate_panes
 from projects.models import Project, ProjectDefinitionField, ProjectCKO, ProjectTopicChat, UserProjectPrefs
 from projects.services.pde import draft_pde_from_seed, validate_field
@@ -434,6 +435,13 @@ def pde_detail(request, project_id: int):
             messages.success(request, "Seed style applied.")
 
     def _generate_panes_for_user(*args, **kwargs):
+        if "contract_ctx" not in kwargs:
+            kwargs["contract_ctx"] = ContractContext(
+                user=request.user,
+                project=project,
+                user_text=str(args[0] if args else ""),
+                is_pde=True,
+            )
         return generate_panes(*args, user=request.user, **kwargs)
 
     ensure_pde_fields(project)

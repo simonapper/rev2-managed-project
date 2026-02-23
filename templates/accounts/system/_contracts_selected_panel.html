@@ -1,0 +1,94 @@
+{% if selected %}
+<div class="card mt-3 contracts-panel">
+  <div class="card-header">
+    <strong>{{ selected.key }}</strong> - {{ selected.label }}
+  </div>
+  <div class="card-body">
+    <div class="mb-3 row g-3">
+      <div class="{% if selected.preset_options %}col-12 col-lg-6{% else %}col-12{% endif %}">
+        <label class="form-label"><strong>Default (read-only)</strong></label>
+        <textarea class="form-control" rows="6" readonly>{{ selected.default_text }}</textarea>
+      </div>
+      {% if selected.preset_options %}
+      <div class="col-12 col-lg-6">
+        <label class="form-label"><strong>Other presets</strong></label>
+        <div class="border rounded p-2" style="max-height: 260px; overflow-y: auto;">
+          {% for opt in selected.preset_options %}
+          <div class="mb-2 pb-2 {% if not forloop.last %}border-bottom{% endif %}">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div>
+                <strong>{{ opt.name }}</strong>
+                {% if opt.is_active %}
+                <span class="badge text-bg-success">Active</span>
+                {% endif %}
+              </div>
+              <button type="button"
+                      class="btn btn-sm btn-outline-primary"
+                      data-preset-text="{{ opt.preview|escapejs }}"
+                      onclick="applyPresetToOverride(this)">
+                Use preset
+              </button>
+            </div>
+            <div class="mb-0 small" style="white-space: pre-wrap; font-family: inherit;">{{ opt.preview }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+    {% if selected.is_read_only %}
+    <div class="alert alert-success">
+      Derived contract. Read-only.
+      {% if selected.key == "phase.contract" %}
+      Resolves from {{ selected.resolved_from }}.
+      {% endif %}
+    </div>
+    {% elif selected.key == "boundary.profile" %}
+    <form method="post" class="mb-3">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="save_boundary_profile">
+      <label class="form-label"><strong>Boundary profile JSON</strong></label>
+      <textarea class="form-control mb-2" name="boundary_profile_json" rows="8">{{ selected.user_text|default:selected.default_text }}</textarea>
+      <button class="btn btn-sm btn-primary" type="submit">Save boundary profile</button>
+    </form>
+    <form method="post" class="mb-3">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="reset_boundary_profile">
+      <button class="btn btn-sm btn-outline-success" type="submit">Reset boundary profile</button>
+    </form>
+    {% else %}
+    <form method="post" class="mb-3">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="save_user">
+      <input type="hidden" name="key" value="{{ selected.key }}">
+      <label class="form-label"><strong>User override</strong></label>
+      <textarea class="form-control mb-2 js-user-override-text" name="user_text" rows="6">{% if selected.user_text is not None %}{{ selected.user_text }}{% endif %}</textarea>
+      <button class="btn btn-sm btn-primary" type="submit">Save user override</button>
+    </form>
+    <form method="post" class="mb-3">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="reset_user">
+      <input type="hidden" name="key" value="{{ selected.key }}">
+      <button class="btn btn-sm btn-outline-success" type="submit">Reset to default</button>
+    </form>
+    <form method="post" class="mb-3 js-contract-preview-form">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="preview_contract">
+      <input type="hidden" name="key" value="{{ selected.key }}">
+      <input type="hidden" name="preview_contract_text" value="">
+      <label class="form-label"><strong>Try with LLM</strong></label>
+      <input class="form-control form-control-sm mb-2" type="text" name="preview_prompt" value="{{ selected.preview_default_prompt|default:'Assess the situation between the UK and Europe.' }}">
+      <button class="btn btn-sm btn-outline-primary" type="submit">Preview response</button>
+      <div class="mt-2 small text-muted">Preview uses current draft text and does not save.</div>
+      <div class="mt-2 js-contract-preview-output" style="white-space: pre-wrap;"></div>
+    </form>
+    {% endif %}
+    <div>
+      <label class="form-label"><strong>Effective</strong> ({{ selected.effective_source }})</label>
+      <textarea class="form-control" rows="8" readonly>{{ selected.effective_text }}</textarea>
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="alert alert-secondary mt-3 mb-0">No contracts match the current filter.</div>
+{% endif %}

@@ -202,6 +202,12 @@ PROTOCOL_LIBRARY_V2 = {
             "- Answer-first, minimal necessary detail.",
             "- Avoid padding and long preambles.",
         ],
+        "Encouraging": [
+            "TONE - ENCOURAGING",
+            "- Use supportive, confidence-building language.",
+            "- Keep feedback practical and specific.",
+            "- Avoid hype or exaggerated reassurance.",
+        ],
         "Guiding": [
             "TONE - GUIDING",
             "- Helpful, practical tone.",
