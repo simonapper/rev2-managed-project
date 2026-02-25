@@ -17,20 +17,24 @@ class PhaseOutputValidatorTests(TestCase):
         self.work_item = WorkItem.create_minimal(project=self.project, active_phase=WorkItem.PHASE_REFINE)
 
     def test_missing_header_triggers_failure(self):
-        text = "# Seed summary\n\nSeed content only."
+        text = "core.end_in_mind\nSeed content only."
         ok, missing = validate_phase_output(work_item=self.work_item, text=text)
         self.assertFalse(ok)
-        self.assertIn("# Inputs", missing)
-        self.assertIn("# Expected outputs", missing)
+        self.assertIn("core.destination_conditions", missing)
+        self.assertIn("core.assumptions", missing)
 
     def test_all_headers_present_passes(self):
         text = (
-            "# Seed summary\n"
+            "core.end_in_mind\n"
             "Summary.\n\n"
-            "# Inputs\n"
+            "core.destination_conditions\n"
             "Inputs.\n\n"
-            "# Expected outputs\n"
-            "Outputs.\n"
+            "core.assumptions\n"
+            "Outputs.\n\n"
+            "core.ambiguities\n"
+            "Ambiguities.\n\n"
+            "next.one_question\n"
+            "Question.\n"
         )
         ok, missing = validate_phase_output(work_item=self.work_item, text=text)
         self.assertTrue(ok)
@@ -52,12 +56,16 @@ class PhaseOutputValidatorTests(TestCase):
         self.work_item.save(update_fields=["boundary_profile_json", "updated_at"])
 
         text = (
-            "# Seed summary\n"
+            "core.end_in_mind\n"
             "Summary.\n\n"
-            "# Inputs\n"
+            "core.destination_conditions\n"
             "Inputs.\n\n"
-            "# Expected outputs\n"
+            "core.assumptions\n"
             "Outputs.\n\n"
+            "core.ambiguities\n"
+            "Ambiguities.\n\n"
+            "next.one_question\n"
+            "Question.\n\n"
             "Scope: IN-SCOPE\n"
             "Assumptions: baseline assumptions.\n"
             "Confidence: medium\n"
@@ -71,12 +79,16 @@ class PhaseOutputValidatorTests(TestCase):
         self.work_item.save(update_fields=["boundary_profile_json", "updated_at"])
 
         text = (
-            "# Seed summary\n"
+            "core.end_in_mind\n"
             "Summary.\n\n"
-            "# Inputs\n"
+            "core.destination_conditions\n"
             "Inputs.\n\n"
-            "# Expected outputs\n"
-            "Outputs.\n"
+            "core.assumptions\n"
+            "Outputs.\n\n"
+            "core.ambiguities\n"
+            "Ambiguities.\n\n"
+            "next.one_question\n"
+            "Question.\n"
         )
         ok, missing = validate_phase_output(work_item=self.work_item, text=text)
         self.assertTrue(ok)

@@ -219,11 +219,14 @@ def _build_minimal_odf_bytes(*, ext: str) -> bytes:
     return buf.getvalue()
 
 
-def _handle_wopi_lock_override(*, doc: ProjectDocument, override: str, lock_value: str):
+def _handle_wopi_lock_override(*, doc: ProjectDocument, override: str, lock_value: str, old_lock_value: str = ""):
+    # Prototype mode: be permissive on lock drift from browser sessions.
+    # This avoids user-visible save failures when editor tabs refresh/reconnect.
     if override in {"LOCK", "REFRESH_LOCK"}:
-        if doc.wopi_lock and lock_value and doc.wopi_lock != lock_value:
-            resp = HttpResponse(status=409)
-            resp["X-WOPI-Lock"] = doc.wopi_lock
+        if not lock_value:
+            resp = HttpResponse(status=200)
+            if doc.wopi_lock:
+                resp["X-WOPI-Lock"] = doc.wopi_lock
             return resp
         doc.wopi_lock = lock_value
         doc.wopi_lock_updated_at = timezone.now()
@@ -233,10 +236,6 @@ def _handle_wopi_lock_override(*, doc: ProjectDocument, override: str, lock_valu
             resp["X-WOPI-Lock"] = doc.wopi_lock
         return resp
     if override == "UNLOCK":
-        if doc.wopi_lock and lock_value and doc.wopi_lock != lock_value:
-            resp = HttpResponse(status=409)
-            resp["X-WOPI-Lock"] = doc.wopi_lock
-            return resp
         doc.wopi_lock = ""
         doc.wopi_lock_updated_at = timezone.now()
         doc.save(update_fields=["wopi_lock", "wopi_lock_updated_at", "updated_at"])
@@ -247,9 +246,10 @@ def _handle_wopi_lock_override(*, doc: ProjectDocument, override: str, lock_valu
             resp["X-WOPI-Lock"] = doc.wopi_lock
         return resp
     if override == "UNLOCK_AND_RELOCK":
-        if doc.wopi_lock and lock_value and doc.wopi_lock != lock_value:
-            resp = HttpResponse(status=409)
-            resp["X-WOPI-Lock"] = doc.wopi_lock
+        if not lock_value:
+            resp = HttpResponse(status=200)
+            if doc.wopi_lock:
+                resp["X-WOPI-Lock"] = doc.wopi_lock
             return resp
         doc.wopi_lock = lock_value
         doc.wopi_lock_updated_at = timezone.now()
@@ -263,11 +263,19 @@ def _handle_wopi_lock_override(*, doc: ProjectDocument, override: str, lock_valu
 
 def _handle_wopi_put_override(*, doc: ProjectDocument, lock_value: str, raw: bytes):
     if doc.wopi_lock and lock_value and doc.wopi_lock != lock_value:
-        resp = HttpResponse(status=409)
-        resp["X-WOPI-Lock"] = doc.wopi_lock
-        return resp
-    current_name = doc.file.name or f"projects/{doc.project_id}/documents/document_{doc.id}.bin"
-    doc.file.save(current_name, ContentFile(raw), save=False)
+        doc.wopi_lock = lock_value
+        doc.wopi_lock_updated_at = timezone.now()
+        doc.save(update_fields=["wopi_lock", "wopi_lock_updated_at", "updated_at"])
+    current_name = str(doc.file.name or "").strip()
+    prefix = f"projects/{doc.project_id}/documents/"
+    if current_name.startswith(prefix):
+        relative_name = current_name[len(prefix):]
+    elif "/" in current_name:
+        relative_name = current_name.rsplit("/", 1)[-1]
+    else:
+        relative_name = current_name
+    relative_name = relative_name or f"document_{doc.id}.bin"
+    doc.file.save(relative_name, ContentFile(raw), save=False)
     doc.size_bytes = len(raw)
     doc.wopi_lock_updated_at = timezone.now()
     doc.save(update_fields=["file", "size_bytes", "wopi_lock_updated_at", "updated_at"])
@@ -1424,7 +1432,8 @@ def project_config_info(request, project_id: int):
             uploaded_by=request.user,
         )
         messages.success(request, "Project file uploaded.")
-        return redirect("projects:project_document_collabora_edit", project_id=active_project.id, doc_id=row.id)
+        edit_url = reverse("projects:project_document_collabora_edit", args=[active_project.id, row.id])
+        return redirect(f"{edit_url}?next={request.get_full_path()}")
 
     if request.method == "POST" and (request.POST.get("action") or "") == "project_doc_create_blank":
         kind = (request.POST.get("project_doc_kind") or "").strip().lower()
@@ -1461,7 +1470,8 @@ def project_config_info(request, project_id: int):
         row.file.save(original_name, ContentFile(payload), save=False)
         row.save()
         messages.success(request, "Blank file created.")
-        return redirect("projects:project_document_collabora_edit", project_id=active_project.id, doc_id=row.id)
+        edit_url = reverse("projects:project_document_collabora_edit", args=[active_project.id, row.id])
+        return redirect(f"{edit_url}?next={request.get_full_path()}")
 
     if request.method == "POST" and (request.POST.get("action") or "") == "project_doc_delete":
         doc_id_raw = (request.POST.get("doc_id") or "").strip()
@@ -1651,6 +1661,17 @@ def project_document_collabora_edit(request, project_id: int, doc_id: int):
         f"&access_token={quote(token, safe='')}"
         f"&access_token_ttl={ttl_ms}"
     )
+    default_back = reverse("accounts:project_config_info", args=[project.id])
+    candidate_back = str(request.GET.get("next") or "").strip()
+    if not candidate_back:
+        candidate_back = str(request.META.get("HTTP_REFERER") or "").strip()
+    if not candidate_back or not url_has_allowed_host_and_scheme(
+        url=candidate_back,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        candidate_back = default_back
+
     return render(
         request,
         "projects/collabora_editor.html",
@@ -1658,7 +1679,7 @@ def project_document_collabora_edit(request, project_id: int, doc_id: int):
             "project": project,
             "doc": row,
             "collabora_editor_url": editor_url,
-            "back_url": reverse("accounts:project_config_info", args=[project.id]),
+            "back_url": candidate_back,
         },
     )
 
@@ -1671,7 +1692,13 @@ def wopi_check_file_info(request, doc_id: int):
     if request.method == "POST":
         override = (request.headers.get("X-WOPI-Override") or "").strip().upper()
         lock_value = (request.headers.get("X-WOPI-Lock") or "").strip()
-        lock_resp = _handle_wopi_lock_override(doc=doc, override=override, lock_value=lock_value)
+        old_lock_value = (request.headers.get("X-WOPI-OldLock") or "").strip()
+        lock_resp = _handle_wopi_lock_override(
+            doc=doc,
+            override=override,
+            lock_value=lock_value,
+            old_lock_value=old_lock_value,
+        )
         if lock_resp is not None:
             return lock_resp
         if override in {"PUT", ""}:
@@ -1682,8 +1709,9 @@ def wopi_check_file_info(request, doc_id: int):
     if request.method != "GET":
         return JsonResponse({"error": "Method not allowed."}, status=405)
     version = str(int(doc.updated_at.timestamp())) if doc.updated_at else str(doc.id)
+    base_name = os.path.basename(str(doc.original_name or "").strip()) or f"document_{doc.id}"
     payload = {
-        "BaseFileName": doc.original_name or f"document_{doc.id}",
+        "BaseFileName": base_name,
         "OwnerId": str(doc.project.owner_id or user.id),
         "Size": int(doc.size_bytes or 0),
         "UserId": str(user.id),
@@ -1712,7 +1740,13 @@ def wopi_file_contents(request, doc_id: int):
     if request.method == "POST":
         override = (request.headers.get("X-WOPI-Override") or "").strip().upper()
         lock_value = (request.headers.get("X-WOPI-Lock") or "").strip()
-        lock_resp = _handle_wopi_lock_override(doc=doc, override=override, lock_value=lock_value)
+        old_lock_value = (request.headers.get("X-WOPI-OldLock") or "").strip()
+        lock_resp = _handle_wopi_lock_override(
+            doc=doc,
+            override=override,
+            lock_value=lock_value,
+            old_lock_value=old_lock_value,
+        )
         if lock_resp is not None:
             return lock_resp
         if override == "PUT_USER_INFO":

@@ -218,7 +218,7 @@
             Help
         </button>
 
-        <form action="{% url 'accounts:logout' %}" method="post" class="rw-inline-form">
+        <form action="{% url 'accounts:logout' %}" method="post" class="rw-inline-form rw-logout-form">
             {% csrf_token %}
             <button type="submit"
                     class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs">
@@ -236,6 +236,31 @@
 </header>
 
 {% include "partials/rw_help_offcanvas.html" %}
+<script>
+(function () {
+  function getCsrfToken() {
+    var parts = ("; " + document.cookie).split("; csrftoken=");
+    if (parts.length < 2) return "";
+    return parts.pop().split(";").shift();
+  }
+
+  function refreshLogoutCsrf(form) {
+    if (!form) return;
+    var token = getCsrfToken();
+    if (!token) return;
+    var input = form.querySelector("input[name='csrfmiddlewaretoken']");
+    if (!input) return;
+    input.value = token;
+  }
+
+  var forms = document.querySelectorAll(".rw-logout-form");
+  forms.forEach(function (form) {
+    form.addEventListener("submit", function () {
+      refreshLogoutCsrf(form);
+    });
+  });
+})();
+</script>
 
 {% if rw_topbar_controls.enabled %}
 <script>

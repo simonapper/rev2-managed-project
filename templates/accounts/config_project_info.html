@@ -65,75 +65,106 @@
           </div>
 
           <div class="pc-toolbar">
-            <div class="pc-toolbar-row">
-              <form method="post" action="{% url 'projects:set_planning_mode' project.id %}" class="pc-toolbar-row m-0">
-                {% csrf_token %}
-                <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                <div class="pc-toolbar-label">Planning:</div>
-                <div class="btn-group btn-group-sm" role="group" aria-label="Planning mode">
-                  <button type="submit"
-                          name="mode"
-                          value="ASSISTED"
-                          class="btn pc-toggle-btn {% if planning_mode == 'ASSISTED' %}btn-success{% else %}btn-outline-success{% endif %}">
-                    Assisted
-                  </button>
-                  <button type="submit"
-                          name="mode"
-                          value="AUTO"
-                          class="btn pc-toggle-btn {% if planning_mode == 'AUTO' %}btn-warning{% else %}btn-outline-warning{% endif %}">
-                    Auto
-                  </button>
-                </div>
-              </form>
-              <a class="btn btn-sm btn-outline-dark pc-action-btn"
-                 href="{% url 'accounts:project_detail_print' project.id %}"
-                 target="_blank" rel="noopener">
-                Print
-              </a>
-            </div>
+            {% if project.workflow_mode == "DERAX_WORK" %}
+              <div class="pc-toolbar-row">
+                <div class="pc-toolbar-label">Workflow:</div>
+                <span class="badge text-bg-primary">DERAX</span>
+                <a class="btn btn-sm btn-outline-dark pc-action-btn"
+                   href="{% url 'accounts:project_detail_print' project.id %}"
+                   target="_blank" rel="noopener">
+                  Print
+                </a>
+              </div>
 
-            <div class="pc-toolbar-row">
-              <a class="btn btn-sm btn-outline-primary pc-action-btn"
-                 href="{% url 'accounts:project_config_edit' project.id %}">
-                Edit
-              </a>
-              {% if active_wko %}
+              <div class="pc-toolbar-row">
+                <a class="btn btn-sm btn-outline-primary pc-action-btn"
+                   href="{% url 'accounts:project_config_edit' project.id %}">
+                  Edit
+                </a>
                 <a class="btn btn-sm btn-primary pc-action-btn"
-                   href="{% url 'projects:ppde_detail' project.id %}">
-                  Definition
+                   href="{% url 'projects:derax_project_home' project.id %}">
+                  DERAX
                 </a>
-                <a class="btn btn-sm btn-info pc-action-btn"
-                   href="{% url 'projects:wko_preview' project.id %}">
-                  Intent
+                <a class="btn btn-sm btn-success pc-action-btn"
+                   href="{% url 'projects:work_item_detail' project.id %}">
+                  WorkItem
                 </a>
-              {% else %}
-                <a class="btn btn-sm btn-primary pc-action-btn"
-                   href="{% url 'projects:pde_detail' project.id %}">
-                  Definition
+              </div>
+
+              <div class="pc-toolbar-help">
+                DERAX workflow active. Use DERAX and WorkItem for navigation.
+              </div>
+            {% else %}
+              <div class="pc-toolbar-row">
+                <form method="post" action="{% url 'projects:set_planning_mode' project.id %}" class="pc-toolbar-row m-0">
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                  <div class="pc-toolbar-label">Planning:</div>
+                  <div class="btn-group btn-group-sm" role="group" aria-label="Planning mode">
+                    <button type="submit"
+                            name="mode"
+                            value="ASSISTED"
+                            class="btn pc-toggle-btn {% if planning_mode == 'ASSISTED' %}btn-success{% else %}btn-outline-success{% endif %}">
+                      Assisted
+                    </button>
+                    <button type="submit"
+                            name="mode"
+                            value="AUTO"
+                            class="btn pc-toggle-btn {% if planning_mode == 'AUTO' %}btn-warning{% else %}btn-outline-warning{% endif %}">
+                      Auto
+                    </button>
+                  </div>
+                </form>
+                <a class="btn btn-sm btn-outline-dark pc-action-btn"
+                   href="{% url 'accounts:project_detail_print' project.id %}"
+                   target="_blank" rel="noopener">
+                  Print
                 </a>
-                {% if accepted_cko %}
+              </div>
+
+              <div class="pc-toolbar-row">
+                <a class="btn btn-sm btn-outline-primary pc-action-btn"
+                   href="{% url 'accounts:project_config_edit' project.id %}">
+                  Edit
+                </a>
+                {% if active_wko %}
+                  <a class="btn btn-sm btn-primary pc-action-btn"
+                     href="{% url 'projects:ppde_detail' project.id %}">
+                    Definition
+                  </a>
                   <a class="btn btn-sm btn-info pc-action-btn"
-                     href="{% url 'projects:cko_preview' project.id %}?accepted=1">
+                     href="{% url 'projects:wko_preview' project.id %}">
                     Intent
                   </a>
                 {% else %}
-                  <span class="btn btn-sm btn-outline-secondary pc-action-btn disabled" aria-disabled="true">Intent</span>
+                  <a class="btn btn-sm btn-primary pc-action-btn"
+                     href="{% url 'projects:pde_detail' project.id %}">
+                    Definition
+                  </a>
+                  {% if accepted_cko %}
+                    <a class="btn btn-sm btn-info pc-action-btn"
+                       href="{% url 'projects:cko_preview' project.id %}?accepted=1">
+                      Intent
+                    </a>
+                  {% else %}
+                    <span class="btn btn-sm btn-outline-secondary pc-action-btn disabled" aria-disabled="true">Intent</span>
+                  {% endif %}
                 {% endif %}
-              {% endif %}
-              {% if planning_mode == "AUTO" %}
-                <a class="btn btn-sm btn-warning pc-action-btn" href="{% url 'projects:project_review' project.id %}">Plan</a>
-              {% else %}
-                <a class="btn btn-sm btn-success pc-action-btn" href="{% url 'projects:ppde_detail' project.id %}">Plan</a>
-              {% endif %}
-            </div>
+                {% if planning_mode == "AUTO" %}
+                  <a class="btn btn-sm btn-warning pc-action-btn" href="{% url 'projects:project_review' project.id %}">Plan</a>
+                {% else %}
+                  <a class="btn btn-sm btn-success pc-action-btn" href="{% url 'projects:ppde_detail' project.id %}">Plan</a>
+                {% endif %}
+              </div>
 
-            <div class="pc-toolbar-help">
-              {% if planning_mode == "AUTO" %}
-                AI proposes. You review.
-              {% else %}
-                You lead. AI helps.
-              {% endif %}
-            </div>
+              <div class="pc-toolbar-help">
+                {% if planning_mode == "AUTO" %}
+                  AI proposes. You review.
+                {% else %}
+                  You lead. AI helps.
+                {% endif %}
+              </div>
+            {% endif %}
           </div>
         </div>
       </div>
@@ -313,7 +344,7 @@
                         <td class="small">{{ d.original_name }}</td>
                         <td class="small">{{ d.updated_at|date:"Y-m-d H:i" }}</td>
                         <td class="text-end">
-                          <a class="btn btn-sm btn-outline-primary" href="{% url 'projects:project_document_collabora_edit' project.id d.id %}">Edit</a>
+                          <a class="btn btn-sm btn-outline-primary" href="{% url 'projects:project_document_collabora_edit' project.id d.id %}?next={{ request.get_full_path|urlencode }}">Edit</a>
                           <a class="btn btn-sm btn-outline-secondary" href="{% url 'projects:project_document_download' project.id d.id %}">Download</a>
                           <form method="post" class="d-inline">
                             {% csrf_token %}

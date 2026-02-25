@@ -1,9 +1,25 @@
 {% extends "base.html" %}
+{# PROTECTED_UI: DERAX_DASHBOARD_V1. Do not edit without explicit user approval. #}
 
 {% block title %}DERAX - {{ project.name }}{% endblock %}
 
 {% block content %}
-<div class="container py-3">
+<div class="container-fluid px-2 py-3">
+  <style>
+    .derax-phase-map {
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+    }
+    .derax-phase-pill {
+      min-width: 130px;
+      text-align: center;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.28rem 0.4rem;
+    }
+  </style>
   <div class="d-flex justify-content-between align-items-start mb-3">
     <div>
       <h4 class="mb-1">{{ project.name }}</h4>
@@ -13,60 +29,437 @@
   </div>
 
   <div class="row g-3">
-    <div class="col-12 col-xl-8">
+    <div class="col-12 col-lg-8">
       <div class="card mb-3">
         <div class="card-body">
           <div class="d-flex gap-3 flex-wrap">
             <div><strong>WorkItem:</strong> {{ work_item.id }}</div>
-            <div><strong>Active phase:</strong> <span class="badge text-bg-primary">{{ work_item.active_phase }}</span></div>
           </div>
+          <div class="mt-2 derax-phase-map">
+            {% for row in phase_route_map %}
+              <form method="post" class="m-0 p-0">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="reenter_phase">
+                <input type="hidden" name="target_phase" value="{{ row.phase }}">
+                <button type="submit" class="badge derax-phase-pill border-0 {% if row.status == 'LOCKED' %}text-bg-success{% elif row.status == 'ACTIVE' %}text-bg-primary{% elif row.status == 'PROPOSED' %}text-bg-warning{% else %}text-bg-light{% endif %}" title="Re-enter {{ row.phase }}">
+                  {{ row.phase }}: {{ row.status }}
+                </button>
+              </form>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      {% if not is_refine_phase %}
+      <div class="card mb-3">
+        <div class="card-header">
+          {{ active_phase_upper }}
+        </div>
+        <div class="card-body">
+          {% if is_define_phase %}
+            <p class="small text-muted mb-2">{{ define_help_text }}</p>
+          {% elif is_explore_phase %}
+            <p class="small text-muted mb-2">Start EXPLORE from the DEFINE locked destination. Challenge assumptions, scope, and realism before moving on.</p>
+          {% elif is_approve_phase %}
+            <p class="small text-muted mb-2">Run APPROVE to stress-test stability of the refined destination and capture unresolved conflicts.</p>
+          {% elif is_execute_phase %}
+            <p class="small text-muted mb-2">Run EXECUTE to produce delivery output from approved destination decisions.</p>
+          {% endif %}
+
+          {% if not is_refine_phase %}
+          <form method="post" class="d-none" id="stage-import-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="import_derax_from_document">
+            <input type="hidden" name="import_target_phase" value="{{ active_phase_upper }}">
+          </form>
+          <form method="post" class="d-none" id="stage-lock-define-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="lock_define_and_explore">
+          </form>
+          <form method="post" class="d-none" id="stage-lock-explore-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="lock_explore_and_refine">
+          </form>
+          <form method="post" class="d-none" id="stage-lock-approve-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="lock_approve_and_execute">
+          </form>
+          <form method="post" class="d-none" id="stage-lock-execute-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="lock_execute_stage">
+          </form>
+
+          {% if not is_refine_phase %}
+          <form method="post" id="define-llm-turn-form">
+        {% csrf_token %}
+        {% if is_define_phase %}
+        <input type="hidden" name="action" id="id_phase_turn_action" value="define_llm_turn">
+        <label class="form-label small mb-1" for="id_define_user_input">Message to DEFINE LLM</label>
+        <textarea id="id_define_user_input" name="phase_user_input" class="form-control mb-2" rows="4" placeholder="Ask the LLM to sharpen your intent.">{{ phase_input_text }}</textarea>
+        {% elif is_explore_phase %}
+        <input type="hidden" name="action" id="id_phase_turn_action" value="explore_llm_turn">
+        <label class="form-label small mb-1" for="id_define_user_input">Message to EXPLORE LLM</label>
+        <textarea id="id_define_user_input" name="phase_user_input" class="form-control mb-2" rows="4" placeholder="Ask the LLM to stress-test the destination.">{{ phase_input_text }}</textarea>
+        {% elif is_approve_phase %}
+        <input type="hidden" name="action" id="id_phase_turn_action" value="approve_llm_turn">
+        <label class="form-label small mb-1" for="id_define_user_input">Message to APPROVE LLM</label>
+        <textarea id="id_define_user_input" name="phase_user_input" class="form-control mb-2" rows="4" placeholder="Ask the LLM to validate stability and identify unresolved conflicts.">{{ phase_input_text }}</textarea>
+        {% else %}
+        <input type="hidden" name="action" id="id_phase_turn_action" value="execute_llm_turn">
+        <label class="form-label small mb-1" for="id_define_user_input">Message to EXECUTE LLM</label>
+        <textarea id="id_define_user_input" name="phase_user_input" class="form-control mb-2" rows="4" placeholder="Ask for explicit artefacts.proposed (kind/title/notes), e.g. workbook + run_sheet + checklist.">{{ phase_input_text }}</textarea>
+        {% endif %}
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+          {% if is_define_phase %}
+          <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Define</button>
+          {% if define_phase_locked %}
+          <button type="button" class="btn btn-sm btn-outline-secondary" disabled>DEFINE locked</button>
+          {% else %}
+          <button type="submit" form="stage-lock-define-form" class="btn btn-sm btn-outline-success">Lock -> EXPLORE</button>
+          {% endif %}
+          {% elif is_explore_phase %}
+          <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Explore</button>
+          {% if explore_phase_locked %}
+          <button type="button" class="btn btn-sm btn-outline-secondary" disabled>EXPLORE locked</button>
+          {% else %}
+          <button type="submit" form="stage-lock-explore-form" class="btn btn-sm btn-outline-success">Lock -> REFINE</button>
+          {% endif %}
+          {% elif is_approve_phase %}
+          <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Approve</button>
+          {% if approve_phase_locked %}
+          <button type="button" class="btn btn-sm btn-outline-secondary" disabled>APPROVE locked</button>
+          {% else %}
+          <button type="submit" form="stage-lock-approve-form" class="btn btn-sm btn-outline-success">Lock -> EXECUTE</button>
+          {% endif %}
+          {% else %}
+          <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Execute</button>
+          {% if execute_phase_locked %}
+          <button type="button" class="btn btn-sm btn-outline-secondary" disabled>EXECUTE locked</button>
+          {% else %}
+          <button type="submit" form="stage-lock-execute-form" class="btn btn-sm btn-outline-success">Lock</button>
+          {% endif %}
+          {% endif %}
+          <button type="submit" form="stage-import-form" class="btn btn-sm btn-outline-secondary">Import</button>
+          <select name="import_doc_id" form="stage-import-form" class="form-select form-select-sm" style="max-width: 520px;">
+            <option value="">Select edited stage draft</option>
+            {% for doc in derax_import_docs %}
+              <option value="{{ doc.id }}">{{ doc.original_name|default:doc.title }}</option>
+            {% endfor %}
+          </select>
+          <span id="define-turn-status" class="small text-muted ms-2"></span>
+        </div>
+          </form>
+          {% endif %}
+
+          <div class="mb-3">
+        {% if is_define_phase %}
+        <label class="form-label small mb-1" for="id_refined_intent">Latest DEFINE response</label>
+        <textarea id="id_refined_intent" class="form-control mb-2" rows="4" readonly>{{ latest_phase_response }}</textarea>
+        {% elif is_explore_phase %}
+        <label class="form-label small mb-1" for="id_refined_intent">Latest EXPLORE response</label>
+        <textarea id="id_refined_intent" class="form-control mb-2" rows="4" readonly>{{ latest_phase_response }}</textarea>
+        {% elif is_approve_phase %}
+        <label class="form-label small mb-1" for="id_refined_intent">Latest APPROVE response</label>
+        <textarea id="id_refined_intent" class="form-control mb-2" rows="4" readonly>{{ latest_phase_response }}</textarea>
+        {% else %}
+        <label class="form-label small mb-1" for="id_refined_intent">Latest EXECUTE response</label>
+        <textarea id="id_refined_intent" class="form-control mb-2" rows="4" readonly>{{ latest_phase_response }}</textarea>
+        {% endif %}
+        {% if is_define_phase or is_explore_phase or is_approve_phase or is_execute_phase %}
+        <details class="rw-channel mt-2">
+          <summary class="fw-semibold">Previous {{ active_phase_upper }} responses</summary>
+          <div class="pt-2">
+            {% include "projects/_derax_define_history.html" with define_history=phase_history %}
+          </div>
+        </details>
+        {% endif %}
+        {% if is_define_phase or is_explore_phase or is_approve_phase or is_execute_phase %}
+        <form method="post" class="mt-2">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="export_latest_derax_draft">
+          <button type="submit" class="btn btn-sm btn-outline-secondary">Export</button>
+        </form>
+        {% endif %}
+          </div>
+          {% endif %}
+
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="card mb-3">
+        <div class="card-header">
+          {{ active_phase_upper }} context
+        </div>
+        <div class="card-body">
+          {% if is_refine_phase %}
+          <p class="small text-muted mb-2">Start REFINE from locked DEFINE/EXPLORE outputs. Merge, de-duplicate, and stabilise destination-level content only.</p>
+          <form method="post" class="mb-3" id="refine-llm-turn-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" id="id_refine_turn_action" value="refine_llm_turn">
+            <label class="form-label small mb-1" for="id_refine_input">Refine input (editable)</label>
+            <textarea id="id_refine_input" name="phase_user_input" class="form-control mb-2" rows="6" placeholder="Refine starts from EXPLORE output and is editable.">{{ refine_input_text }}</textarea>
+          </form>
+          <form method="post" class="d-none" id="refine-lock-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="lock_refine_stage">
+            <input type="hidden" name="refine_input" id="id_lock_refine_input" value="">
+          </form>
+          <form method="post" class="d-none" id="refine-import-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="import_derax_from_document">
+            <input type="hidden" name="import_target_phase" value="REFINE">
+          </form>
+          <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
+              <button type="submit" form="refine-llm-turn-form" id="btn-run-refine-turn" class="btn btn-sm btn-outline-primary">Refine</button>
+              {% if refine_phase_locked %}
+              <button type="button" class="btn btn-sm btn-outline-secondary" disabled>REFINE locked</button>
+              {% else %}
+              <button type="submit" form="refine-lock-form" class="btn btn-sm btn-outline-success">Lock -> APPROVE</button>
+              {% endif %}
+              <button type="submit" form="refine-import-form" class="btn btn-sm btn-outline-secondary">Import</button>
+              <select name="import_doc_id" form="refine-import-form" class="form-select form-select-sm" style="max-width: 520px;">
+                <option value="">Select edited refine draft</option>
+                {% for doc in derax_import_docs %}
+                  <option value="{{ doc.id }}">{{ doc.original_name|default:doc.title }}</option>
+                {% endfor %}
+              </select>
+              <span id="refine-turn-status" class="small text-muted"></span>
+              <span id="refine-save-status" class="small text-muted"></span>
+          </div>
+          <div class="mb-3">
+          <form method="post" class="mb-3" id="refine-response-form">
+            {% csrf_token %}
+            <label class="form-label small mb-1" for="id_refined_refine_output">Latest REFINE response</label>
+            <textarea id="id_refined_refine_output" name="candidate_text" class="form-control mb-2" rows="6">{{ latest_refine_response }}</textarea>
+            <div class="d-flex gap-2 align-items-center flex-wrap">
+              <button type="submit" name="action" value="export_refine_response_draft" class="btn btn-sm btn-outline-secondary">Export</button>
+            </div>
+          </form>
+          </div>
+          {% endif %}
+
+          <div class="small text-muted mb-2">Previous stages</div>
+          <details class="rw-channel">
+            <summary class="fw-semibold">APPROVE finalised data</summary>
+            <div class="pt-2">
+              {% if approve_latest_text %}
+                <div class="small mb-0" style="white-space: pre-wrap;">{{ approve_latest_text }}</div>
+              {% else %}
+                <div class="small text-muted">No APPROVE finalised data yet.</div>
+              {% endif %}
+              <details class="rw-channel mt-2">
+                <summary class="fw-semibold">APPROVE interaction history</summary>
+                <div class="pt-2">
+                  {% include "projects/_derax_define_history.html" with define_history=approve_history_rows %}
+                </div>
+              </details>
+            </div>
+          </details>
+          <details class="rw-channel mt-2">
+            <summary class="fw-semibold">REFINE finalised data</summary>
+            <div class="pt-2">
+              {% if latest_refine_response %}
+                <div class="small mb-0" style="white-space: pre-wrap;">{{ latest_refine_response }}</div>
+              {% else %}
+                <div class="small text-muted">No REFINE finalised data yet.</div>
+              {% endif %}
+              <details class="rw-channel mt-2">
+                <summary class="fw-semibold">REFINE interaction history</summary>
+                <div class="pt-2">
+                  {% include "projects/_derax_define_history.html" with define_history=refine_history_rows %}
+                </div>
+              </details>
+            </div>
+          </details>
+          <details class="rw-channel mt-2">
+            <summary class="fw-semibold">EXPLORE finalised data</summary>
+            <div class="pt-2">
+              {% if explore_vm.has_structured %}
+                <div class="small mb-1"><strong>Destination</strong></div>
+                <div class="small mb-2" style="white-space: pre-wrap;">{{ explore_vm.destination|default:"-" }}</div>
+                {% if explore_vm.adjacent_ideas %}
+                  <div class="small mb-1"><strong>Adjacent ideas</strong></div>
+                  <ul class="small">
+                    {% for item in explore_vm.adjacent_ideas %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+                {% if explore_vm.risks %}
+                  <div class="small mb-1"><strong>Risks</strong></div>
+                  <ul class="small">
+                    {% for item in explore_vm.risks %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+                {% if explore_vm.tradeoffs %}
+                  <div class="small mb-1"><strong>Trade-offs</strong></div>
+                  <ul class="small">
+                    {% for item in explore_vm.tradeoffs %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+                {% if explore_vm.reframes %}
+                  <div class="small mb-1"><strong>Reframes</strong></div>
+                  <ul class="small mb-0">
+                    {% for item in explore_vm.reframes %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+              {% elif explore_latest_text %}
+                <div class="small text-muted mb-1">No structured EXPLORE JSON payload found. Showing latest EXPLORE output text.</div>
+                <div class="small mb-0" style="white-space: pre-wrap;">{{ explore_latest_text }}</div>
+              {% elif explore_locked_seed_text %}
+                <div class="small text-muted mb-1">No structured EXPLORE JSON payload found. Showing locked EXPLORE text.</div>
+                <div class="small mb-0" style="white-space: pre-wrap;">{{ explore_locked_seed_text }}</div>
+              {% else %}
+                <div class="small text-muted">No EXPLORE finalised data yet.</div>
+              {% endif %}
+              <details class="rw-channel mt-2">
+                <summary class="fw-semibold">EXPLORE interaction history</summary>
+                <div class="pt-2">
+                  {% include "projects/_derax_define_history.html" with define_history=explore_history_rows %}
+                </div>
+              </details>
+            </div>
+          </details>
+          <details class="rw-channel mt-2">
+            <summary class="fw-semibold">DEFINE finalised data</summary>
+            <div class="pt-2">
+              {% if define_latest_payload %}
+                <div class="small mb-1"><strong>Destination</strong></div>
+                <div class="small mb-2" style="white-space: pre-wrap;">{{ define_latest_payload.intent.destination|default:"-" }}</div>
+                {% if define_latest_payload.intent.success_criteria %}
+                  <div class="small mb-1"><strong>Success criteria</strong></div>
+                  <ul class="small">
+                    {% for item in define_latest_payload.intent.success_criteria %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+                {% if define_latest_payload.intent.constraints %}
+                  <div class="small mb-1"><strong>Constraints</strong></div>
+                  <ul class="small">
+                    {% for item in define_latest_payload.intent.constraints %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+                {% if define_latest_payload.intent.non_goals %}
+                  <div class="small mb-1"><strong>Non-goals</strong></div>
+                  <ul class="small mb-0">
+                    {% for item in define_latest_payload.intent.non_goals %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+              {% else %}
+                <div class="small text-muted">No DEFINE finalised data yet.</div>
+              {% endif %}
+              <details class="rw-channel mt-2">
+                <summary class="fw-semibold">DEFINE interaction history</summary>
+                <div class="pt-2">
+                  {% include "projects/_derax_define_history.html" with define_history=define_history_rows %}
+                </div>
+              </details>
+            </div>
+          </details>
+          <details class="rw-channel mt-2">
+            <summary class="fw-semibold">Browse project files</summary>
+            <div class="pt-2">
+              <div class="d-flex gap-2 flex-wrap mb-2 small">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-files-sort="updated">Updated</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-files-sort="name">Name</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-files-sort="size">Size</button>
+              </div>
+              {% if all_project_docs %}
+              <div class="list-group list-group-flush" id="project-files-list">
+                {% for row in all_project_docs %}
+                <div class="list-group-item px-0 py-2" data-file-name="{{ row.display_name|lower }}" data-file-updated="{{ row.doc.updated_at|date:'U' }}" data-file-size="{{ row.doc.size_bytes|default:0 }}">
+                  <div class="d-flex justify-content-between align-items-center gap-2">
+                    <div class="small text-truncate" style="min-width: 0;">
+                      {{ row.display_name }}
+                      <span class="text-muted">({{ row.doc.updated_at|date:"Y-m-d H:i" }})</span>
+                    </div>
+                    <div class="d-flex gap-2 flex-shrink-0">
+                      <a class="btn btn-sm btn-outline-secondary" href="{% url 'projects:project_document_collabora_edit' project.id row.doc.id %}?next={% url 'projects:derax_project_home' project.id %}">Open</a>
+                      <a class="btn btn-sm btn-outline-secondary" href="{% url 'projects:project_document_download' project.id row.doc.id %}">Download</a>
+                    </div>
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+              {% else %}
+              <div class="small text-muted">No project files.</div>
+              {% endif %}
+            </div>
+          </details>
         </div>
       </div>
 
       <div class="card mb-3">
         <div class="card-header">
-          DEFINE
+          DERAX history
         </div>
         <div class="card-body">
-          <p class="small text-muted mb-2">{{ define_help_text }}</p>
-
-          <form method="post" class="mb-3">
-        {% csrf_token %}
-        <label class="form-label small mb-1" for="id_end_in_mind">End in mind</label>
-        <textarea id="id_end_in_mind" name="end_in_mind" class="form-control mb-2" rows="5" placeholder="Describe the outcome you want from this DERAX process.">{{ work_item.intent_raw }}</textarea>
-        <div class="d-flex gap-2 align-items-center flex-wrap">
-          <span id="end-in-mind-save-status" class="small text-muted"></span>
-        </div>
-          </form>
-
-      <div class="mb-3">
-        <form method="post">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="use_define_response_as_intent">
-          <label class="form-label small mb-1" for="id_refined_intent">Latest DEFINE response (editable)</label>
-          <textarea id="id_refined_intent" name="candidate_text" class="form-control mb-2" rows="4">{{ latest_define_assistant_text }}</textarea>
-          <button type="submit" class="btn btn-sm btn-outline-success" {% if not latest_define_assistant_text %}disabled{% endif %}>Use this as intent</button>
-        </form>
-      </div>
-
-          <div class="small text-muted mb-2">DEFINE conversation with LLM (DEFINE contract enforced, last 20 turns included).</div>
-          <div id="derax-define-history-panel">
-            {% include "projects/_derax_define_history.html" with define_history=define_history %}
-          </div>
-
-          <form method="post" id="define-llm-turn-form">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="define_llm_turn">
-        <label class="form-label small mb-1" for="id_define_user_input">Message to DEFINE LLM</label>
-        <textarea id="id_define_user_input" name="define_user_input" class="form-control mb-2" rows="4" placeholder="Ask the LLM to sharpen your intent.">{{ work_item.intent_raw }}</textarea>
-        <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Send DEFINE turn</button>
-        <span id="define-turn-status" class="small text-muted ms-2"></span>
-          </form>
-          <form method="post" class="mt-2">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="lock_define_and_explore">
-        <button type="submit" class="btn btn-sm btn-primary">Lock DEFINE and move to EXPLORE</button>
-          </form>
+          <details class="rw-channel" id="audit-trail-drawer">
+            <summary class="fw-semibold">Current phase: {{ active_phase_upper }}</summary>
+            <div class="pt-2">
+              <div class="d-flex gap-2 mb-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-details-target="#derax-audit-list" data-details-open="1">Expand all</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-details-target="#derax-audit-list" data-details-open="0">Collapse all</button>
+              </div>
+              {% if derax_audit_history_current %}
+              <div class="list-group list-group-flush" id="derax-audit-list">
+                {% for row in derax_audit_history_current %}
+                <div class="list-group-item">
+                  <details class="rw-channel">
+                    <summary class="small d-flex justify-content-between">
+                      <span>
+                        <span class="badge text-bg-light">{{ row.phase }}</span>
+                        <span class="badge text-bg-secondary">{{ row.role|upper }}</span>
+                      </span>
+                      <span class="text-muted">{{ row.timestamp }}</span>
+                    </summary>
+                    <div class="small mt-2" style="white-space: pre-wrap; font-family: inherit;">{{ row.display_text|default:row.text }}</div>
+                  </details>
+                </div>
+                {% endfor %}
+              </div>
+              {% else %}
+              <div class="text-muted small">No history yet for {{ active_phase_upper }}.</div>
+              {% endif %}
+            </div>
+          </details>
+          <details class="rw-channel mt-2">
+            <summary class="fw-semibold">All phases history</summary>
+            <div class="pt-2">
+              {% if derax_audit_history %}
+              <div class="list-group list-group-flush">
+                {% for row in derax_audit_history %}
+                <div class="list-group-item">
+                  <details class="rw-channel">
+                    <summary class="small d-flex justify-content-between">
+                      <span>
+                        <span class="badge text-bg-light">{{ row.phase }}</span>
+                        <span class="badge text-bg-secondary">{{ row.role|upper }}</span>
+                      </span>
+                      <span class="text-muted">{{ row.timestamp }}</span>
+                    </summary>
+                    <div class="small mt-2" style="white-space: pre-wrap; font-family: inherit;">{{ row.display_text|default:row.text }}</div>
+                  </details>
+                </div>
+                {% endfor %}
+              </div>
+              {% else %}
+              <div class="text-muted small">No cross-phase history yet.</div>
+              {% endif %}
+            </div>
+          </details>
         </div>
       </div>
 
@@ -75,30 +468,145 @@
           Definition lock history (seed log)
         </div>
         <div class="card-body">
-          {% if seed_history %}
-          <div class="list-group list-group-flush">
-            {% for row in seed_history %}
-            <div class="list-group-item">
-              <div class="d-flex justify-content-between">
-                <div>
-                  <strong>Revision {{ row.revision }}</strong>
-                  <span class="badge text-bg-secondary">{{ row.status }}</span>
-                </div>
-                <div class="small text-muted">{{ row.created_at }}</div>
+          <details class="rw-channel" id="seed-log-drawer">
+            <summary class="fw-semibold">Open seed log</summary>
+            <div class="pt-2">
+              <div class="d-flex gap-2 mb-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-details-target="#seed-history-list" data-details-open="1">Expand all</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-details-target="#seed-history-list" data-details-open="0">Collapse all</button>
               </div>
-              <div class="small mt-2"><strong>Reason:</strong> {{ row.reason|default:"-" }}</div>
-              <pre class="small mb-0 mt-2" style="white-space: pre-wrap;">{{ row.seed_text }}</pre>
+              {% if seed_history %}
+              <div class="list-group list-group-flush" id="seed-history-list">
+                {% for row in seed_history %}
+                <div class="list-group-item">
+                  <details class="rw-channel">
+                    <summary class="small d-flex justify-content-between">
+                      <span>
+                        <strong>Revision {{ row.revision }}</strong>
+                        <span class="badge text-bg-secondary">{{ row.status }}</span>
+                      </span>
+                      <span class="text-muted">{{ row.created_at }}</span>
+                    </summary>
+                    <div class="small mt-2"><strong>Reason:</strong> {{ row.reason|default:"-" }}</div>
+                    <div class="small mb-0 mt-2" style="white-space: pre-wrap; font-family: inherit;">{{ row.seed_text }}</div>
+                  </details>
+                </div>
+                {% endfor %}
+              </div>
+              {% else %}
+              <div class="text-muted small">No seed revisions yet.</div>
+              {% endif %}
             </div>
-            {% endfor %}
-          </div>
-          {% else %}
-          <div class="text-muted small">No seed revisions yet.</div>
-          {% endif %}
+          </details>
+          <form method="post" class="mt-3">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="compile_derax_cko">
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Compile CKO artefact</button>
+          </form>
+          <form method="post" class="mt-2">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="generate_derax_audit">
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Create DERAX audit file</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card mt-3">
+        <div class="card-header">
+          Technical JSON (debug)
+        </div>
+        <div class="card-body">
+          <details class="rw-channel">
+            <summary class="fw-semibold">Open stage payloads</summary>
+            <div class="pt-2">
+              <div class="small text-muted mb-2">Canonical stage payloads used for handoff, audit, and compile.</div>
+              <details class="rw-channel">
+                <summary class="fw-semibold">DEFINE final JSON</summary>
+                <div class="pt-2">
+                  {% if define_latest_payload_json %}
+                    <pre class="small mb-2" style="white-space: pre-wrap; font-family: inherit;">{{ define_latest_payload_json }}</pre>
+                  {% else %}
+                    <div class="small text-muted mb-2">No DEFINE payload yet.</div>
+                  {% endif %}
+                  <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="reenter_phase">
+                    <input type="hidden" name="target_phase" value="DEFINE">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">Re-enter DEFINE</button>
+                  </form>
+                </div>
+              </details>
+              <details class="rw-channel mt-2">
+                <summary class="fw-semibold">EXPLORE final JSON</summary>
+                <div class="pt-2">
+                  {% if explore_latest_payload_json %}
+                    <pre class="small mb-2" style="white-space: pre-wrap; font-family: inherit;">{{ explore_latest_payload_json }}</pre>
+                  {% else %}
+                    <div class="small text-muted mb-2">No EXPLORE payload yet.</div>
+                  {% endif %}
+                  <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="reenter_phase">
+                    <input type="hidden" name="target_phase" value="EXPLORE">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">Re-enter EXPLORE</button>
+                  </form>
+                </div>
+              </details>
+              <details class="rw-channel mt-2">
+                <summary class="fw-semibold">REFINE final JSON</summary>
+                <div class="pt-2">
+                  {% if refine_latest_payload_json %}
+                    <pre class="small mb-2" style="white-space: pre-wrap; font-family: inherit;">{{ refine_latest_payload_json }}</pre>
+                  {% else %}
+                    <div class="small text-muted mb-2">No REFINE payload yet.</div>
+                  {% endif %}
+                  <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="reenter_phase">
+                    <input type="hidden" name="target_phase" value="REFINE">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">Re-enter REFINE</button>
+                  </form>
+                </div>
+              </details>
+              <details class="rw-channel mt-2">
+                <summary class="fw-semibold">APPROVE final JSON</summary>
+                <div class="pt-2">
+                  {% if approve_latest_payload_json %}
+                    <pre class="small mb-2" style="white-space: pre-wrap; font-family: inherit;">{{ approve_latest_payload_json }}</pre>
+                  {% else %}
+                    <div class="small text-muted mb-2">No APPROVE payload yet.</div>
+                  {% endif %}
+                  <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="reenter_phase">
+                    <input type="hidden" name="target_phase" value="APPROVE">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">Re-enter APPROVE</button>
+                  </form>
+                </div>
+              </details>
+              <details class="rw-channel mt-2">
+                <summary class="fw-semibold">EXECUTE final JSON</summary>
+                <div class="pt-2">
+                  {% if execute_latest_payload_json %}
+                    <pre class="small mb-2" style="white-space: pre-wrap; font-family: inherit;">{{ execute_latest_payload_json }}</pre>
+                  {% else %}
+                    <div class="small text-muted mb-2">No EXECUTE payload yet.</div>
+                  {% endif %}
+                  <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="reenter_phase">
+                    <input type="hidden" name="target_phase" value="EXECUTE">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">Re-enter EXECUTE</button>
+                  </form>
+                </div>
+              </details>
+            </div>
+          </details>
         </div>
       </div>
     </div>
     {% if show_contract_debug %}
-    <div class="col-12 col-xl-4">
+    <div class="col-12 col-lg-4">
       <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center">
           <span>Active Contract (Debug)</span>
@@ -110,7 +618,7 @@
               Source: {{ active_phase_contract.source|default:"-" }}<br>
               Key: {{ active_phase_contract.effective_phase_contract|default:"-" }}
             </div>
-            <div class="small mb-0" style="white-space: pre-wrap; font-family: inherit;">{{ active_phase_contract.content }}</div>
+            <div class="small mb-0" style="white-space: pre-wrap; font-family: inherit;">{{ active_phase_contract_raw }}</div>
           {% else %}
             <div class="small text-muted">No active phase contract resolved.</div>
           {% endif %}
@@ -136,8 +644,19 @@
   var defineInput = document.getElementById("id_define_user_input");
   var defineStatus = document.getElementById("define-turn-status");
   var defineButton = document.getElementById("btn-send-define-turn");
-  var historyPanel = document.getElementById("derax-define-history-panel");
   var latestBox = document.getElementById("id_refined_intent");
+  var phaseTurnAction = document.getElementById("id_phase_turn_action");
+  var refineInput = document.getElementById("id_refine_input");
+  var refineForm = document.getElementById("refine-llm-turn-form");
+  var refineStatus = document.getElementById("refine-turn-status");
+  var refineSaveStatus = document.getElementById("refine-save-status");
+  var refineButton = document.getElementById("btn-run-refine-turn");
+  var refineTurnAction = document.getElementById("id_refine_turn_action");
+  var latestRefineBox = document.getElementById("id_refined_refine_output");
+  var refineLockForm = document.getElementById("refine-lock-form");
+  var refineLockInput = document.getElementById("id_lock_refine_input");
+  var exportRefineForm = document.querySelector("form input[name='action'][value='export_refine_input_draft']");
+  var refineSubmitting = false;
 
   function postAction(payload, onOk, onErr) {
     var body = new FormData();
@@ -150,16 +669,27 @@
       headers: { "X-Requested-With": "XMLHttpRequest" },
       body: body
     })
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        var contentType = (r.headers.get("content-type") || "").toLowerCase();
+        if (contentType.indexOf("application/json") >= 0) {
+          return r.json().then(function (data) {
+            return { ok: r.ok, data: data };
+          });
+        }
+        return r.text().then(function (text) {
+          return { ok: r.ok, data: { ok: false, error: text || "Request failed" } };
+        });
+      })
       .then(function (data) {
-        if (data && data.ok) {
-          onOk(data);
+        var payloadData = (data && data.data) || {};
+        if (data && data.ok && payloadData.ok) {
+          onOk(payloadData);
           return;
         }
-        onErr((data && data.error) || "Request failed");
+        onErr(payloadData.error || "Request failed");
       })
-      .catch(function () {
-        onErr("Request failed");
+      .catch(function (err) {
+        onErr((err && err.message) || "Request failed");
       });
   }
 
@@ -178,26 +708,41 @@
     });
   }
 
+  if (refineInput) {
+    refineInput.addEventListener("blur", function () {
+      if (refineSubmitting) return;
+      var text = (refineInput.value || "").trim();
+      postAction(
+        { action: "autosave_refine_input", refine_input: text },
+        function () {
+          if (refineSaveStatus) refineSaveStatus.textContent = "Autosaved";
+        },
+        function (err) {
+          if (refineSaveStatus) refineSaveStatus.textContent = err;
+        }
+      );
+    });
+  }
+
   if (defineForm && defineInput) {
     defineForm.addEventListener("submit", function (event) {
       event.preventDefault();
       var text = (defineInput.value || "").trim();
-      if (!text) {
-        if (defineStatus) defineStatus.textContent = "Enter text for the DEFINE LLM turn.";
+      var actionValue = phaseTurnAction ? (phaseTurnAction.value || "define_llm_turn") : "define_llm_turn";
+      if (!text && actionValue !== "execute_llm_turn") {
+        if (defineStatus) defineStatus.textContent = "Enter text for this stage LLM turn.";
         return;
       }
       if (defineButton) defineButton.disabled = true;
       if (defineStatus) defineStatus.textContent = "Sending...";
       postAction(
-        { action: "define_llm_turn", define_user_input: text },
+        { action: actionValue, phase_user_input: text },
         function (data) {
-          if (historyPanel && data.history_html) {
-            historyPanel.innerHTML = data.history_html;
-          }
           var latest = (data.latest_define_assistant_text || "").trim();
           if (latestBox) latestBox.value = latest;
           if (defineStatus) defineStatus.textContent = "Response received.";
           if (defineButton) defineButton.disabled = false;
+          window.location.reload();
         },
         function (err) {
           if (defineStatus) defineStatus.textContent = err;
@@ -206,6 +751,154 @@
       );
     });
   }
+
+  if (refineForm && refineInput) {
+    refineForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var text = (refineInput.value || "").trim();
+      if (!text) {
+        if (refineStatus) refineStatus.textContent = "Enter text for the REFINE LLM turn.";
+        return;
+      }
+      refineSubmitting = true;
+      if (refineButton) refineButton.disabled = true;
+      if (refineStatus) refineStatus.textContent = "Sending...";
+      if (refineSaveStatus) refineSaveStatus.textContent = "";
+      var actionValue = refineTurnAction ? (refineTurnAction.value || "refine_llm_turn") : "refine_llm_turn";
+      postAction(
+        { action: actionValue, phase_user_input: text },
+        function (data) {
+          var refined = (data.refine_text || "").trim();
+          if (refined && latestRefineBox) latestRefineBox.value = refined;
+          if (refineStatus) refineStatus.textContent = "Response received.";
+          if (refineButton) refineButton.disabled = false;
+          refineSubmitting = false;
+          setTimeout(function () {
+            window.location.reload();
+          }, 700);
+        },
+        function (err) {
+          if (refineStatus) refineStatus.textContent = err;
+          if (refineButton) refineButton.disabled = false;
+          refineSubmitting = false;
+        }
+      );
+    });
+  }
+
+  function setAllDetails(containerSelector, shouldOpen) {
+    var container = document.querySelector(containerSelector);
+    if (!container) return;
+    var nodes = container.querySelectorAll("details");
+    nodes.forEach(function (node) {
+      node.open = shouldOpen;
+    });
+  }
+
+  var toggleButtons = document.querySelectorAll("[data-details-target]");
+  toggleButtons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var target = btn.getAttribute("data-details-target");
+      var openFlag = btn.getAttribute("data-details-open") === "1";
+      setAllDetails(target, openFlag);
+    });
+  });
+
+  if (refineInput && exportRefineForm) {
+    var exportForm = exportRefineForm.form;
+    if (exportForm) {
+      exportForm.addEventListener("submit", function () {
+        var hidden = exportForm.querySelector("input[name='refine_input']");
+        if (hidden) hidden.value = (refineInput.value || "").trim();
+      });
+    }
+  }
+
+  if (refineLockForm && refineInput && refineLockInput) {
+    refineLockForm.addEventListener("submit", function () {
+      refineLockInput.value = (refineInput.value || "").trim();
+    });
+  }
+
+  function initProjectFilesSort() {
+    var list = document.getElementById("project-files-list");
+    if (!list) return;
+    var buttons = document.querySelectorAll("[data-files-sort]");
+    var currentSort = "updated";
+    var currentDir = "desc";
+
+    function parseValue(node, key) {
+      if (key === "name") return String(node.getAttribute("data-file-name") || "");
+      if (key === "size") return parseInt(node.getAttribute("data-file-size") || "0", 10) || 0;
+      return parseInt(node.getAttribute("data-file-updated") || "0", 10) || 0;
+    }
+
+    function applyButtonState() {
+      buttons.forEach(function (btn) {
+        var key = btn.getAttribute("data-files-sort");
+        var arrow = "";
+        if (key === currentSort) arrow = currentDir === "asc" ? " ▲" : " ▼";
+        btn.textContent = (key.charAt(0).toUpperCase() + key.slice(1)) + arrow;
+      });
+    }
+
+    function sortList(key, dir) {
+      var rows = Array.prototype.slice.call(list.querySelectorAll(".list-group-item"));
+      rows.sort(function (a, b) {
+        var av = parseValue(a, key);
+        var bv = parseValue(b, key);
+        if (av < bv) return dir === "asc" ? -1 : 1;
+        if (av > bv) return dir === "asc" ? 1 : -1;
+        return 0;
+      });
+      rows.forEach(function (row) {
+        list.appendChild(row);
+      });
+      currentSort = key;
+      currentDir = dir;
+      applyButtonState();
+    }
+
+    buttons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var key = btn.getAttribute("data-files-sort") || "updated";
+        var nextDir = "desc";
+        if (key === currentSort) nextDir = currentDir === "desc" ? "asc" : "desc";
+        sortList(key, nextDir);
+      });
+    });
+
+    applyButtonState();
+  }
+
+  function drawerStorageKey(node, index) {
+    var base = "derax_drawer_state";
+    var projectId = "{{ project.id }}";
+    var nodeId = node.getAttribute("id");
+    var summary = "";
+    var summaryNode = node.querySelector("summary");
+    if (summaryNode) {
+      summary = (summaryNode.textContent || "").trim().toLowerCase().replace(/\s+/g, "_").slice(0, 80);
+    }
+    var ident = nodeId || summary || ("idx_" + index);
+    return base + ":" + projectId + ":" + ident;
+  }
+
+  function applyStoredDrawerStates() {
+    var drawers = document.querySelectorAll("details");
+    drawers.forEach(function (node, index) {
+      var key = drawerStorageKey(node, index);
+      var stored = localStorage.getItem(key);
+      if (stored === "1") node.open = true;
+      if (stored === "0") node.open = false;
+      node.addEventListener("toggle", function () {
+        localStorage.setItem(key, node.open ? "1" : "0");
+      });
+    });
+  }
+
+  applyStoredDrawerStates();
+  initProjectFilesSort();
 })();
 </script>
 {% endblock %}

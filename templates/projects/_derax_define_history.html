@@ -2,14 +2,195 @@
   {% if define_history %}
     {% for row in define_history %}
       <div class="mb-2">
-        <div class="small">
-          <strong>{% if row.role == "assistant" %}LLM{% else %}You{% endif %}</strong>
-          <span class="text-muted">{{ row.timestamp|default:"" }}</span>
-        </div>
-        <div style="white-space: pre-wrap;">{{ row.text }}</div>
+        <details class="rw-channel">
+          <summary class="small">
+            <strong>{% if row.role == "assistant" %}LLM{% else %}You{% endif %}</strong>
+            <span class="text-muted">{{ row.timestamp|default:"" }}</span>
+          </summary>
+          <div class="pt-2">
+            {% if row.is_derax %}
+              {% if row.derax_payload.intent or row.derax_payload.core %}
+                <details class="rw-channel mt-1">
+              <summary class="fw-semibold">Intent</summary>
+              <div class="pt-2 small">
+                {% if row.derax_payload.intent.destination %}
+                  <div class="mb-2">{{ row.derax_payload.intent.destination }}</div>
+                {% elif row.derax_payload.core.end_in_mind %}
+                  <div class="mb-2">{{ row.derax_payload.core.end_in_mind }}</div>
+                {% endif %}
+
+                {% if row.derax_payload.intent.success_criteria %}
+                  <div><strong>Success criteria</strong></div>
+                  <ul class="mb-2">
+                    {% for item in row.derax_payload.intent.success_criteria %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% elif row.derax_payload.core.destination_conditions %}
+                  <div><strong>Destination conditions</strong></div>
+                  <ul class="mb-2">
+                    {% for item in row.derax_payload.core.destination_conditions %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+
+                {% if row.derax_payload.intent.constraints %}
+                  <div><strong>Constraints</strong></div>
+                  <ul class="mb-2">
+                    {% for item in row.derax_payload.intent.constraints %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% elif row.derax_payload.core.assumptions %}
+                  <div><strong>Assumptions</strong></div>
+                  <ul class="mb-2">
+                    {% for item in row.derax_payload.core.assumptions %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+
+                {% if row.derax_payload.intent.non_goals %}
+                  <div><strong>Non-goals</strong></div>
+                  <ul class="mb-0">
+                    {% for item in row.derax_payload.intent.non_goals %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% elif row.derax_payload.core.non_goals %}
+                  <div><strong>Non-goals</strong></div>
+                  <ul class="mb-0">
+                    {% for item in row.derax_payload.core.non_goals %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+              </div>
+            </details>
+              {% endif %}
+
+              {% if row.derax_payload.explore.adjacent_ideas or row.derax_payload.explore.risks or row.derax_payload.explore.tradeoffs or row.derax_payload.explore.reframes or row.derax_payload.core.adjacent_angles or row.derax_payload.core.risks or row.derax_payload.core.scope_changes %}
+                <details class="rw-channel mt-1">
+              <summary class="fw-semibold">Explore</summary>
+              <div class="pt-2 small">
+                {% if row.derax_payload.explore.adjacent_ideas %}
+                  <div><strong>Adjacent ideas</strong></div>
+                  <ul class="mb-2">
+                    {% for item in row.derax_payload.explore.adjacent_ideas %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% elif row.derax_payload.core.adjacent_angles %}
+                  <div><strong>Adjacent angles</strong></div>
+                  <ul class="mb-2">
+                    {% for item in row.derax_payload.core.adjacent_angles %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+
+                {% if row.derax_payload.explore.risks %}
+                  <div><strong>Risks</strong></div>
+                  <ul class="mb-2">
+                    {% for item in row.derax_payload.explore.risks %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% elif row.derax_payload.core.risks %}
+                  <div><strong>Risks</strong></div>
+                  <ul class="mb-2">
+                    {% for item in row.derax_payload.core.risks %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+
+                {% if row.derax_payload.explore.tradeoffs %}
+                  <div><strong>Trade-offs</strong></div>
+                  <ul class="mb-2">
+                    {% for item in row.derax_payload.explore.tradeoffs %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+
+                {% if row.derax_payload.explore.reframes %}
+                  <div><strong>Reframes</strong></div>
+                  <ul class="mb-0">
+                    {% for item in row.derax_payload.explore.reframes %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% elif row.derax_payload.core.scope_changes %}
+                  <div><strong>Scope changes</strong></div>
+                  <ul class="mb-0">
+                    {% for item in row.derax_payload.core.scope_changes %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+              </div>
+            </details>
+              {% endif %}
+
+              {% if row.derax_payload.parked_for_later.items or row.derax_payload.parked %}
+                <details class="rw-channel mt-1">
+              <summary class="fw-semibold">Parked for Later</summary>
+              <div class="pt-2 small">
+                <ul class="mb-0">
+                  {% if row.derax_payload.parked_for_later.items %}
+                    {% for item in row.derax_payload.parked_for_later.items %}
+                      <li>
+                        {% if item.title %}<strong>{{ item.title }}</strong>{% endif %}{% if item.detail %} - {{ item.detail }}{% endif %}
+                      </li>
+                    {% endfor %}
+                  {% else %}
+                    {% for item in row.derax_payload.parked %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  {% endif %}
+                </ul>
+              </div>
+            </details>
+              {% endif %}
+
+              {% if row.derax_payload.artefacts or row.derax_payload.footnotes or row.derax_payload.validation %}
+                <details class="rw-channel mt-1">
+              <summary class="fw-semibold">Meta</summary>
+              <div class="pt-2 small">
+                {% if row.derax_payload.footnotes %}
+                  <div><strong>Footnotes</strong></div>
+                  <ul class="mb-2">
+                    {% for item in row.derax_payload.footnotes %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+                {% if row.derax_payload.validation.errors %}
+                  <div><strong>Validation errors</strong></div>
+                  <ul class="mb-2">
+                    {% for item in row.derax_payload.validation.errors %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+                {% if row.derax_payload.meta.phase %}
+                  <div><strong>Phase:</strong> {{ row.derax_payload.meta.phase }}</div>
+                {% elif row.derax_payload.phase %}
+                  <div><strong>Phase:</strong> {{ row.derax_payload.phase }}</div>
+                {% endif %}
+              </div>
+            </details>
+          {% endif %}
+            {% else %}
+              <div style="white-space: pre-wrap; font-family: inherit;">{{ row.display_text|default:row.text }}</div>
+            {% endif %}
+          </div>
+        </details>
       </div>
     {% endfor %}
   {% else %}
-    <div class="small text-muted">No DEFINE turns yet.</div>
+    <div class="small text-muted">No turns yet.</div>
   {% endif %}
 </div>

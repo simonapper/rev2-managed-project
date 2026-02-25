@@ -8,7 +8,7 @@ from chats.models import ContractOverride
 from chats.services.cde_injection import build_cde_system_blocks
 from chats.services.contracts.boundary_resolver import resolve_boundary_contract
 from chats.services.contracts.texts import map_block_key_to_contract_text_key, resolve_contract_text
-from chats.services.contracts.phase_resolver import _render_work_item_phase_contract, resolve_phase_contract
+from chats.services.contracts.phase_resolver import resolve_phase_contract
 from projects.phase_contracts import PHASE_CONTRACTS
 from projects.services.llm_instructions import build_system_messages
 
@@ -90,6 +90,34 @@ _ENVELOPE_TEXT = (
 )
 
 
+def _render_static_phase_contract(phase_name: str) -> str:
+    phase = str(phase_name or "").strip().upper()
+    contract = PHASE_CONTRACTS.get(phase)
+    if not isinstance(contract, dict):
+        return ""
+
+    lines = [
+        "PHASE CONTRACT",
+        f"Source: Phase {phase}",
+        f"Active phase: {phase}",
+        f"Role: {str(contract.get('role') or '').strip()}",
+        f"Phase goal: {str(contract.get('phase_goal') or '').strip()}",
+        "Boundary:",
+    ]
+    for item in list(contract.get("boundary") or []):
+        lines.append("- " + str(item))
+    lines.append("Method:")
+    for item in list(contract.get("method") or []):
+        lines.append("- " + str(item))
+    lines.append("Output requirements:")
+    for header in list(contract.get("output_requirements") or []):
+        lines.append("- " + str(header))
+    lines.append("Forbidden behaviour:")
+    for item in list(contract.get("forbidden_behaviour") or []):
+        lines.append("- " + str(item))
+    return "\n".join(lines).strip()
+
+
 def get_raw_contract_text(ctx: Any, key: str) -> str:
     k = str(key or "").strip()
     if not k:
@@ -117,31 +145,7 @@ def get_raw_contract_text(ctx: Any, key: str) -> str:
         return str(out.content or "").strip() if out else ""
     if k.startswith("phase.") and k != "phase.contract":
         phase_name = k.split(".", 1)[1].strip().upper()
-        if phase_name not in PHASE_CONTRACTS:
-            return ""
-        work_item = getattr(ctx, "work_item", None)
-        user_text = str(getattr(ctx, "user_text", "") or "")
-        if work_item is None:
-            class _FakeWorkItem:
-                active_phase = phase_name
-                title = ""
-                id = ""
-                seed_log = []
-                active_seed_revision = 0
-
-                @staticmethod
-                def evaluate_phase_transition(_phase):
-                    return True, ""
-
-            text, _key = _render_work_item_phase_contract(_FakeWorkItem(), user_text=user_text)
-            return text
-        original_phase = str(getattr(work_item, "active_phase", "") or "")
-        try:
-            setattr(work_item, "active_phase", phase_name)
-            text, _key = _render_work_item_phase_contract(work_item, user_text=user_text)
-            return text
-        finally:
-            setattr(work_item, "active_phase", original_phase)
+        return _render_static_phase_contract(phase_name)
     if k.startswith("cde.contract."):
         try:
             idx = int(k.split(".")[-1])

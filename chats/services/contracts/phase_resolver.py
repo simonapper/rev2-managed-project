@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from chats.services.derax.contracts import DERAX_PHASES, build_phase_contract_text
 from projects.phase_contracts import PHASE_CONTRACTS
 
 
@@ -108,6 +109,15 @@ def resolve_phase_contract(ctx: Any) -> PhaseResolution | None:
             return PhaseResolution(content=text, source="ppde", effective_phase_contract=f"{key}:v{version}")
 
     work_item = getattr(ctx, "work_item", None)
+    if bool(getattr(ctx, "is_derax", False)) and work_item is not None:
+        phase = str(getattr(work_item, "active_phase", "") or "").strip().upper()
+        if phase in DERAX_PHASES:
+            return PhaseResolution(
+                content=build_phase_contract_text(phase),
+                source="derax",
+                effective_phase_contract=f"derax:{phase}",
+            )
+
     if work_item is not None:
         text, key = _render_work_item_phase_contract(work_item, user_text=str(getattr(ctx, "user_text", "") or ""))
         if text:

@@ -10,11 +10,15 @@ import os
 import re
 import urllib.request
 import anthropic
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from django.conf import settings
 
 from chats.services.contracts.pipeline import ContractContext, build_system_blocks
+from chats.services.derax.compile import compile_derax_chat_run_to_cko_artefact
+from chats.services.derax.envelope import build_derax_system_blocks
+from chats.services.derax.persist import persist_derax_payload
+from chats.services.derax.validate import build_correction_message, validate_derax_text
 from config.models import SystemConfigPointers
 
 
@@ -513,6 +517,104 @@ def build_image_parts_from_attachments(attachments) -> List[Dict[str, str]]:
     return parts
 
 
+def _call_llm_raw_text(
+    *,
+    selected_provider: str,
+    model: str,
+    system_blocks: list[str],
+    history_messages: list[dict],
+    user_text: str,
+    image_parts: list[dict] | None,
+    force_model: str | None,
+    user: Any,
+) -> str:
+    image_parts = list(image_parts or [])
+
+    if selected_provider == "copilot":
+        if image_parts:
+            raise ValueError("copilot provider does not support image_parts")
+        prompt = _flatten_prompt(
+            system_blocks=system_blocks,
+            messages=history_messages,
+            user_text=user_text,
+        )
+        return (getattr(_get_copilot_agent().run(prompt), "text", "") or "").strip()
+
+    if selected_provider == "anthropic":
+        anthropic_messages: List[Dict[str, Any]] = []
+        for msg in history_messages:
+            if not msg:
+                continue
+            role = msg.get("role")
+            if role not in ("user", "assistant"):
+                continue
+            text = _content_to_text(msg.get("content"))
+            if text:
+                anthropic_messages.append({"role": role, "content": text})
+
+        user_content: List[Dict[str, Any]] = [{"type": "text", "text": user_text}]
+        for part in image_parts:
+            image_url = str(part.get("image_url") or "")
+            image_block = _data_url_to_anthropic_image_block(image_url)
+            if image_block:
+                user_content.append(image_block)
+
+        anthropic_messages.append({"role": "user", "content": user_content})
+        response = _get_anthropic_client().messages.create(
+            model=_resolve_anthropic_model(force_model, user=user),
+            max_tokens=4096,
+            system="\n\n".join([b for b in system_blocks if b]).strip(),
+            messages=anthropic_messages,
+        )
+        return "\n".join(
+            [
+                getattr(block, "text", "")
+                for block in (response.content or [])
+                if getattr(block, "type", "") == "text"
+            ]
+        ).strip()
+
+    if selected_provider == "deepseek":
+        if image_parts:
+            raise ValueError("deepseek provider does not support image_parts")
+        prompt = _flatten_prompt(
+            system_blocks=system_blocks,
+            messages=history_messages,
+            user_text=user_text,
+        )
+        response = _deepseek_chat_completion(
+            model=_get_default_deepseek_model_key(user=user),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return _resolve_deepseek_text(response).strip()
+
+    input_msgs: List[Dict[str, Any]] = []
+    for block in system_blocks:
+        if block:
+            input_msgs.append({"role": "system", "content": block})
+    for msg in history_messages:
+        if not msg:
+            continue
+        role = msg.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = msg.get("content")
+        if not content:
+            continue
+        input_msgs.append({"role": role, "content": content})
+    input_msgs.append(
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": user_text}] + image_parts,
+        }
+    )
+    response = _get_openai_client().responses.create(
+        model=model,
+        input=input_msgs,
+    )
+    return _openai_response_fallback_text(response).strip()
+
+
 def generate_panes(
     user_text: str,
     image_parts: Optional[List[Dict[str, str]]] = None,
@@ -911,3 +1013,117 @@ def generate_text(
         ],
     )
     return (response.output_text or "").strip()
+
+
+def generate_derax(
+    *,
+    user_text: str,
+    phase: str,
+    project_id: int,
+    chat_id: int,
+    turn_id: str,
+    image_parts: Optional[list[dict[str, str]]] = None,
+    system_blocks: Optional[list[str]] = None,
+    history_messages: Optional[list[dict[str, Any]]] = None,
+    force_model: Optional[str] = None,
+    user: Any = None,
+    provider: Optional[str] = None,
+    work_item: Any = None,
+    contract_ctx: Optional[ContractContext] = None,
+    persist: bool = True,
+    compile_after: bool = False,
+    llm_raw_text_fn: Optional[Callable[..., str]] = None,
+) -> dict[str, Any]:
+    del contract_ctx
+    image_parts = list(image_parts or [])
+    base_system_blocks = list(system_blocks or [])
+    history_messages = list(history_messages or [])
+
+    model = (force_model or _get_default_model_key(user=user)).strip()
+    selected_provider = _resolve_provider(provider=provider, user=user)
+    derax_system_blocks = build_derax_system_blocks(base_system_blocks=base_system_blocks, phase=phase)
+
+    call_fn = llm_raw_text_fn or _call_llm_raw_text
+    latest_errors: list[str] = []
+    payload: dict | None = None
+    raw_text = ""
+    loop_user_text = str(user_text or "")
+
+    for _ in range(3):
+        raw_text = call_fn(
+            selected_provider=selected_provider,
+            model=model,
+            system_blocks=derax_system_blocks,
+            history_messages=history_messages,
+            user_text=loop_user_text,
+            image_parts=image_parts,
+            force_model=force_model,
+            user=user,
+        )
+        ok, maybe_payload, errors = validate_derax_text(raw_text)
+        if ok and isinstance(maybe_payload, dict):
+            payload = maybe_payload
+            latest_errors = []
+            break
+        latest_errors = list(errors or [])
+        loop_user_text = build_correction_message(latest_errors)
+
+    if payload is None:
+        joined = "; ".join(latest_errors) if latest_errors else "Invalid DERAX output"
+        raise ValueError("DERAX validation failed: " + joined)
+
+    json_artefact_id = ""
+    if persist:
+        if work_item is not None:
+            doc_or_id = persist_derax_payload(
+                work_item=work_item,
+                payload=payload,
+                user=user,
+                chat=None,
+                turn_id=str(turn_id or ""),
+                phase=str(phase or ""),
+            )
+            json_artefact_id = str(getattr(doc_or_id, "id", "") or "")
+        else:
+            doc_or_id = persist_derax_payload(
+                project_id=int(project_id),
+                chat_id=int(chat_id),
+                turn_id=str(turn_id or ""),
+                phase=str(phase or ""),
+                payload=payload,
+                raw_text=raw_text,
+                user_id=getattr(user, "id", None),
+            )
+            json_artefact_id = str(doc_or_id or "")
+        generated = list((payload.get("artefacts") or {}).get("generated") or [])
+        generated.append(
+            {
+                "artefact_id": json_artefact_id,
+                "kind": "DERAX_JSON",
+                "title": f"{str(phase or '').strip().upper()} payload",
+            }
+        )
+        payload.setdefault("artefacts", {})
+        payload["artefacts"]["generated"] = generated
+
+    out: dict[str, Any] = {
+        "payload": payload,
+        "json_artefact_id": json_artefact_id,
+    }
+    if compile_after:
+        title = "DERAX Compiled CKO"
+        if work_item is not None:
+            title = str(getattr(work_item, "title", "") or title)
+            compiled_id = compile_derax_chat_run_to_cko_artefact(
+                project_id=int(getattr(work_item, "project_id", project_id)),
+                chat_id=int(chat_id),
+                title=title,
+            )
+        else:
+            compiled_id = compile_derax_chat_run_to_cko_artefact(
+                project_id=int(project_id),
+                chat_id=int(chat_id),
+                title=title,
+            )
+        out["compiled_artefact_id"] = str(compiled_id or "")
+    return out

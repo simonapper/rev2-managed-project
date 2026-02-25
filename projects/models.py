@@ -233,6 +233,8 @@ class WorkItem(models.Model):
     derax_endpoint_spec = models.TextField(blank=True, default="")
     derax_endpoint_locked = models.BooleanField(default=False)
     derax_define_history = models.JSONField(default=list, blank=True)
+    derax_explore_history = models.JSONField(default=list, blank=True)
+    derax_runs = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -275,6 +277,8 @@ class WorkItem(models.Model):
             derax_endpoint_spec="",
             derax_endpoint_locked=False,
             derax_define_history=[],
+            derax_explore_history=[],
+            derax_runs=[],
         )
 
     @staticmethod

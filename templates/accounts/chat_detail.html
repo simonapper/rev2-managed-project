@@ -75,6 +75,18 @@ Turn selection is client-side; server still renders canonical HTML.-->
   </div>
 </div>
 
+<form method="post" action="{% url 'accounts:derax_toggle' chat.id %}" class="mb-2 d-flex align-items-center gap-2">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next_url_no_turn }}">
+  <div class="form-check m-0">
+    <input class="form-check-input" type="checkbox" id="rw-derax-enabled" name="enabled" value="1" {% if chat.derax_enabled %}checked{% endif %} onchange="this.form.submit()">
+    <label class="form-check-label small" for="rw-derax-enabled">DERAX</label>
+  </div>
+  {% if chat.derax_enabled %}
+    <span class="small text-secondary">DERAX mode is on for this chat.</span>
+  {% endif %}
+</form>
+
 <form method="post" action="{% url 'accounts:chat_message_create' %}" enctype="multipart/form-data">
   {% csrf_token %}
   <input type="hidden" name="chat_id" value="{{ chat.id }}">
@@ -89,6 +101,13 @@ Turn selection is client-side; server still renders canonical HTML.-->
       </div>
       {% if can_undo_rollup %}
         <button type="submit" form="rw-undo-rollup-form" class="btn btn-sm btn-outline-warning">Undo roll-up</button>
+      {% endif %}
+      {% if chat.derax_enabled %}
+        <label for="rw-derax-phase" class="small text-secondary mb-0">Phase</label>
+        <select id="rw-derax-phase" name="derax_phase" class="form-select form-select-sm" style="width: 130px;">
+          <option value="DEFINE" {% if derax_last_phase == "DEFINE" %}selected{% endif %}>DEFINE</option>
+          <option value="EXPLORE" {% if derax_last_phase == "EXPLORE" %}selected{% endif %}>EXPLORE</option>
+        </select>
       {% endif %}
     </div>
   </div>
@@ -108,7 +127,15 @@ Turn selection is client-side; server still renders canonical HTML.-->
   <div class="mt-2 d-flex align-items-center gap-2">
     <input id="rw-file-input" type="file" style="display:none">
     <span id="rw-file-name" class="small text-secondary"></span>
-    <button type="submit" class="btn btn-sm btn-success rw-btn-same">Send</button>
+    {% if chat.derax_enabled %}
+      <button
+        type="submit"
+        formaction="{% url 'accounts:derax_run' chat.id %}"
+        formmethod="post"
+        class="btn btn-sm btn-success rw-btn-same">Run DERAX</button>
+    {% else %}
+      <button type="submit" class="btn btn-sm btn-success rw-btn-same">Send</button>
+    {% endif %}
     <div class="ms-auto"></div>
   </div>
 
@@ -139,6 +166,26 @@ Turn selection is client-side; server still renders canonical HTML.-->
   {% endif %}
 
 </form>
+{% if chat.derax_enabled %}
+  <div class="small text-secondary mb-2">
+    {% if derax_last_json_artefact_id %}
+      Last DERAX JSON artefact: {{ derax_last_json_artefact_id }}
+    {% else %}
+      Last DERAX JSON artefact: none
+    {% endif %}
+    <br>
+    {% if derax_last_compiled_artefact_id %}
+      Last compiled CKO artefact: {{ derax_last_compiled_artefact_id }}
+    {% else %}
+      Last compiled CKO artefact: none
+    {% endif %}
+  </div>
+  <form method="post" action="{% url 'accounts:derax_compile' chat.id %}" class="mb-3">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next_url_no_turn }}">
+    <button type="submit" class="btn btn-sm btn-outline-secondary">Compile</button>
+  </form>
+{% endif %}
 {% if can_undo_rollup %}
   <form id="rw-undo-rollup-form" method="post" action="{% url 'accounts:chat_rollup_undo' chat.id %}" class="d-none">
     {% csrf_token %}
@@ -266,7 +313,152 @@ Turn selection is client-side; server still renders canonical HTML.-->
                           <div class="pt-2">
                             {% if pane.answer %}
                               <div class="rw-message{% if pane.assistant and pane.assistant.importance == 'PINNED' %} msg-pinned{% endif %}{% if pane.assistant and pane.assistant.importance == 'IGNORE' %} msg-ignored{% endif %}{% if pane.assistant and chat.pinned_cursor_message_id and pane.assistant.id <= chat.pinned_cursor_message_id %} msg-rolled-up{% endif %}">
-                                <div class="rw-message-body">{{ pane.answer|linebreaksbr }}</div>
+                                {% if pane.is_derax %}
+                                  <div class="rw-message-body">
+                                    <div class="fw-semibold mb-2">DERAX ({{ pane.derax_payload.meta.phase }})</div>
+
+                                    {% if pane.derax_payload.intent.destination or pane.derax_payload.intent.success_criteria or pane.derax_payload.intent.constraints or pane.derax_payload.intent.non_goals or pane.derax_payload.intent.open_questions %}
+                                      <details open class="rw-channel">
+                                        <summary class="fw-semibold">Intent</summary>
+                                        <div class="pt-2">
+                                          {% if pane.derax_payload.intent.destination %}
+                                            <p class="mb-2">{{ pane.derax_payload.intent.destination }}</p>
+                                          {% endif %}
+                                          {% if pane.derax_payload.intent.success_criteria %}
+                                            <div><strong>Success Criteria</strong></div>
+                                            <ul>
+                                              {% for item in pane.derax_payload.intent.success_criteria %}
+                                                <li>{{ item }}</li>
+                                              {% endfor %}
+                                            </ul>
+                                          {% endif %}
+                                          {% if pane.derax_payload.intent.constraints %}
+                                            <div><strong>Constraints</strong></div>
+                                            <ul>
+                                              {% for item in pane.derax_payload.intent.constraints %}
+                                                <li>{{ item }}</li>
+                                              {% endfor %}
+                                            </ul>
+                                          {% endif %}
+                                          {% if pane.derax_payload.intent.non_goals %}
+                                            <div><strong>Non-goals</strong></div>
+                                            <ul>
+                                              {% for item in pane.derax_payload.intent.non_goals %}
+                                                <li>{{ item }}</li>
+                                              {% endfor %}
+                                            </ul>
+                                          {% endif %}
+                                          {% if pane.derax_payload.intent.open_questions %}
+                                            <div><strong>Open Questions</strong></div>
+                                            <ul>
+                                              {% for item in pane.derax_payload.intent.open_questions %}
+                                                <li>{{ item }}</li>
+                                              {% endfor %}
+                                            </ul>
+                                          {% endif %}
+                                        </div>
+                                      </details>
+                                    {% endif %}
+
+                                    {% if pane.derax_payload.explore.adjacent_ideas or pane.derax_payload.explore.risks or pane.derax_payload.explore.tradeoffs or pane.derax_payload.explore.reframes %}
+                                      <details class="rw-channel">
+                                        <summary class="fw-semibold">Explore</summary>
+                                        <div class="pt-2">
+                                          {% for key, value in pane.derax_payload.explore.items %}
+                                            {% if value %}
+                                              <div><strong>{{ key|capfirst }}</strong></div>
+                                              <ul>
+                                                {% for item in value %}
+                                                  <li>{{ item }}</li>
+                                                {% endfor %}
+                                              </ul>
+                                            {% endif %}
+                                          {% endfor %}
+                                        </div>
+                                      </details>
+                                    {% endif %}
+
+                                    {% if pane.derax_payload.parked_for_later.items %}
+                                      <details class="rw-channel">
+                                        <summary class="fw-semibold">Parked for Later</summary>
+                                        <div class="pt-2">
+                                          <ul>
+                                            {% for item in pane.derax_payload.parked_for_later.items %}
+                                              <li>
+                                                <strong>{{ item.title }}</strong>
+                                                {% if item.detail %} - {{ item.detail }}{% endif %}
+                                              </li>
+                                            {% endfor %}
+                                          </ul>
+                                        </div>
+                                      </details>
+                                    {% endif %}
+
+                                    {% if pane.derax_payload.artefacts.proposed or pane.derax_payload.artefacts.generated %}
+                                      <details class="rw-channel">
+                                        <summary class="fw-semibold">Artefacts</summary>
+                                        <div class="pt-2">
+                                          {% if pane.derax_payload.artefacts.proposed %}
+                                            <div><strong>Proposed</strong></div>
+                                            <ul>
+                                              {% for item in pane.derax_payload.artefacts.proposed %}
+                                                <li>
+                                                  <span>{{ item.kind }}</span>
+                                                  <span>: {{ item.title }}</span>
+                                                  {% if item.notes %}<span> - {{ item.notes }}</span>{% endif %}
+                                                </li>
+                                              {% endfor %}
+                                            </ul>
+                                          {% endif %}
+                                          {% if pane.derax_payload.artefacts.generated %}
+                                            <div><strong>Generated</strong></div>
+                                            <ul>
+                                              {% for item in pane.derax_payload.artefacts.generated %}
+                                                <li>
+                                                  <span>{{ item.kind }}</span>
+                                                  <span>: {{ item.title }}</span>
+                                                  {% if item.artefact_id %}<span> ({{ item.artefact_id }})</span>{% endif %}
+                                                </li>
+                                              {% endfor %}
+                                            </ul>
+                                          {% endif %}
+                                        </div>
+                                      </details>
+                                    {% endif %}
+
+                                    {% if pane.derax_payload.validation.schema_ok or pane.derax_payload.validation.errors %}
+                                      <details class="rw-channel">
+                                        <summary class="fw-semibold">Validation</summary>
+                                        <div class="pt-2">
+                                          {% for key, value in pane.derax_payload.validation.items %}
+                                            {% if value %}
+                                              <div class="mb-1">
+                                                <strong>{{ key|capfirst }}:</strong>
+                                                {% if value.items %}
+                                                  {% for sub_key, sub_val in value.items %}
+                                                    {% if sub_val %}
+                                                      <div class="ms-3"><strong>{{ sub_key|capfirst }}:</strong> {{ sub_val }}</div>
+                                                    {% endif %}
+                                                  {% endfor %}
+                                                {% elif value.0 %}
+                                                  <ul>
+                                                    {% for item in value %}
+                                                      <li>{{ item }}</li>
+                                                    {% endfor %}
+                                                  </ul>
+                                                {% else %}
+                                                  <span>{{ value }}</span>
+                                                {% endif %}
+                                              </div>
+                                            {% endif %}
+                                          {% endfor %}
+                                        </div>
+                                      </details>
+                                    {% endif %}
+                                  </div>
+                                {% else %}
+                                  <div class="rw-message-body">{{ pane.answer|linebreaksbr }}</div>
+                                {% endif %}
                               </div>
                               {% if pane.generated_images %}
                                 <div class="mt-2 d-flex flex-wrap gap-2">

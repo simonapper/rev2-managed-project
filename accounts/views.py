@@ -159,7 +159,14 @@ from chats.services.cde_loop import validate_cde_inputs
 from chats.services.contracts.pipeline import ContractContext, build_system_blocks
 from chats.services_assets import persist_generated_images_from_text, save_generated_image_bytes
 from chats.services.chat_bootstrap import bootstrap_chat
-from chats.services.llm import _get_default_model_key, generate_openai_image_bytes, generate_panes, generate_text
+from chats.services.derax.compile import compile_derax_chat_run_to_cko_artefact
+from chats.services.llm import (
+    _get_default_model_key,
+    generate_derax,
+    generate_openai_image_bytes,
+    generate_panes,
+    generate_text,
+)
 from chats.services.llm import build_image_parts_from_attachments
 from chats.services.pinning import (
     build_history_messages,
@@ -1452,6 +1459,171 @@ def chat_message_create(request):
 
 @require_POST
 @login_required
+def derax_toggle(request, chat_id: int):
+    chat = get_object_or_404(
+        ChatWorkspace.objects.select_related("project"),
+        pk=chat_id,
+        project__in=accessible_projects_qs(request.user),
+    )
+    enabled_raw = str(request.POST.get("enabled") or "").strip().lower()
+    enabled = enabled_raw in {"1", "true", "yes", "on"}
+    if chat.derax_enabled != enabled:
+        chat.derax_enabled = enabled
+        chat.save(update_fields=["derax_enabled", "updated_at"])
+    next_url = (request.POST.get("next") or "").strip()
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return redirect(next_url)
+    return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+
+
+@require_POST
+@login_required
+def derax_run(request, chat_id: int):
+    chat = get_object_or_404(
+        ChatWorkspace.objects.select_related("project"),
+        pk=chat_id,
+        project__in=accessible_projects_qs(request.user),
+    )
+    next_url = (request.POST.get("next") or "").strip()
+    content = str(request.POST.get("content") or "").strip()
+    if not content:
+        messages.error(request, "Message cannot be empty.")
+        target = reverse("accounts:chat_detail", args=[chat.id])
+        if next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            target = next_url
+        return redirect(target)
+    if not bool(chat.derax_enabled):
+        messages.error(request, "DERAX mode is off for this chat.")
+        target = reverse("accounts:chat_detail", args=[chat.id])
+        if next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            target = next_url
+        return redirect(target)
+
+    phase = str(request.POST.get("derax_phase") or "DEFINE").strip().upper()
+    if phase not in {"DEFINE", "EXPLORE"}:
+        phase = "DEFINE"
+    turn_id = "ui-" + timezone.now().strftime("%Y%m%d%H%M%S%f")
+
+    try:
+        result = generate_derax(
+            user_text=content,
+            phase=phase,
+            project_id=int(chat.project_id),
+            chat_id=int(chat.id),
+            turn_id=turn_id,
+            image_parts=[],
+            system_blocks=[],
+            history_messages=[],
+            user=request.user,
+            provider=None,
+            persist=True,
+            compile_after=False,
+        )
+    except ValueError as exc:
+        messages.error(request, "DERAX failed: " + str(exc))
+        target = reverse("accounts:chat_detail", args=[chat.id])
+        if next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            target = next_url
+        return redirect(target)
+
+    payload = dict(result.get("payload") or {})
+    json_artefact_id = str(result.get("json_artefact_id") or "")
+    assistant_text = json.dumps(payload, ensure_ascii=True, indent=2)
+
+    ChatMessage.objects.create(
+        chat=chat,
+        role=ChatMessage.Role.USER,
+        raw_text=content,
+        answer_text=content,
+        segment_meta={"parser_version": "derax_user_v1", "confidence": "N/A"},
+    )
+    ChatMessage.objects.create(
+        chat=chat,
+        role=ChatMessage.Role.ASSISTANT,
+        raw_text=assistant_text,
+        answer_text=assistant_text,
+        reasoning_text="",
+        output_text="",
+        segment_meta={
+            "parser_version": "derax_assistant_v1",
+            "confidence": "HIGH",
+            "derax_payload": True,
+            "derax_phase": phase,
+            "json_artefact_id": json_artefact_id,
+        },
+    )
+
+    request.session["derax_last_json_artefact_id"] = json_artefact_id
+    request.session["derax_last_phase"] = phase
+    request.session.modified = True
+    messages.success(request, "DERAX run saved.")
+    target = reverse("accounts:chat_detail", args=[chat.id])
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        target = next_url
+    return redirect(target)
+
+
+@require_POST
+@login_required
+def derax_compile(request, chat_id: int):
+    chat = get_object_or_404(
+        ChatWorkspace.objects.select_related("project"),
+        pk=chat_id,
+        project__in=accessible_projects_qs(request.user),
+    )
+    next_url = (request.POST.get("next") or "").strip()
+    try:
+        compiled_id = compile_derax_chat_run_to_cko_artefact(
+            project_id=int(chat.project_id),
+            chat_id=int(chat.id),
+            title=f"DERAX Compiled CKO - Chat {chat.id}",
+        )
+    except Exception as exc:
+        messages.error(request, "DERAX compile failed: " + str(exc))
+        target = reverse("accounts:chat_detail", args=[chat.id])
+        if next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            target = next_url
+        return redirect(target)
+
+    request.session["derax_last_compiled_artefact_id"] = str(compiled_id or "")
+    request.session.modified = True
+    messages.success(request, "DERAX compile saved.")
+    target = reverse("accounts:chat_detail", args=[chat.id])
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        target = next_url
+    return redirect(target)
+
+
+@require_POST
+@login_required
 def message_set_importance(request, message_id: int):
     msg = get_object_or_404(ChatMessage.objects.select_related("chat", "chat__project"), pk=message_id)
     chat = msg.chat
@@ -2433,6 +2605,9 @@ def chat_detail(request, chat_id: int):
     )
     if persisted_answer_mode not in {"quick", "full"}:
         persisted_answer_mode = "quick"
+    derax_last_phase = str(request.session.get("derax_last_phase") or "DEFINE").strip().upper()
+    if derax_last_phase not in {"DEFINE", "EXPLORE"}:
+        derax_last_phase = "DEFINE"
 
     return render(
         request,
@@ -2462,6 +2637,9 @@ def chat_detail(request, chat_id: int):
             "ppde_return_url": ppde_return_url,
             "topic_chat_return_url": topic_chat_return_url,
             "answer_mode_default": persisted_answer_mode,
+            "derax_last_phase": derax_last_phase,
+            "derax_last_json_artefact_id": str(request.session.get("derax_last_json_artefact_id") or ""),
+            "derax_last_compiled_artefact_id": str(request.session.get("derax_last_compiled_artefact_id") or ""),
             **ctx,
         },
     )

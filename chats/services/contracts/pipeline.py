@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from chats.services.cde_injection import build_cde_system_blocks
+from chats.services.derax.envelope import build_derax_envelope_block
 from chats.services.contracts.inspect import apply_override_for_block
 from chats.services.contracts.boundary_resolver import resolve_boundary_contract
 from chats.services.contracts.phase_resolver import resolve_phase_contract
@@ -28,6 +29,7 @@ class ContractContext:
     is_pde: bool = False
     is_ppde: bool = False
     is_cde: bool = False
+    is_derax: bool = False
     tier5_blocks: list[str] = field(default_factory=list)
     tier6_blocks: list[str] = field(default_factory=list)
     legacy_system_blocks: list[str] = field(default_factory=list)
@@ -142,6 +144,28 @@ def build_system_blocks(ctx: ContractContext) -> tuple[list[str], dict]:
                 content=boundary.content,
                 source=boundary.source,
                 dedupe_group="boundary",
+            )
+        )
+
+    derax_mode = bool(getattr(ctx, "is_derax", False))
+    if not derax_mode:
+        project = getattr(ctx, "project", None)
+        mode = str(getattr(project, "workflow_mode", "") or "").strip().upper()
+        derax_mode = mode == "DERAX_WORK"
+    if derax_mode:
+        active_phase = str(
+            getattr(ctx, "active_phase", "")
+            or getattr(getattr(ctx, "work_item", None), "active_phase", "")
+            or "DEFINE"
+        ).strip().upper()
+        blocks.append(
+            ContractBlock(
+                key="derax.envelope",
+                tier=2,
+                order=50,
+                title="DERAX envelope",
+                content=build_derax_envelope_block(active_phase),
+                source="chats.services.derax.envelope",
             )
         )
 

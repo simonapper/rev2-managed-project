@@ -41,6 +41,14 @@ don’t touch .venv/, static/, media/, node_modules/
 
 no drive-by formatting / reordering unless requested
 
+Protected UI files
+
+- templates/projects/derax_home.html
+- projects/views_derax.py
+- Rule: do not modify these files unless the user gives explicit approval in that turn.
+- Rule: when modified, include this exact note in the final response:
+  "Protected UI change acknowledged."
+
 Your repo conventions
 
 7-bit ASCII in templates/comments (if that’s a real constraint for your toolchain)

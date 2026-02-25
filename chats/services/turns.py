@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+
 from django.utils import timezone
 
 from chats.models import ChatMessage
@@ -64,6 +66,29 @@ def build_chat_turn_context(request, chat):
         rec_output = _coerce_text(payload.get("output"))
         return rec_answer, rec_reasoning, rec_output
 
+    def _parse_derax_payload(blob: str):
+        text = str(blob or "").strip()
+        if not text:
+            return None
+        try:
+            payload = json.loads(text)
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        required = {"meta", "intent", "explore", "parked_for_later"}
+        if not required.issubset(set(payload.keys())):
+            return None
+        if not isinstance(payload.get("meta"), dict):
+            return None
+        if not isinstance(payload.get("intent"), dict):
+            return None
+        if not isinstance(payload.get("explore"), dict):
+            return None
+        if not isinstance(payload.get("parked_for_later"), dict):
+            return None
+        return payload
+
 
     turns = []
     system_items = []
@@ -123,6 +148,8 @@ def build_chat_turn_context(request, chat):
                         reasoning = rec_reasoning
                     if rec_output:
                         output = rec_output
+            derax_payload = _parse_derax_payload(answer) or _parse_derax_payload(m.raw_text or "")
+            is_derax = isinstance(derax_payload, dict)
 
             turns.append({
                 "turn_id": f"msg-{m.id}",
@@ -148,6 +175,8 @@ def build_chat_turn_context(request, chat):
                 ),
                 "is_rolled_up": bool(cursor_id and m.id <= cursor_id),
                 "generated_images": images_by_message_id.get(m.id, []),
+                "is_derax": is_derax,
+                "derax_payload": derax_payload if is_derax else {},
             })
 
             pending_user = None
@@ -172,6 +201,8 @@ def build_chat_turn_context(request, chat):
             "is_ignored": getattr(pending_user, "importance", "") == "IGNORE",
             "is_rolled_up": bool(cursor_id and pending_user.id <= cursor_id),
             "generated_images": [],
+            "is_derax": False,
+            "derax_payload": {},
         })
         pending_user = None
 

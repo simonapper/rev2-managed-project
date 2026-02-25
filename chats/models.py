@@ -69,6 +69,7 @@ class ChatWorkspace(models.Model):
     cde_is_locked = models.BooleanField(default=False)
     cde_json = models.JSONField(default=dict, blank=True)
     boundary_profile_json = models.JSONField(default=dict, blank=True)
+    derax_enabled = models.BooleanField(default=False)
     pinned_summary = models.TextField(blank=True, default="")
     pinned_conclusion = models.TextField(blank=True, default="")
     pinned_cursor_message_id = models.BigIntegerField(null=True, blank=True)
