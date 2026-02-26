@@ -37,6 +37,7 @@ class Project(models.Model):
 
     class WorkflowMode(models.TextChoices):
         PDE = "PDE", "PDE"
+        DERAX_TEMPLATE = "DERAX_TEMPLATE", "DERAX template"
         DERAX_WORK = "DERAX_WORK", "DERAX work"
 
     class Status(models.TextChoices):
@@ -181,12 +182,22 @@ class ProjectDocument(models.Model):
     )
     wopi_lock = models.CharField(max_length=255, blank=True, default="")
     wopi_lock_updated_at = models.DateTimeField(null=True, blank=True)
+    is_archived = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="archived_project_documents",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         indexes = [
             models.Index(fields=["project", "updated_at"]),
+            models.Index(fields=["project", "is_archived", "updated_at"]),
         ]
 
     def __str__(self) -> str:

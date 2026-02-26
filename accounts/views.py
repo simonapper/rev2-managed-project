@@ -501,8 +501,9 @@ def chat_create(request):
             or (primary_type == "SANDBOX")
             or name_is_sandbox
         )
+        is_derax_template = str(getattr(project, "workflow_mode", "") or "").strip().upper() == "DERAX_TEMPLATE"
 
-        if not is_sandbox:
+        if not is_sandbox and not is_derax_template:
             if project.defined_cko_id is None:
                 messages.error(request, "Project is not defined. Complete PDE first.")
                 return redirect("accounts:chat_create")
@@ -583,10 +584,18 @@ def chat_create(request):
         if cde_json:
             chat.cde_json = cde_json
         chat.boundary_profile_json = boundary_profile
+        if is_derax_template:
+            chat.derax_enabled = True
         if cde_json:
-            chat.save(update_fields=["cde_json", "boundary_profile_json", "updated_at"])
+            if is_derax_template:
+                chat.save(update_fields=["cde_json", "boundary_profile_json", "derax_enabled", "updated_at"])
+            else:
+                chat.save(update_fields=["cde_json", "boundary_profile_json", "updated_at"])
         else:
-            chat.save(update_fields=["boundary_profile_json", "updated_at"])
+            if is_derax_template:
+                chat.save(update_fields=["boundary_profile_json", "derax_enabled", "updated_at"])
+            else:
+                chat.save(update_fields=["boundary_profile_json", "updated_at"])
 
         request.session["rw_active_project_id"] = project.id
         request.session["rw_active_chat_id"] = chat.id

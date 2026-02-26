@@ -19,11 +19,13 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 
-from projects.models import ProjectDocument, WorkItem
+from projects.models import AuditLog, ProjectDocument, WorkItem
+from chats.models import ContractText
 from projects.services.context_resolution import resolve_effective_context
 from projects.services_project_membership import accessible_projects_qs
 from chats.services.contracts.pipeline import ContractContext
 from chats.services.contracts.phase_resolver import resolve_phase_contract
+from chats.services.contracts.texts import resolve_contract_text
 from chats.services.derax.contracts import DERAX_PHASES, build_phase_contract_text
 from chats.services.derax.persist import persist_derax_payload
 from chats.services.derax.validate import derax_json_correction_prompt, validate_derax_response
@@ -31,7 +33,7 @@ from chats.services.derax.schema import empty_payload, validate_structural
 from chats.services.derax.phase_rules import check_required_nonempty
 from chats.services.derax.compile import persist_compiled_cko
 from chats.services.derax.audit import persist_derax_project_audit
-from chats.services.derax.generate import generate_artefacts_from_execute_payload
+from chats.services.derax.generate import generate_artefacts_from_execute_payload, execute_export_capabilities
 from chats.services.llm import generate_text
 
 
@@ -381,6 +383,20 @@ def _sanitise_execute_payload(payload: dict) -> dict:
     return out
 
 
+def _sanitise_define_payload(payload: dict) -> dict:
+    out = dict(payload or {})
+    out.setdefault("meta", {})
+    out["meta"]["phase"] = WorkItem.PHASE_DEFINE
+    out.setdefault("explore", {})
+    out["explore"] = {
+        "adjacent_ideas": [],
+        "risks": [],
+        "tradeoffs": [],
+        "reframes": [],
+    }
+    return out
+
+
 def _latest_seed_by_reason(work_item: WorkItem, reason_text: str) -> str:
     expected = str(reason_text or "").strip().upper()
     for row in reversed(list(work_item.seed_log or [])):
@@ -400,6 +416,28 @@ def _raw_phase_contract_text(phase_name: str) -> str:
     if phase in DERAX_PHASES:
         return build_phase_contract_text(phase).strip()
     return ""
+
+
+def _phase_contract_key(phase_name: str) -> str:
+    phase = str(phase_name or "").strip().upper()
+    return f"phase.{phase.lower()}"
+
+
+def _phase_contract_default_text(phase_name: str) -> str:
+    phase = str(phase_name or "").strip().upper()
+    return _raw_phase_contract_text(phase)
+
+
+def _phase_contract_effective_text(*, user, phase_name: str, project_id: int | None = None) -> tuple[str, str]:
+    contract_key = _phase_contract_key(phase_name)
+    resolved = resolve_contract_text(user, contract_key, project_id=project_id)
+    default_text = _phase_contract_default_text(phase_name)
+    effective_text = str(resolved.get("effective_text") or "").strip()
+    source = str(resolved.get("effective_source") or "DEFAULT").strip().upper()
+    if not effective_text:
+        effective_text = default_text
+        source = "DEFAULT"
+    return effective_text, source
 
 
 def _parse_history_payload(text: str):
@@ -428,6 +466,20 @@ def _safe_stem(value: str) -> str:
 def _display_file_name(name: str) -> str:
     raw = str(name or "").strip()
     base = raw.rsplit("/", 1)[-1]
+    if "__" in base:
+        parts = [p for p in base.split("__") if p]
+        if len(parts) >= 3:
+            base = "__".join(parts[1:])
+    if "." in base:
+        stem, ext = base.rsplit(".", 1)
+    else:
+        stem, ext = base, ""
+    dup = re.match(r"^([A-Za-z0-9-]+)_[A-Za-z0-9-]+", stem)
+    if dup:
+        token = str(dup.group(1) or "")
+        if stem.lower().startswith((token + "_" + token + "_").lower()):
+            stem = stem[len(token) + 1:]
+    base = (stem + ("." + ext if ext else "")).strip()
     if "_" in base:
         tail = base.split("_", 1)[1].lstrip("_").strip()
         if tail:
@@ -449,6 +501,68 @@ def _list_from_payload(payload: dict, *paths: tuple[str, str]) -> list[str]:
         if isinstance(node, list):
             return [str(v).strip() for v in node if str(v).strip()]
     return []
+
+
+def _list_to_multiline(values: list[str]) -> str:
+    return "\n".join([str(v).strip() for v in list(values or []) if str(v).strip()])
+
+
+def _multiline_to_list(text: str) -> list[str]:
+    out = []
+    for raw in str(text or "").splitlines():
+        value = str(raw or "").strip()
+        if value.startswith("- "):
+            value = value[2:].strip()
+        if value:
+            out.append(value)
+    return out
+
+
+def _multiline_to_execute_proposed(text: str) -> list[dict]:
+    rows = []
+    for raw in str(text or "").splitlines():
+        line = str(raw or "").strip()
+        if not line:
+            continue
+        parts = [str(p or "").strip() for p in line.split("|")]
+        if len(parts) >= 3:
+            kind = parts[0].lower()
+            title = parts[1]
+            notes = " | ".join(parts[2:])
+        elif len(parts) == 2:
+            kind = parts[0].lower()
+            title = parts[1]
+            notes = ""
+        else:
+            kind = _guess_execute_kind(line)
+            title = line
+            notes = ""
+        if not title:
+            title = kind.replace("_", " ").title() if kind else "Proposed artefact"
+        if not kind:
+            kind = _guess_execute_kind(title)
+        rows.append({"kind": kind, "title": title, "notes": notes})
+    return rows
+
+
+def _execute_proposed_to_multiline(rows: list) -> str:
+    out = []
+    for row in list(rows or []):
+        if isinstance(row, dict):
+            kind = str(row.get("kind") or "").strip()
+            title = str(row.get("title") or "").strip()
+            notes = str(row.get("notes") or "").strip()
+            if kind and title and notes:
+                out.append(f"{kind} | {title} | {notes}")
+            elif kind and title:
+                out.append(f"{kind} | {title}")
+            elif title:
+                out.append(title)
+        else:
+            text = str(row or "").strip()
+            if text:
+                out.append(text)
+    return "\n".join(out)
 
 
 def _str_from_payload(payload: dict, *paths: tuple[str, str]) -> str:
@@ -537,6 +651,59 @@ def _explore_view_model(payload: dict) -> dict:
         "risks": risks,
         "tradeoffs": tradeoffs,
         "reframes": reframes,
+        "has_structured": has_structured,
+    }
+
+
+def _refine_view_model(payload: dict) -> dict:
+    p = payload if isinstance(payload, dict) else {}
+    destination = _str_from_payload(p, ("intent", "destination"), ("core", "end_in_mind"))
+    success_criteria = _list_from_payload(p, ("intent", "success_criteria"), ("core", "destination_conditions"))
+    constraints = _list_from_payload(p, ("intent", "constraints"), ("core", "assumptions"))
+    non_goals = _list_from_payload(p, ("intent", "non_goals"), ("core", "non_goals"))
+    assumptions = _list_from_payload(p, ("intent", "assumptions"), ("core", "assumptions"))
+    open_questions = _list_from_payload(p, ("intent", "open_questions"), ("core", "ambiguities"))
+    adjacent_ideas = _list_from_payload(p, ("explore", "adjacent_ideas"), ("core", "adjacent_angles"))
+    risks = _list_from_payload(p, ("explore", "risks"), ("core", "risks"))
+    tradeoffs = _list_from_payload(p, ("explore", "tradeoffs"), ("core", "scope_changes"))
+    reframes = _list_from_payload(p, ("explore", "reframes"), ("core", "ambiguities"))
+    parked_items = []
+    for item in list((p.get("parked_for_later") or {}).get("items") or []):
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        detail = str(item.get("detail") or "").strip()
+        if title and detail:
+            parked_items.append(f"{title}: {detail}")
+        elif title:
+            parked_items.append(title)
+        elif detail:
+            parked_items.append(detail)
+    has_structured = bool(
+        destination
+        or success_criteria
+        or constraints
+        or non_goals
+        or assumptions
+        or open_questions
+        or adjacent_ideas
+        or risks
+        or tradeoffs
+        or reframes
+        or parked_items
+    )
+    return {
+        "destination": destination,
+        "success_criteria": success_criteria,
+        "constraints": constraints,
+        "non_goals": non_goals,
+        "assumptions": assumptions,
+        "open_questions": open_questions,
+        "adjacent_ideas": adjacent_ideas,
+        "risks": risks,
+        "tradeoffs": tradeoffs,
+        "reframes": reframes,
+        "parked_items": parked_items,
         "has_structured": has_structured,
     }
 
@@ -825,7 +992,7 @@ def _extract_document_text(doc: ProjectDocument, raw_bytes: bytes) -> str:
 
 def _build_phase_history_rows(rows: list[dict]) -> list[dict]:
     built = []
-    for row in rows:
+    for row in reversed(list(rows or [])):
         if not isinstance(row, dict):
             continue
         text = str(row.get("text") or "")
@@ -838,6 +1005,7 @@ def _build_phase_history_rows(rows: list[dict]) -> list[dict]:
                 "display_text": _readable_derax_text(text),
                 "is_derax": payload is not None,
                 "derax_payload": payload or {},
+                "raw_json": json.dumps(payload, ensure_ascii=True, indent=2) if isinstance(payload, dict) else "",
             }
         )
     return built
@@ -956,7 +1124,8 @@ def _build_refine_history_rows(work_item: WorkItem) -> list[dict]:
 def _build_run_history_rows(work_item: WorkItem, phase: str) -> list[dict]:
     phase_upper = str(phase or "").strip().upper()
     rows = []
-    for run in list(getattr(work_item, "derax_runs", []) or []):
+    all_runs = list(getattr(work_item, "derax_runs", []) or [])
+    for run_idx, run in enumerate(all_runs):
         if not isinstance(run, dict):
             continue
         if str(run.get("phase") or "").strip().upper() != phase_upper:
@@ -989,9 +1158,13 @@ def _build_run_history_rows(work_item: WorkItem, phase: str) -> list[dict]:
                 "display_text": text,
                 "is_derax": True,
                 "derax_payload": payload,
+                "raw_json": json.dumps(payload, ensure_ascii=True, indent=2),
+                "_run_idx": run_idx,
             }
         )
-    rows.sort(key=lambda row: str(row.get("timestamp") or ""))
+    rows.sort(key=lambda row: int(row.get("_run_idx") or -1), reverse=True)
+    for row in rows:
+        row.pop("_run_idx", None)
     return rows
 
 
@@ -999,9 +1172,295 @@ def _build_run_history_rows(work_item: WorkItem, phase: str) -> list[dict]:
 def derax_project_home(request, project_id: int):
     project = get_object_or_404(accessible_projects_qs(request.user), id=project_id)
     work_item = _primary_work_item_for_project(project)
+    can_edit_phase_contracts = bool(
+        request.user.id == project.owner_id or request.user.is_staff or request.user.is_superuser
+    )
+    can_archive_project_docs = bool(
+        request.user.id == project.owner_id or request.user.is_staff or request.user.is_superuser
+    )
+    can_hard_delete_project_docs = bool(request.user.is_staff or request.user.is_superuser)
 
     if request.method == "POST":
         action = str(request.POST.get("action") or "").strip().lower()
+        if action == "save_refine_structured":
+            existing = _latest_payload_from_runs(work_item, WorkItem.PHASE_REFINE)
+            payload = existing if isinstance(existing, dict) else empty_payload(WorkItem.PHASE_REFINE)
+            payload.setdefault("meta", {})
+            payload["meta"].setdefault("phase", WorkItem.PHASE_REFINE)
+            payload["meta"]["phase"] = WorkItem.PHASE_REFINE
+            payload.setdefault("intent", {})
+            payload.setdefault("explore", {})
+            payload.setdefault("parked_for_later", {})
+            payload.setdefault("artefacts", {})
+            payload.setdefault("validation", {})
+
+            payload["canonical_summary"] = str(request.POST.get("refine_canonical_summary") or "").strip()
+            payload["intent"]["destination"] = str(request.POST.get("refine_destination") or "").strip()
+            payload["intent"]["success_criteria"] = _multiline_to_list(request.POST.get("refine_success_criteria") or "")
+            payload["intent"]["constraints"] = _multiline_to_list(request.POST.get("refine_constraints") or "")
+            payload["intent"]["non_goals"] = _multiline_to_list(request.POST.get("refine_non_goals") or "")
+            payload["intent"]["assumptions"] = _multiline_to_list(request.POST.get("refine_assumptions") or "")
+            payload["intent"]["open_questions"] = _multiline_to_list(request.POST.get("refine_open_questions") or "")
+            payload["explore"]["adjacent_ideas"] = _multiline_to_list(request.POST.get("refine_adjacent_ideas") or "")
+            payload["explore"]["risks"] = _multiline_to_list(request.POST.get("refine_risks") or "")
+            payload["explore"]["tradeoffs"] = _multiline_to_list(request.POST.get("refine_tradeoffs") or "")
+            payload["explore"]["reframes"] = _multiline_to_list(request.POST.get("refine_reframes") or "")
+            payload["parked_for_later"]["items"] = [
+                {"title": value, "detail": ""}
+                for value in _multiline_to_list(request.POST.get("refine_parked_items") or "")
+            ]
+
+            ok_schema, schema_errors = validate_structural(payload)
+            ok_phase, phase_errors = check_required_nonempty(payload, phase=WorkItem.PHASE_REFINE)
+            if not ok_schema or not ok_phase:
+                error_text = "; ".join([str(e) for e in list(schema_errors or []) + list(phase_errors or []) if str(e).strip()])
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": error_text or "Validation failed."}, status=400)
+                messages.error(request, error_text or "Validation failed.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+
+            persist_derax_payload(work_item=work_item, payload=payload, user=request.user, chat=None)
+            if payload["intent"]["destination"]:
+                work_item.intent_raw = str(payload["intent"]["destination"] or "").strip()
+                work_item.save(update_fields=["intent_raw", "updated_at"])
+            if _is_ajax(request):
+                return JsonResponse({"ok": True, "refine_text": _readable_derax_text(json.dumps(payload, ensure_ascii=True, indent=2))})
+            messages.success(request, "REFINE fields saved.")
+            return redirect("projects:derax_project_home", project_id=project.id)
+
+        if action == "save_active_stage_structured":
+            phase = str(work_item.active_phase or "").strip().upper() or WorkItem.PHASE_DEFINE
+            if phase == WorkItem.PHASE_REFINE:
+                existing = _latest_payload_from_runs(work_item, WorkItem.PHASE_REFINE)
+            elif phase == WorkItem.PHASE_EXPLORE:
+                existing = _latest_payload_for_phase(work_item, WorkItem.PHASE_EXPLORE)
+            elif phase == WorkItem.PHASE_DEFINE:
+                existing = _latest_payload_for_phase(work_item, WorkItem.PHASE_DEFINE)
+            else:
+                existing = _latest_payload_from_runs(work_item, phase)
+            payload = existing if isinstance(existing, dict) else empty_payload(phase)
+            payload.setdefault("meta", {})
+            payload["meta"]["phase"] = phase
+            payload.setdefault("intent", {})
+            payload.setdefault("explore", {})
+            payload.setdefault("parked_for_later", {})
+            payload.setdefault("artefacts", {})
+            payload.setdefault("validation", {})
+            payload["canonical_summary"] = str(request.POST.get("stage_canonical_summary") or "").strip()
+            payload["intent"]["destination"] = str(request.POST.get("stage_destination") or "").strip()
+            payload["intent"]["success_criteria"] = _multiline_to_list(request.POST.get("stage_success_criteria") or "")
+            payload["intent"]["constraints"] = _multiline_to_list(request.POST.get("stage_constraints") or "")
+            payload["intent"]["non_goals"] = _multiline_to_list(request.POST.get("stage_non_goals") or "")
+            payload["intent"]["assumptions"] = _multiline_to_list(request.POST.get("stage_assumptions") or "")
+            payload["intent"]["open_questions"] = _multiline_to_list(request.POST.get("stage_open_questions") or "")
+            payload["explore"]["adjacent_ideas"] = _multiline_to_list(request.POST.get("stage_adjacent_ideas") or "")
+            payload["explore"]["risks"] = _multiline_to_list(request.POST.get("stage_risks") or "")
+            payload["explore"]["tradeoffs"] = _multiline_to_list(request.POST.get("stage_tradeoffs") or "")
+            payload["explore"]["reframes"] = _multiline_to_list(request.POST.get("stage_reframes") or "")
+            payload["parked_for_later"]["items"] = [
+                {"title": value, "detail": ""}
+                for value in _multiline_to_list(request.POST.get("stage_parked_items") or "")
+            ]
+            if phase == WorkItem.PHASE_EXECUTE:
+                payload["artefacts"]["proposed"] = _multiline_to_execute_proposed(
+                    request.POST.get("stage_execute_proposed") or ""
+                )
+            if phase == WorkItem.PHASE_DEFINE:
+                payload = _sanitise_define_payload(payload)
+            elif phase == WorkItem.PHASE_EXECUTE:
+                payload = _sanitise_execute_payload(payload)
+            ok_schema, schema_errors = validate_structural(payload)
+            ok_phase, phase_errors = check_required_nonempty(payload, phase=phase)
+            if not ok_schema or not ok_phase:
+                error_text = "; ".join([str(e) for e in list(schema_errors or []) + list(phase_errors or []) if str(e).strip()])
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": error_text or "Validation failed."}, status=400)
+                messages.error(request, error_text or "Validation failed.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            persist_derax_payload(work_item=work_item, payload=payload, user=request.user, chat=None)
+            now_iso = timezone.now().isoformat()
+            payload_text = json.dumps(payload, ensure_ascii=True, indent=2)
+            if phase == WorkItem.PHASE_DEFINE:
+                hist = [h for h in list(work_item.derax_define_history or []) if isinstance(h, dict)]
+                hist.append({"role": "assistant", "text": payload_text, "timestamp": now_iso})
+                work_item.derax_define_history = hist[-40:]
+                work_item.save(update_fields=["derax_define_history", "updated_at"])
+            elif phase == WorkItem.PHASE_EXPLORE:
+                hist = [h for h in list(work_item.derax_explore_history or []) if isinstance(h, dict)]
+                hist.append({"role": "assistant", "text": payload_text, "timestamp": now_iso})
+                work_item.derax_explore_history = hist[-40:]
+                work_item.save(update_fields=["derax_explore_history", "updated_at"])
+            if payload["intent"]["destination"]:
+                work_item.intent_raw = str(payload["intent"]["destination"] or "").strip()
+                work_item.save(update_fields=["intent_raw", "updated_at"])
+            if _is_ajax(request):
+                return JsonResponse({"ok": True, "latest_text": _readable_derax_text(payload_text)})
+            messages.success(request, f"{phase} fields saved.")
+            return redirect("projects:derax_project_home", project_id=project.id)
+
+        if action == "project_doc_archive":
+            if not can_archive_project_docs:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Only the project owner can archive files."}, status=403)
+                messages.error(request, "Only the project owner can archive files.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            doc_id_raw = (request.POST.get("doc_id") or "").strip()
+            if not doc_id_raw.isdigit():
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Invalid project document."}, status=400)
+                messages.error(request, "Invalid project document.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            row = ProjectDocument.objects.filter(project=project, id=int(doc_id_raw), is_archived=False).first()
+            if not row:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Project document not found."}, status=404)
+                messages.error(request, "Project document not found.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            row.is_archived = True
+            row.archived_at = timezone.now()
+            row.archived_by = request.user
+            row.save(update_fields=["is_archived", "archived_at", "archived_by", "updated_at"])
+            AuditLog.objects.create(
+                project=project,
+                actor=request.user,
+                event_type="PROJECT_DOC_ARCHIVED",
+                entity_type="ProjectDocument",
+                entity_id=str(row.id),
+                field_changes={"is_archived": {"before": False, "after": True}},
+                summary=f"Archived project file: {row.original_name or row.title or row.id}",
+                source=AuditLog.Source.UI,
+            )
+            if _is_ajax(request):
+                return JsonResponse({"ok": True, "doc_id": row.id, "action": "archived"})
+            messages.success(request, "Project file archived.")
+            return redirect("projects:derax_project_home", project_id=project.id)
+
+        if action == "project_doc_delete":
+            if not can_hard_delete_project_docs:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Only admin users can permanently delete files."}, status=403)
+                messages.error(request, "Only admin users can permanently delete files.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            doc_id_raw = (request.POST.get("doc_id") or "").strip()
+            if not doc_id_raw.isdigit():
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Invalid project document."}, status=400)
+                messages.error(request, "Invalid project document.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            row = ProjectDocument.objects.filter(project=project, id=int(doc_id_raw)).first()
+            if not row:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Project document not found."}, status=404)
+                messages.error(request, "Project document not found.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            row_id = row.id
+            row_name = row.original_name or row.title or str(row.id)
+            was_archived = bool(row.is_archived)
+            try:
+                row.file.delete(save=False)
+            except Exception:
+                pass
+            row.delete()
+            AuditLog.objects.create(
+                project=project,
+                actor=request.user,
+                event_type="PROJECT_DOC_HARD_DELETED",
+                entity_type="ProjectDocument",
+                entity_id=str(row_id),
+                field_changes={"is_archived": {"before": was_archived, "after": True}},
+                summary=f"Permanently deleted project file: {row_name}",
+                source=AuditLog.Source.ADMIN,
+            )
+            if _is_ajax(request):
+                return JsonResponse({"ok": True, "doc_id": row_id, "action": "deleted"})
+            messages.success(request, "Project file deleted.")
+            return redirect("projects:derax_project_home", project_id=project.id)
+
+        if action == "save_phase_contract_text":
+            if not can_edit_phase_contracts:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Permission denied."}, status=403)
+                messages.error(request, "Permission denied.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            active_phase_name = str(work_item.active_phase or "").strip().upper() or WorkItem.PHASE_DEFINE
+            phase_name = str(request.POST.get("contract_phase") or "").strip().upper() or active_phase_name
+            if phase_name != active_phase_name:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Only the active stage contract can be edited."}, status=400)
+                messages.error(request, "Only the active stage contract can be edited.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            if phase_name not in WorkItem.ALLOWED_PHASES:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Invalid phase."}, status=400)
+                messages.error(request, "Invalid phase.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            contract_key = _phase_contract_key(phase_name)
+            text = str(request.POST.get("contract_text") or "")
+            row = (
+                ContractText.objects.filter(
+                    key=contract_key,
+                    scope_type=ContractText.ScopeType.PROJECT_USER,
+                    scope_project_id=project.id,
+                    scope_user_id=request.user.id,
+                    status=ContractText.Status.ACTIVE,
+                )
+                .order_by("-updated_at", "-id")
+                .first()
+            )
+            if row is None:
+                ContractText.objects.create(
+                    key=contract_key,
+                    scope_type=ContractText.ScopeType.PROJECT_USER,
+                    scope_project_id=project.id,
+                    scope_user_id=request.user.id,
+                    status=ContractText.Status.ACTIVE,
+                    text=text,
+                    updated_by=request.user,
+                )
+            else:
+                row.text = text
+                row.updated_by = request.user
+                row.save(update_fields=["text", "updated_by", "updated_at"])
+            effective_text, source = _phase_contract_effective_text(
+                user=request.user,
+                phase_name=phase_name,
+                project_id=project.id,
+            )
+            return JsonResponse({"ok": True, "phase": phase_name, "effective_text": effective_text, "source": source})
+
+        if action == "reset_phase_contract_text":
+            if not can_edit_phase_contracts:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Permission denied."}, status=403)
+                messages.error(request, "Permission denied.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            active_phase_name = str(work_item.active_phase or "").strip().upper() or WorkItem.PHASE_DEFINE
+            phase_name = str(request.POST.get("contract_phase") or "").strip().upper() or active_phase_name
+            if phase_name != active_phase_name:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Only the active stage contract can be reset."}, status=400)
+                messages.error(request, "Only the active stage contract can be reset.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            if phase_name not in WorkItem.ALLOWED_PHASES:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Invalid phase."}, status=400)
+                messages.error(request, "Invalid phase.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            contract_key = _phase_contract_key(phase_name)
+            ContractText.objects.filter(
+                key=contract_key,
+                scope_type=ContractText.ScopeType.PROJECT_USER,
+                scope_project_id=project.id,
+                scope_user_id=request.user.id,
+                status=ContractText.Status.ACTIVE,
+            ).update(status=ContractText.Status.RETIRED, updated_by=request.user)
+            effective_text, source = _phase_contract_effective_text(
+                user=request.user,
+                phase_name=phase_name,
+                project_id=project.id,
+            )
+            return JsonResponse({"ok": True, "phase": phase_name, "effective_text": effective_text, "source": source})
+
         if action in {"autosave_end_in_mind", "save_end_in_mind"}:
             end_in_mind = str(request.POST.get("end_in_mind") or "").strip()
             work_item.intent_raw = end_in_mind
@@ -1099,7 +1558,9 @@ def derax_project_home(request, project_id: int):
             if str(work_item.active_phase or "").strip().upper() != WorkItem.PHASE_REFINE:
                 messages.error(request, "REFINE can only be locked while active phase is REFINE.")
                 return redirect("projects:derax_project_home", project_id=project.id)
-            candidate = str(request.POST.get("refine_input") or "").strip()
+            candidate = str(request.POST.get("lock_seed_text") or "").strip()
+            if not candidate:
+                candidate = str(request.POST.get("refine_input") or "").strip()
             if not candidate:
                 candidate = str(request.POST.get("candidate_text") or "").strip()
             if not candidate:
@@ -1266,6 +1727,7 @@ def derax_project_home(request, project_id: int):
                 work_item.active_phase = original_phase
 
             payload = dict(payload_or_error or {})
+            payload = _sanitise_define_payload(payload)
             persist_derax_payload(work_item=work_item, payload=payload, user=request.user, chat=None)
             now_iso = timezone.now().isoformat()
             history_entries.append({"role": "user", "text": user_input, "timestamp": now_iso})
@@ -1776,7 +2238,11 @@ def derax_project_home(request, project_id: int):
             return redirect("projects:derax_project_home", project_id=project.id)
 
         if action == "lock_define_and_explore":
-            intent = str(work_item.intent_raw or "").strip()
+            intent = str(request.POST.get("lock_seed_text") or "").strip()
+            if not intent:
+                intent = str(work_item.intent_raw or "").strip()
+            if not intent:
+                intent = _extract_end_in_mind(_latest_define_assistant_text(work_item))
             if not intent:
                 messages.error(request, "Set intent first before locking DEFINE.")
                 return redirect("projects:derax_project_home", project_id=project.id)
@@ -1793,6 +2259,9 @@ def derax_project_home(request, project_id: int):
             except Exception as exc:
                 messages.error(request, str(exc))
                 return redirect("projects:derax_project_home", project_id=project.id)
+            if str(work_item.intent_raw or "").strip() != intent:
+                work_item.intent_raw = intent
+                work_item.save(update_fields=["intent_raw", "updated_at"])
             messages.success(request, "DEFINE locked to history. Phase moved to EXPLORE.")
             return redirect("projects:derax_project_home", project_id=project.id)
 
@@ -2053,23 +2522,30 @@ def derax_project_home(request, project_id: int):
 
     if is_define:
         latest_phase_raw = _latest_define_assistant_text(work_item)
-        latest_phase_response = _extract_end_in_mind(latest_phase_raw)
+        latest_phase_response = _readable_derax_text(latest_phase_raw)
     elif is_explore:
         latest_phase_raw = _latest_explore_assistant_text(work_item)
-        latest_phase_response = _extract_end_in_mind(latest_phase_raw)
+        latest_phase_response = _readable_derax_text(latest_phase_raw)
     else:
         latest_phase_payload_any = _latest_payload_from_runs(work_item, active_phase)
         latest_phase_raw = json.dumps(latest_phase_payload_any, ensure_ascii=True, indent=2) if latest_phase_payload_any else ""
         latest_phase_response = _readable_derax_text(latest_phase_raw)
     latest_phase_payload = _parse_history_payload(latest_phase_raw) or {}
+    latest_phase_payload_json = json.dumps(latest_phase_payload, ensure_ascii=True, indent=2) if latest_phase_payload else ""
+    stage_execute_proposed_text = _execute_proposed_to_multiline(
+        list((latest_phase_payload.get("artefacts") or {}).get("proposed") or [])
+    )
     define_latest_payload = _latest_payload_for_phase(work_item, WorkItem.PHASE_DEFINE)
     explore_latest_payload = _latest_payload_for_phase(work_item, WorkItem.PHASE_EXPLORE)
     approve_latest_payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_APPROVE)
     refine_latest_payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_REFINE)
     execute_latest_payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_EXECUTE)
+    execute_export_caps = execute_export_capabilities()
+    execute_export_missing = [name for name, ok in execute_export_caps.items() if not ok]
     latest_refine_response = _latest_refine_response_text(work_item)
     approve_latest_text = _readable_derax_text(json.dumps(approve_latest_payload, ensure_ascii=True, indent=2)) if approve_latest_payload else ""
     explore_vm = _explore_view_model(explore_latest_payload)
+    refine_vm = _refine_view_model(refine_latest_payload)
     explore_latest_text = _readable_derax_text(_latest_explore_assistant_text(work_item))
     phase_input_text = str(work_item.intent_raw or "").strip()
     define_locked_seed_text = _latest_seed_by_reason(work_item, "DEFINE_LOCKED")
@@ -2092,6 +2568,33 @@ def derax_project_home(request, project_id: int):
             refine_input_text = explore_latest_text
         if not refine_input_text:
             refine_input_text = define_locked_seed_text
+    if not latest_phase_response and phase_input_text:
+        latest_phase_response = phase_input_text
+    refine_payload_for_edit = refine_latest_payload if isinstance(refine_latest_payload, dict) else empty_payload(WorkItem.PHASE_REFINE)
+    refine_editor_canonical_summary = str(refine_payload_for_edit.get("canonical_summary") or "").strip()
+    refine_editor_destination = _str_from_payload(refine_payload_for_edit, ("intent", "destination"), ("core", "end_in_mind"))
+    refine_editor_success_criteria = _list_to_multiline(_list_from_payload(refine_payload_for_edit, ("intent", "success_criteria"), ("core", "destination_conditions")))
+    refine_editor_constraints = _list_to_multiline(_list_from_payload(refine_payload_for_edit, ("intent", "constraints"), ("core", "assumptions")))
+    refine_editor_non_goals = _list_to_multiline(_list_from_payload(refine_payload_for_edit, ("intent", "non_goals"), ("core", "non_goals")))
+    refine_editor_assumptions = _list_to_multiline(_list_from_payload(refine_payload_for_edit, ("intent", "assumptions"), ("core", "assumptions")))
+    refine_editor_open_questions = _list_to_multiline(_list_from_payload(refine_payload_for_edit, ("intent", "open_questions"), ("core", "ambiguities")))
+    refine_editor_adjacent_ideas = _list_to_multiline(_list_from_payload(refine_payload_for_edit, ("explore", "adjacent_ideas"), ("core", "adjacent_angles")))
+    refine_editor_risks = _list_to_multiline(_list_from_payload(refine_payload_for_edit, ("explore", "risks"), ("core", "risks")))
+    refine_editor_tradeoffs = _list_to_multiline(_list_from_payload(refine_payload_for_edit, ("explore", "tradeoffs"), ("core", "scope_changes")))
+    refine_editor_reframes = _list_to_multiline(_list_from_payload(refine_payload_for_edit, ("explore", "reframes"), ("core", "ambiguities")))
+    parked_items = []
+    for item in list((refine_payload_for_edit.get("parked_for_later") or {}).get("items") or []):
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        detail = str(item.get("detail") or "").strip()
+        if title and detail:
+            parked_items.append(f"{title}: {detail}")
+        elif title:
+            parked_items.append(title)
+        elif detail:
+            parked_items.append(detail)
+    refine_editor_parked_items = _list_to_multiline(parked_items)
 
     active_contract = resolve_phase_contract(
         ContractContext(
@@ -2105,6 +2608,17 @@ def derax_project_home(request, project_id: int):
             strict_json=False,
         )
     )
+    contract_phase_options = list(WorkItem.ALLOWED_PHASES)
+    contract_effective_by_phase = {}
+    contract_default_by_phase = {}
+    for phase_name in contract_phase_options:
+        contract_effective_by_phase[phase_name], _source = _phase_contract_effective_text(
+            user=request.user,
+            phase_name=phase_name,
+            project_id=project.id,
+        )
+        contract_default_by_phase[phase_name] = _phase_contract_default_text(phase_name)
+    active_phase_contract_raw = str(contract_effective_by_phase.get(active_phase) or "").strip()
     phase_status_map = _phase_status_map(work_item)
 
     derax_audit_history_all = _merged_derax_audit_history(work_item)
@@ -2129,7 +2643,7 @@ def derax_project_home(request, project_id: int):
         files_secondary = "-id"
     all_project_docs_qs = list(
         ProjectDocument.objects
-        .filter(project=project)
+        .filter(project=project, is_archived=False)
         .order_by(files_order, files_secondary)[:100]
     )
     all_project_docs = [
@@ -2161,12 +2675,15 @@ def derax_project_home(request, project_id: int):
             "execute_history_rows": execute_history_rows,
             "latest_phase_response": latest_phase_response,
             "latest_phase_payload": latest_phase_payload,
+            "latest_phase_payload_json": latest_phase_payload_json,
+            "stage_execute_proposed_text": stage_execute_proposed_text,
             "latest_refine_response": latest_refine_response,
             "approve_latest_text": approve_latest_text,
             "define_latest_payload": define_latest_payload,
             "explore_latest_payload": explore_latest_payload,
             "approve_latest_payload": approve_latest_payload,
             "explore_vm": explore_vm,
+            "refine_vm": refine_vm,
             "explore_latest_text": explore_latest_text,
             "explore_locked_seed_text": explore_locked_seed_text,
             "define_latest_payload_json": json.dumps(define_latest_payload, ensure_ascii=True, indent=2) if define_latest_payload else "",
@@ -2174,8 +2691,21 @@ def derax_project_home(request, project_id: int):
             "refine_latest_payload_json": json.dumps(refine_latest_payload, ensure_ascii=True, indent=2) if refine_latest_payload else "",
             "approve_latest_payload_json": json.dumps(approve_latest_payload, ensure_ascii=True, indent=2) if approve_latest_payload else "",
             "execute_latest_payload_json": json.dumps(execute_latest_payload, ensure_ascii=True, indent=2) if execute_latest_payload else "",
+            "execute_export_missing": execute_export_missing,
             "phase_input_text": phase_input_text,
             "refine_input_text": refine_input_text,
+            "refine_editor_canonical_summary": refine_editor_canonical_summary,
+            "refine_editor_destination": refine_editor_destination,
+            "refine_editor_success_criteria": refine_editor_success_criteria,
+            "refine_editor_constraints": refine_editor_constraints,
+            "refine_editor_non_goals": refine_editor_non_goals,
+            "refine_editor_assumptions": refine_editor_assumptions,
+            "refine_editor_open_questions": refine_editor_open_questions,
+            "refine_editor_adjacent_ideas": refine_editor_adjacent_ideas,
+            "refine_editor_risks": refine_editor_risks,
+            "refine_editor_tradeoffs": refine_editor_tradeoffs,
+            "refine_editor_reframes": refine_editor_reframes,
+            "refine_editor_parked_items": refine_editor_parked_items,
             "define_help_text": (
                 "Describe the outcome you want from this DERAX process. "
                 "State what good looks like. "
@@ -2183,7 +2713,11 @@ def derax_project_home(request, project_id: int):
             ),
             "show_contract_debug": bool(settings.DEBUG),
             "active_phase_contract": active_contract,
-            "active_phase_contract_raw": _raw_phase_contract_text(active_phase),
+            "active_phase_contract_raw": active_phase_contract_raw,
+            "contract_phase_options": contract_phase_options,
+            "contract_effective_by_phase": contract_effective_by_phase,
+            "contract_default_by_phase": contract_default_by_phase,
+            "can_edit_phase_contracts": can_edit_phase_contracts,
             "phase_route_map": _phase_route_map(work_item),
             "define_phase_locked": phase_status_map.get(WorkItem.PHASE_DEFINE) == "LOCKED",
             "explore_phase_locked": phase_status_map.get(WorkItem.PHASE_EXPLORE) == "LOCKED",
@@ -2194,7 +2728,7 @@ def derax_project_home(request, project_id: int):
             "derax_audit_history_current": derax_audit_history_current,
             "derax_import_docs": list(
                 ProjectDocument.objects
-                .filter(project=project, original_name__icontains="-DERAX-")
+                .filter(project=project, is_archived=False, original_name__icontains="-DERAX-")
                 .filter(
                     Q(original_name__iendswith=".txt")
                     | Q(original_name__iendswith=".md")
@@ -2203,6 +2737,8 @@ def derax_project_home(request, project_id: int):
                 .order_by("-updated_at", "-id")[:50]
             ),
             "all_project_docs": all_project_docs,
+            "can_archive_project_docs": can_archive_project_docs,
+            "can_hard_delete_project_docs": can_hard_delete_project_docs,
             "files_sort": files_sort,
             "files_dir": files_dir,
         },

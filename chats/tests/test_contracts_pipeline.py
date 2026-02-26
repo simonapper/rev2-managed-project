@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
-from chats.models import ChatWorkspace
+from chats.models import ChatWorkspace, ContractText
 from chats.services.contracts.boundary_resolver import resolve_boundary_contract
 from chats.services.contracts.pipeline import ContractContext, build_system_blocks
 from chats.services.llm import generate_panes
@@ -122,3 +122,26 @@ class ContractsPipelineTests(TestCase):
         input_msgs = call_kwargs["input"]
         system_msgs = [m for m in input_msgs if m.get("role") == "system"]
         self.assertTrue(system_msgs)
+
+    def test_project_user_contract_text_override_applies_with_project_context(self):
+        ContractText.objects.create(
+            key="phase.refine",
+            scope_type=ContractText.ScopeType.PROJECT_USER,
+            scope_project=self.project,
+            scope_user=self.user,
+            status=ContractText.Status.ACTIVE,
+            text="Project user REFINE contract override",
+            updated_by=self.user,
+        )
+        ctx = ContractContext(
+            user=self.user,
+            chat=self.chat,
+            project=self.project,
+            work_item=self.work_item,
+            user_text="Use override",
+        )
+        blocks, trace = build_system_blocks(ctx)
+        merged = "\n\n".join([str(b or "") for b in blocks])
+        self.assertIn("Project user REFINE contract override", merged)
+        phase_meta = dict(trace.get("override_meta", {}).get("phase.contract") or {})
+        self.assertEqual(str(phase_meta.get("effective_source") or ""), "PROJECT_USER")

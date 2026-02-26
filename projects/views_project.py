@@ -37,6 +37,7 @@ from chats.services.cleanup import delete_empty_sandbox_chats
 from chats.services.llm import generate_panes
 from config.models import ConfigRecord, ConfigScope, ConfigVersion
 from projects.models import (
+    AuditLog,
     Project,
     ProjectAnchor,
     ProjectCKO,
@@ -120,7 +121,7 @@ def _resolve_wopi_access(request, *, doc_id: int):
     user = User.objects.filter(id=token_user_id, is_active=True).first()
     if not user:
         return None, None
-    doc = ProjectDocument.objects.select_related("project").filter(id=doc_id).first()
+    doc = ProjectDocument.objects.select_related("project").filter(id=doc_id, is_archived=False).first()
     if not doc:
         return None, None
     allowed = accessible_projects_qs(user).filter(id=doc.project_id).exists()
@@ -442,6 +443,9 @@ def project_home(request, project_id: int):
     if project.workflow_mode == Project.WorkflowMode.DERAX_WORK:
         return redirect("projects:derax_project_home", project_id=project.id)
 
+    if project.workflow_mode == Project.WorkflowMode.DERAX_TEMPLATE:
+        return redirect("accounts:chat_browse")
+
     if project.kind == Project.Kind.SANDBOX:
         return redirect("accounts:chat_browse")
 
@@ -456,6 +460,22 @@ def project_create(request):
     User = get_user_model()
 
     class ProjectCreateForm(forms.ModelForm):
+        FLOW_SANDBOX = "SANDBOX"
+        FLOW_DERAX = "DERAX"
+        FLOW_MANAGED = "MANAGED"
+        FLOW_CHOICES = (
+            (FLOW_SANDBOX, "Sandbox"),
+            (FLOW_DERAX, "DERAX"),
+            (FLOW_MANAGED, "Managed"),
+        )
+
+        project_flow = forms.ChoiceField(
+            choices=FLOW_CHOICES,
+            required=False,
+            label="Project flow",
+            help_text="Choose how this project should run.",
+            widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
+        )
         contributors = forms.ModelMultipleChoiceField(
             queryset=User.objects.none(),
             required=False,
@@ -466,10 +486,11 @@ def project_create(request):
 
         class Meta:
             model = Project
-            fields = ("name", "purpose", "kind", "primary_type", "mode")
+            fields = ("name", "purpose", "project_flow", "workflow_mode", "kind", "primary_type", "mode")
             widgets = {
                 "name": forms.TextInput(attrs={"class": "form-control"}),
                 "purpose": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
+                "workflow_mode": forms.Select(attrs={"class": "form-select form-select-sm"}),
                 "kind": forms.Select(attrs={"class": "form-select form-select-sm"}),
                 "primary_type": forms.Select(attrs={"class": "form-select form-select-sm"}),
                 "mode": forms.Select(attrs={"class": "form-select form-select-sm"}),
@@ -487,11 +508,43 @@ def project_create(request):
             if user is not None:
                 qs = qs.exclude(id=user.id)
             self.fields["contributors"].queryset = qs
+            self.fields["workflow_mode"].required = False
+            self.fields["workflow_mode"].initial = Project.WorkflowMode.PDE
+            self.fields["kind"].required = False
+            self.fields["primary_type"].required = False
+            self.fields["mode"].required = False
+            self.fields["workflow_mode"].widget = forms.HiddenInput()
+            self.fields["kind"].widget = forms.HiddenInput()
+            self.fields["project_flow"].initial = self.FLOW_MANAGED
+
+        def _apply_flow_defaults(self, cleaned: dict) -> None:
+            flow = str(cleaned.get("project_flow") or "").strip().upper()
+            if flow == self.FLOW_SANDBOX:
+                cleaned["kind"] = Project.Kind.SANDBOX
+                cleaned["workflow_mode"] = Project.WorkflowMode.PDE
+                cleaned["primary_type"] = cleaned.get("primary_type") or Project.PrimaryType.DELIVERY
+                cleaned["mode"] = cleaned.get("mode") or Project.Mode.PLAN
+                return
+            if flow == self.FLOW_DERAX:
+                cleaned["kind"] = Project.Kind.STANDARD
+                cleaned["workflow_mode"] = Project.WorkflowMode.DERAX_WORK
+                cleaned["primary_type"] = Project.PrimaryType.DELIVERY
+                cleaned["mode"] = Project.Mode.PLAN
+                return
+            cleaned["project_flow"] = self.FLOW_MANAGED
+            cleaned["kind"] = Project.Kind.STANDARD
+            cleaned["workflow_mode"] = Project.WorkflowMode.PDE
+            cleaned["primary_type"] = cleaned.get("primary_type") or Project.PrimaryType.DELIVERY
+            cleaned["mode"] = cleaned.get("mode") or Project.Mode.PLAN
 
         def clean(self):
             cleaned = super().clean()
+            self._apply_flow_defaults(cleaned)
             kind = cleaned.get("kind")
+            workflow_mode = str(cleaned.get("workflow_mode") or "").strip().upper()
             contributors = cleaned.get("contributors") or []
+            if workflow_mode not in {Project.WorkflowMode.PDE, Project.WorkflowMode.DERAX_TEMPLATE, Project.WorkflowMode.DERAX_WORK}:
+                cleaned["workflow_mode"] = Project.WorkflowMode.PDE
             if kind == Project.Kind.SANDBOX and contributors:
                 self.add_error("contributors", "Sandbox projects cannot have contributors.")
             return cleaned
@@ -537,7 +590,15 @@ def project_create(request):
                 messages.success(request, "Sandbox project created.")
                 return redirect(reverse("accounts:chat_detail", args=[chat.id]))
 
-            messages.success(request, "Project created. Define it in PDE to enable chats.")
+            if p.workflow_mode == Project.WorkflowMode.DERAX_WORK:
+                request.session.pop("rw_active_chat_id", None)
+                request.session.modified = True
+                messages.success(request, "DERAX project created.")
+                return redirect(reverse("projects:derax_project_home", args=[p.id]))
+
+            request.session.pop("rw_active_chat_id", None)
+            request.session.modified = True
+            messages.success(request, "Managed project created. Define it in PDE to enable chats.")
             return redirect(reverse("projects:pde_detail", args=[p.id]))
     else:
         form = ProjectCreateForm(user=request.user)
@@ -1378,6 +1439,10 @@ def project_config_info(request, project_id: int):
         .exclude(id__in=list(seen_ids))
         .order_by("username")
     )
+    can_archive_project_docs = bool(
+        request.user.id == active_project.owner_id or request.user.is_staff or request.user.is_superuser
+    )
+    can_hard_delete_project_docs = bool(request.user.is_staff or request.user.is_superuser)
 
     if request.method == "POST" and (request.POST.get("action") or "") == "policy_doc_create":
         title = (request.POST.get("doc_title") or "").strip()
@@ -1473,7 +1538,39 @@ def project_config_info(request, project_id: int):
         edit_url = reverse("projects:project_document_collabora_edit", args=[active_project.id, row.id])
         return redirect(f"{edit_url}?next={request.get_full_path()}")
 
+    if request.method == "POST" and (request.POST.get("action") or "") == "project_doc_archive":
+        if not can_archive_project_docs:
+            messages.error(request, "Only the project owner can archive files.")
+            return redirect("accounts:project_config_info", project_id=active_project.id)
+        doc_id_raw = (request.POST.get("doc_id") or "").strip()
+        if not doc_id_raw.isdigit():
+            messages.error(request, "Invalid project document.")
+            return redirect("accounts:project_config_info", project_id=active_project.id)
+        row = ProjectDocument.objects.filter(project=active_project, id=int(doc_id_raw), is_archived=False).first()
+        if not row:
+            messages.error(request, "Project document not found.")
+            return redirect("accounts:project_config_info", project_id=active_project.id)
+        row.is_archived = True
+        row.archived_at = timezone.now()
+        row.archived_by = request.user
+        row.save(update_fields=["is_archived", "archived_at", "archived_by", "updated_at"])
+        AuditLog.objects.create(
+            project=active_project,
+            actor=request.user,
+            event_type="PROJECT_DOC_ARCHIVED",
+            entity_type="ProjectDocument",
+            entity_id=str(row.id),
+            field_changes={"is_archived": {"before": False, "after": True}},
+            summary=f"Archived project file: {row.original_name or row.title or row.id}",
+            source=AuditLog.Source.UI,
+        )
+        messages.success(request, "Project file archived.")
+        return redirect("accounts:project_config_info", project_id=active_project.id)
+
     if request.method == "POST" and (request.POST.get("action") or "") == "project_doc_delete":
+        if not can_hard_delete_project_docs:
+            messages.error(request, "Only admin users can permanently delete files.")
+            return redirect("accounts:project_config_info", project_id=active_project.id)
         doc_id_raw = (request.POST.get("doc_id") or "").strip()
         if not doc_id_raw.isdigit():
             messages.error(request, "Invalid project document.")
@@ -1482,11 +1579,24 @@ def project_config_info(request, project_id: int):
         if not row:
             messages.error(request, "Project document not found.")
             return redirect("accounts:project_config_info", project_id=active_project.id)
+        row_id = row.id
+        row_name = row.original_name or row.title or str(row.id)
+        was_archived = bool(row.is_archived)
         try:
             row.file.delete(save=False)
         except Exception:
             pass
         row.delete()
+        AuditLog.objects.create(
+            project=active_project,
+            actor=request.user,
+            event_type="PROJECT_DOC_HARD_DELETED",
+            entity_type="ProjectDocument",
+            entity_id=str(row_id),
+            field_changes={"is_archived": {"before": was_archived, "after": True}},
+            summary=f"Permanently deleted project file: {row_name}",
+            source=AuditLog.Source.ADMIN,
+        )
         messages.success(request, "Project file deleted.")
         return redirect("accounts:project_config_info", project_id=active_project.id)
 
@@ -1604,8 +1714,10 @@ def project_config_info(request, project_id: int):
             "boundary_profile": boundary_profile,
             "policy_documents": policy_documents,
             "project_documents": list(
-                ProjectDocument.objects.filter(project=active_project).order_by("-updated_at", "-id")
+                ProjectDocument.objects.filter(project=active_project, is_archived=False).order_by("-updated_at", "-id")
             ),
+            "can_archive_project_docs": can_archive_project_docs,
+            "can_hard_delete_project_docs": can_hard_delete_project_docs,
             "policy_docs_help_url": reverse("projects:policy_docs_help", args=[active_project.id]),
             "member_rows": member_rows,
             "available_users": available_users,
@@ -1632,7 +1744,7 @@ def policy_docs_help(request, project_id: int):
 @login_required
 def project_document_download(request, project_id: int, doc_id: int):
     project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
-    row = get_object_or_404(ProjectDocument, project=project, id=doc_id)
+    row = get_object_or_404(ProjectDocument, project=project, id=doc_id, is_archived=False)
     filename = row.original_name or row.title or f"document_{row.id}"
     try:
         fh = row.file.open("rb")
@@ -1650,7 +1762,7 @@ def project_document_download(request, project_id: int, doc_id: int):
 @login_required
 def project_document_collabora_edit(request, project_id: int, doc_id: int):
     project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
-    row = get_object_or_404(ProjectDocument, project=project, id=doc_id)
+    row = get_object_or_404(ProjectDocument, project=project, id=doc_id, is_archived=False)
     token = _build_wopi_token(doc_id=row.id, user_id=request.user.id)
     wopi_src = request.build_absolute_uri(reverse("projects:wopi_check_file_info", args=[row.id]))
     ttl_ms = int(timezone.now().timestamp() * 1000) + (_collabora_token_ttl_seconds() * 1000)
@@ -1904,7 +2016,7 @@ def project_config_edit(request, project_id):
         new_name = (request.POST.get("name") or "").strip()
         description = request.POST.get("description", "")
         workflow_mode = (request.POST.get("workflow_mode") or "").strip().upper()
-        valid_modes = {Project.WorkflowMode.PDE, Project.WorkflowMode.DERAX_WORK}
+        valid_modes = {Project.WorkflowMode.PDE, Project.WorkflowMode.DERAX_TEMPLATE, Project.WorkflowMode.DERAX_WORK}
         if workflow_mode not in valid_modes:
             workflow_mode = Project.WorkflowMode.PDE
         if new_name:

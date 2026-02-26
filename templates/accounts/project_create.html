@@ -33,20 +33,41 @@
 </div>
 <script>
 (function () {
+  const flow = document.getElementById("id_project_flow");
+  const workflow = document.getElementById("id_workflow_mode");
   const kind = document.getElementById("id_kind");
   const primary = document.getElementById("id_primary_type");
   const mode = document.getElementById("id_mode");
+  const primaryRow = primary ? primary.closest("p") : null;
+  const modeRow = mode ? mode.closest("p") : null;
+  const contributors = document.getElementById("id_contributors");
+  const contributorsRow = contributors ? contributors.closest("p") : null;
 
-  function toggleSandbox() {
-    const isSandbox = kind && kind.value === "SANDBOX";
-    if (primary) primary.disabled = isSandbox;
-    if (mode) mode.disabled = isSandbox;
+  function applyFlow() {
+    const value = flow ? flow.value : "MANAGED";
+    const isSandbox = value === "SANDBOX";
+    const isDerax = value === "DERAX";
+    const isManaged = !isSandbox && !isDerax;
+
+    if (kind) kind.value = isSandbox ? "SANDBOX" : "STANDARD";
+    if (workflow) {
+      if (isDerax) workflow.value = "DERAX_WORK";
+      else workflow.value = "PDE";
+    }
+
+    if (primaryRow) primaryRow.style.display = isManaged ? "" : "none";
+    if (modeRow) modeRow.style.display = isManaged ? "" : "none";
+    if (contributorsRow) contributorsRow.style.display = isSandbox ? "none" : "";
+    if (!isManaged) {
+      if (primary) primary.value = "DELIVERY";
+      if (mode) mode.value = "PLAN";
+    }
   }
 
-  if (kind) {
-    kind.addEventListener("change", toggleSandbox);
-    toggleSandbox(); // run once on load
+  if (flow) {
+    flow.addEventListener("change", applyFlow);
   }
+  applyFlow();
 })();
 </script>
 

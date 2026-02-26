@@ -94,6 +94,31 @@
               <div class="pc-toolbar-help">
                 DERAX workflow active. Use DERAX and WorkItem for navigation.
               </div>
+            {% elif project.workflow_mode == "DERAX_TEMPLATE" %}
+              <div class="pc-toolbar-row">
+                <div class="pc-toolbar-label">Workflow:</div>
+                <span class="badge text-bg-primary">DERAX template</span>
+                <a class="btn btn-sm btn-outline-dark pc-action-btn"
+                   href="{% url 'accounts:project_detail_print' project.id %}"
+                   target="_blank" rel="noopener">
+                  Print
+                </a>
+              </div>
+
+              <div class="pc-toolbar-row">
+                <a class="btn btn-sm btn-outline-primary pc-action-btn"
+                   href="{% url 'accounts:project_config_edit' project.id %}">
+                  Edit
+                </a>
+                <a class="btn btn-sm btn-primary pc-action-btn"
+                   href="{% url 'accounts:chat_browse' %}">
+                  Chats
+                </a>
+              </div>
+
+              <div class="pc-toolbar-help">
+                DERAX template mode active. Use chats with DERAX enabled.
+              </div>
             {% else %}
               <div class="pc-toolbar-row">
                 <form method="post" action="{% url 'projects:set_planning_mode' project.id %}" class="pc-toolbar-row m-0">
@@ -346,12 +371,22 @@
                         <td class="text-end">
                           <a class="btn btn-sm btn-outline-primary" href="{% url 'projects:project_document_collabora_edit' project.id d.id %}?next={{ request.get_full_path|urlencode }}">Edit</a>
                           <a class="btn btn-sm btn-outline-secondary" href="{% url 'projects:project_document_download' project.id d.id %}">Download</a>
-                          <form method="post" class="d-inline">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="project_doc_delete">
-                            <input type="hidden" name="doc_id" value="{{ d.id }}">
-                            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-                          </form>
+                          {% if can_archive_project_docs %}
+                            <form method="post" class="d-inline">
+                              {% csrf_token %}
+                              <input type="hidden" name="action" value="project_doc_archive">
+                              <input type="hidden" name="doc_id" value="{{ d.id }}">
+                              <button type="submit" class="btn btn-sm btn-outline-warning">Archive</button>
+                            </form>
+                          {% endif %}
+                          {% if can_hard_delete_project_docs %}
+                            <form method="post" class="d-inline">
+                              {% csrf_token %}
+                              <input type="hidden" name="action" value="project_doc_delete">
+                              <input type="hidden" name="doc_id" value="{{ d.id }}">
+                              <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                            </form>
+                          {% endif %}
                         </td>
                       </tr>
                     {% endfor %}

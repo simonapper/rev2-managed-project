@@ -1,4 +1,6 @@
 import json
+import sys
+import types
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -116,3 +118,32 @@ class DeraxExecuteArtefactGenerationTests(SimpleTestCase):
 
         self.assertGreaterEqual(len(out.get("generated") or []), 1)
         self.assertIsInstance(payload["artefacts"]["proposed"][0], dict)
+
+    @patch("chats.services.derax.generate.build_xlsx_for_kind", return_value=b"xlsx")
+    @patch("chats.services.derax.generate._persist_execute_artefact")
+    @patch("chats.services.derax.generate._get_project")
+    def test_generate_run_sheet_creates_xlsx_when_library_available(self, mock_get_project, mock_persist, _mock_xlsx):
+        payload = empty_payload("EXECUTE")
+        payload["meta"]["phase"] = "EXECUTE"
+        payload["intent"]["destination"] = "Run a focused session."
+        payload["artefacts"]["proposed"] = [{"kind": "run_sheet", "title": "Session run sheet", "notes": ""}]
+
+        class _Doc:
+            def __init__(self, idx):
+                self.id = idx
+
+        mock_get_project.return_value = object()
+        mock_persist.side_effect = [_Doc(301), _Doc(302)]
+
+        with patch.dict(sys.modules, {"openpyxl": types.ModuleType("openpyxl")}):
+            out = generate_artefacts_from_execute_payload(
+                project_id=1,
+                chat_id=2,
+                turn_id="t-exec-3",
+                payload=payload,
+                user_id=7,
+            )
+
+        titles = [str(x.get("title") or "") for x in list(out.get("generated") or [])]
+        self.assertIn("Session run sheet", titles)
+        self.assertIn("Session run sheet (xlsx)", titles)

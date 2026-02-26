@@ -60,7 +60,7 @@ def topbar_context(request) -> Dict[str, Any]:
         except (TypeError, ValueError):
             pid_int = None
         if pid_int is not None:
-            active_project = Project.objects.filter(id=pid_int).only("id", "name").first()
+            active_project = Project.objects.filter(id=pid_int).only("id", "name", "kind", "workflow_mode").first()
 
     # 2) Fallback from URL (authoritative when switching projects)
     if active_project is None and hasattr(request, "resolver_match"):
@@ -69,7 +69,7 @@ def topbar_context(request) -> Dict[str, Any]:
         if project_id:
             try:
                 pid_int = int(project_id)
-                active_project = Project.objects.filter(id=pid_int).only("id", "name").first()
+                active_project = Project.objects.filter(id=pid_int).only("id", "name", "kind", "workflow_mode").first()
                 if active_project:
                     request.session["rw_active_project_id"] = pid_int
                     request.session.modified = True
@@ -83,11 +83,13 @@ def topbar_context(request) -> Dict[str, Any]:
     # Active chat (session -> URL fallback)
     # ------------------------------------------------------------
     chat_id = request.session.get("rw_active_chat_id")
+    chat_from_url = False
     if hasattr(request, "resolver_match"):
         kwargs = request.resolver_match.kwargs or {}
         chat_id_from_url = kwargs.get("chat_id")
         if chat_id_from_url is not None and str(chat_id_from_url).isdigit():
             chat_id = int(chat_id_from_url)
+            chat_from_url = True
             request.session["rw_active_chat_id"] = chat_id
             request.session.modified = True
 
@@ -105,8 +107,8 @@ def topbar_context(request) -> Dict[str, Any]:
 
     ctx["active_chat"] = chat
 
-    # Sync project to chat.project when viewing a chat
-    if "rw_projects" not in ctx or ctx.get("rw_projects", {}).get("active") != chat.project:
+    # Sync project to chat.project only when the chat is explicitly in URL.
+    if chat_from_url and ("rw_projects" not in ctx or ctx.get("rw_projects", {}).get("active") != chat.project):
         ctx["rw_projects"] = {"active": chat.project}
         request.session["rw_active_project_id"] = chat.project.id
         request.session.modified = True

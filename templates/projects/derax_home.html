@@ -75,6 +75,7 @@
           <form method="post" class="d-none" id="stage-lock-define-form">
             {% csrf_token %}
             <input type="hidden" name="action" value="lock_define_and_explore">
+            <input type="hidden" name="lock_seed_text" id="id_lock_define_text" value="">
           </form>
           <form method="post" class="d-none" id="stage-lock-explore-form">
             {% csrf_token %}
@@ -88,6 +89,10 @@
             {% csrf_token %}
             <input type="hidden" name="action" value="lock_execute_stage">
           </form>
+          <form method="post" class="d-none" id="stage-export-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="export_latest_derax_draft">
+          </form>
 
           {% if not is_refine_phase %}
           <form method="post" id="define-llm-turn-form">
@@ -95,7 +100,7 @@
         {% if is_define_phase %}
         <input type="hidden" name="action" id="id_phase_turn_action" value="define_llm_turn">
         <label class="form-label small mb-1" for="id_define_user_input">Message to DEFINE LLM</label>
-        <textarea id="id_define_user_input" name="phase_user_input" class="form-control mb-2" rows="4" placeholder="Ask the LLM to sharpen your intent.">{{ phase_input_text }}</textarea>
+        <textarea id="id_define_user_input" name="phase_user_input" class="form-control mb-2" rows="4" placeholder="Ask the LLM to sharpen your intent."></textarea>
         {% elif is_explore_phase %}
         <input type="hidden" name="action" id="id_phase_turn_action" value="explore_llm_turn">
         <label class="form-label small mb-1" for="id_define_user_input">Message to EXPLORE LLM</label>
@@ -112,40 +117,13 @@
         <div class="d-flex gap-2 align-items-center flex-wrap">
           {% if is_define_phase %}
           <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Define</button>
-          {% if define_phase_locked %}
-          <button type="button" class="btn btn-sm btn-outline-secondary" disabled>DEFINE locked</button>
-          {% else %}
-          <button type="submit" form="stage-lock-define-form" class="btn btn-sm btn-outline-success">Lock -> EXPLORE</button>
-          {% endif %}
           {% elif is_explore_phase %}
           <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Explore</button>
-          {% if explore_phase_locked %}
-          <button type="button" class="btn btn-sm btn-outline-secondary" disabled>EXPLORE locked</button>
-          {% else %}
-          <button type="submit" form="stage-lock-explore-form" class="btn btn-sm btn-outline-success">Lock -> REFINE</button>
-          {% endif %}
           {% elif is_approve_phase %}
           <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Approve</button>
-          {% if approve_phase_locked %}
-          <button type="button" class="btn btn-sm btn-outline-secondary" disabled>APPROVE locked</button>
-          {% else %}
-          <button type="submit" form="stage-lock-approve-form" class="btn btn-sm btn-outline-success">Lock -> EXECUTE</button>
-          {% endif %}
           {% else %}
           <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Execute</button>
-          {% if execute_phase_locked %}
-          <button type="button" class="btn btn-sm btn-outline-secondary" disabled>EXECUTE locked</button>
-          {% else %}
-          <button type="submit" form="stage-lock-execute-form" class="btn btn-sm btn-outline-success">Lock</button>
           {% endif %}
-          {% endif %}
-          <button type="submit" form="stage-import-form" class="btn btn-sm btn-outline-secondary">Import</button>
-          <select name="import_doc_id" form="stage-import-form" class="form-select form-select-sm" style="max-width: 520px;">
-            <option value="">Select edited stage draft</option>
-            {% for doc in derax_import_docs %}
-              <option value="{{ doc.id }}">{{ doc.original_name|default:doc.title }}</option>
-            {% endfor %}
-          </select>
           <span id="define-turn-status" class="small text-muted ms-2"></span>
         </div>
           </form>
@@ -154,31 +132,149 @@
           <div class="mb-3">
         {% if is_define_phase %}
         <label class="form-label small mb-1" for="id_refined_intent">Latest DEFINE response</label>
-        <textarea id="id_refined_intent" class="form-control mb-2" rows="4" readonly>{{ latest_phase_response }}</textarea>
         {% elif is_explore_phase %}
         <label class="form-label small mb-1" for="id_refined_intent">Latest EXPLORE response</label>
-        <textarea id="id_refined_intent" class="form-control mb-2" rows="4" readonly>{{ latest_phase_response }}</textarea>
         {% elif is_approve_phase %}
         <label class="form-label small mb-1" for="id_refined_intent">Latest APPROVE response</label>
-        <textarea id="id_refined_intent" class="form-control mb-2" rows="4" readonly>{{ latest_phase_response }}</textarea>
         {% else %}
         <label class="form-label small mb-1" for="id_refined_intent">Latest EXECUTE response</label>
-        <textarea id="id_refined_intent" class="form-control mb-2" rows="4" readonly>{{ latest_phase_response }}</textarea>
+        {% endif %}
+        <textarea id="id_refined_intent" class="form-control mb-2" rows="6">{{ latest_phase_response }}</textarea>
+        {% if is_define_phase or is_explore_phase or is_approve_phase or is_execute_phase %}
+        <div class="d-flex gap-1 align-items-center flex-wrap mt-2 mb-2">
+          <button type="submit" form="stage-export-form" class="btn btn-sm btn-outline-secondary">Export</button>
+          {% if is_define_phase %}
+            {% if define_phase_locked %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>DEFINE locked</button>
+            {% else %}
+            <button type="submit" form="stage-lock-define-form" class="btn btn-sm btn-outline-success">Lock -> EXPLORE</button>
+            {% endif %}
+          {% elif is_explore_phase %}
+            {% if explore_phase_locked %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>EXPLORE locked</button>
+            {% else %}
+            <button type="submit" form="stage-lock-explore-form" class="btn btn-sm btn-outline-success">Lock -> REFINE</button>
+            {% endif %}
+          {% elif is_approve_phase %}
+            {% if approve_phase_locked %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>APPROVE locked</button>
+            {% else %}
+            <button type="submit" form="stage-lock-approve-form" class="btn btn-sm btn-outline-success">Lock -> EXECUTE</button>
+            {% endif %}
+          {% else %}
+            {% if execute_phase_locked %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>EXECUTE locked</button>
+            {% else %}
+            <button type="submit" form="stage-lock-execute-form" class="btn btn-sm btn-outline-success">Lock</button>
+            {% endif %}
+          {% endif %}
+          <button type="submit" form="stage-import-form" class="btn btn-sm btn-outline-secondary">Import</button>
+          <select name="import_doc_id" form="stage-import-form" class="form-select form-select-sm" style="max-width: 360px;">
+            <option value="">Select edited stage draft</option>
+            {% for doc in derax_import_docs %}
+              <option value="{{ doc.id }}">{{ doc.original_name|default:doc.title }}</option>
+            {% endfor %}
+          </select>
+        </div>
         {% endif %}
         {% if is_define_phase or is_explore_phase or is_approve_phase or is_execute_phase %}
         <details class="rw-channel mt-2">
-          <summary class="fw-semibold">Previous {{ active_phase_upper }} responses</summary>
+          <summary class="fw-semibold">Edit {{ active_phase_upper }} fields</summary>
           <div class="pt-2">
-            {% include "projects/_derax_define_history.html" with define_history=phase_history %}
+            <form method="post" id="stage-structured-form">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="save_active_stage_structured">
+              <div class="row g-2">
+                <div class="col-12">
+                  <label class="form-label small mb-1" for="id_stage_canonical_summary">Canonical summary</label>
+                  <input id="id_stage_canonical_summary" name="stage_canonical_summary" class="form-control form-control-sm" value="{{ latest_phase_payload.canonical_summary|default:'' }}">
+                </div>
+                <div class="col-12">
+                  <label class="form-label small mb-1" for="id_stage_destination">Destination</label>
+                  <textarea id="id_stage_destination" name="stage_destination" class="form-control" rows="2">{{ latest_phase_payload.intent.destination|default:'' }}</textarea>
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label small mb-1" for="id_stage_success_criteria">Success criteria (one per line)</label>
+                  <textarea id="id_stage_success_criteria" name="stage_success_criteria" class="form-control" rows="4">{% for item in latest_phase_payload.intent.success_criteria %}{{ item }}{% if not forloop.last %}
+{% endif %}{% endfor %}</textarea>
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label small mb-1" for="id_stage_constraints">Constraints (one per line)</label>
+                  <textarea id="id_stage_constraints" name="stage_constraints" class="form-control" rows="4">{% for item in latest_phase_payload.intent.constraints %}{{ item }}{% if not forloop.last %}
+{% endif %}{% endfor %}</textarea>
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label small mb-1" for="id_stage_non_goals">Non-goals (one per line)</label>
+                  <textarea id="id_stage_non_goals" name="stage_non_goals" class="form-control" rows="4">{% for item in latest_phase_payload.intent.non_goals %}{{ item }}{% if not forloop.last %}
+{% endif %}{% endfor %}</textarea>
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label small mb-1" for="id_stage_assumptions">Assumptions (one per line)</label>
+                  <textarea id="id_stage_assumptions" name="stage_assumptions" class="form-control" rows="4">{% for item in latest_phase_payload.intent.assumptions %}{{ item }}{% if not forloop.last %}
+{% endif %}{% endfor %}</textarea>
+                </div>
+                <div class="col-12">
+                  <label class="form-label small mb-1" for="id_stage_open_questions">Open questions (one per line)</label>
+                  <textarea id="id_stage_open_questions" name="stage_open_questions" class="form-control" rows="3">{% for item in latest_phase_payload.intent.open_questions %}{{ item }}{% if not forloop.last %}
+{% endif %}{% endfor %}</textarea>
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label small mb-1" for="id_stage_adjacent_ideas">Adjacent ideas (one per line)</label>
+                  <textarea id="id_stage_adjacent_ideas" name="stage_adjacent_ideas" class="form-control" rows="4">{% for item in latest_phase_payload.explore.adjacent_ideas %}{{ item }}{% if not forloop.last %}
+{% endif %}{% endfor %}</textarea>
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label small mb-1" for="id_stage_risks">Risks (one per line)</label>
+                  <textarea id="id_stage_risks" name="stage_risks" class="form-control" rows="4">{% for item in latest_phase_payload.explore.risks %}{{ item }}{% if not forloop.last %}
+{% endif %}{% endfor %}</textarea>
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label small mb-1" for="id_stage_tradeoffs">Trade-offs (one per line)</label>
+                  <textarea id="id_stage_tradeoffs" name="stage_tradeoffs" class="form-control" rows="4">{% for item in latest_phase_payload.explore.tradeoffs %}{{ item }}{% if not forloop.last %}
+{% endif %}{% endfor %}</textarea>
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label small mb-1" for="id_stage_reframes">Reframes (one per line)</label>
+                  <textarea id="id_stage_reframes" name="stage_reframes" class="form-control" rows="4">{% for item in latest_phase_payload.explore.reframes %}{{ item }}{% if not forloop.last %}
+{% endif %}{% endfor %}</textarea>
+                </div>
+                <div class="col-12">
+                  <label class="form-label small mb-1" for="id_stage_parked_items">Parked for later (one per line)</label>
+                  <textarea id="id_stage_parked_items" name="stage_parked_items" class="form-control" rows="3">{% for item in latest_phase_payload.parked_for_later.items %}{% if item.title %}{{ item.title }}{% if item.detail %}: {{ item.detail }}{% endif %}{% else %}{{ item }}{% endif %}{% if not forloop.last %}
+{% endif %}{% endfor %}</textarea>
+                </div>
+                {% if is_execute_phase %}
+                <div class="col-12">
+                  <label class="form-label small mb-1" for="id_stage_execute_proposed">Artefacts proposed (one per line: kind | title | notes)</label>
+                  <textarea id="id_stage_execute_proposed" name="stage_execute_proposed" class="form-control" rows="4">{{ stage_execute_proposed_text }}</textarea>
+                </div>
+                {% endif %}
+              </div>
+              <div class="d-flex gap-2 align-items-center mt-2">
+                <button type="submit" id="btn-save-stage-structured" class="btn btn-sm btn-outline-secondary">Save fields</button>
+                <span id="stage-structured-status" class="small text-muted"></span>
+              </div>
+            </form>
+          </div>
+        </details>
+        <div class="border rounded p-2 mb-2 mt-2">
+          <div class="small fw-semibold mb-1">{{ active_phase_upper }} turn history (newest first)</div>
+          {% if phase_history %}
+            <div style="max-height: 320px; overflow-y: auto;">
+              {% include "projects/_derax_define_history.html" with define_history=phase_history newest_first=False %}
+            </div>
+          {% else %}
+            <div class="small text-muted">No {{ active_phase_upper }} turns yet.</div>
+          {% endif %}
+        </div>
+        {% if latest_phase_payload_json %}
+        <details class="rw-channel mt-2">
+          <summary class="fw-semibold">Latest {{ active_phase_upper }} raw JSON</summary>
+          <div class="pt-2">
+            <pre class="small mb-0" style="white-space: pre-wrap; font-family: inherit;">{{ latest_phase_payload_json }}</pre>
           </div>
         </details>
         {% endif %}
-        {% if is_define_phase or is_explore_phase or is_approve_phase or is_execute_phase %}
-        <form method="post" class="mt-2">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="export_latest_derax_draft">
-          <button type="submit" class="btn btn-sm btn-outline-secondary">Export</button>
-        </form>
         {% endif %}
           </div>
           {% endif %}
@@ -204,6 +300,7 @@
             {% csrf_token %}
             <input type="hidden" name="action" value="lock_refine_stage">
             <input type="hidden" name="refine_input" id="id_lock_refine_input" value="">
+            <input type="hidden" name="lock_seed_text" id="id_lock_refine_text" value="">
           </form>
           <form method="post" class="d-none" id="refine-import-form">
             {% csrf_token %}
@@ -212,18 +309,6 @@
           </form>
           <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
               <button type="submit" form="refine-llm-turn-form" id="btn-run-refine-turn" class="btn btn-sm btn-outline-primary">Refine</button>
-              {% if refine_phase_locked %}
-              <button type="button" class="btn btn-sm btn-outline-secondary" disabled>REFINE locked</button>
-              {% else %}
-              <button type="submit" form="refine-lock-form" class="btn btn-sm btn-outline-success">Lock -> APPROVE</button>
-              {% endif %}
-              <button type="submit" form="refine-import-form" class="btn btn-sm btn-outline-secondary">Import</button>
-              <select name="import_doc_id" form="refine-import-form" class="form-select form-select-sm" style="max-width: 520px;">
-                <option value="">Select edited refine draft</option>
-                {% for doc in derax_import_docs %}
-                  <option value="{{ doc.id }}">{{ doc.original_name|default:doc.title }}</option>
-                {% endfor %}
-              </select>
               <span id="refine-turn-status" class="small text-muted"></span>
               <span id="refine-save-status" class="small text-muted"></span>
           </div>
@@ -236,6 +321,109 @@
               <button type="submit" name="action" value="export_refine_response_draft" class="btn btn-sm btn-outline-secondary">Export</button>
             </div>
           </form>
+          <div class="d-flex gap-2 align-items-center flex-wrap mb-2">
+            {% if refine_phase_locked %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>REFINE locked</button>
+            {% else %}
+            <button type="submit" form="refine-lock-form" class="btn btn-sm btn-outline-success">Lock -> APPROVE</button>
+            {% endif %}
+            <button type="submit" form="refine-import-form" class="btn btn-sm btn-outline-secondary">Import</button>
+            <select name="import_doc_id" form="refine-import-form" class="form-select form-select-sm" style="max-width: 520px;">
+              <option value="">Select edited refine draft</option>
+              {% for doc in derax_import_docs %}
+                <option value="{{ doc.id }}">{{ doc.original_name|default:doc.title }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <details class="rw-channel mt-2">
+            <summary class="fw-semibold">Edit REFINE fields</summary>
+            <div class="pt-2">
+              <form method="post" id="refine-structured-form">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="save_refine_structured">
+                <div class="row g-2">
+                  <div class="col-12">
+                    <label class="form-label small mb-1" for="id_refine_canonical_summary">Canonical summary</label>
+                    <input id="id_refine_canonical_summary" name="refine_canonical_summary" class="form-control form-control-sm" value="{{ refine_editor_canonical_summary }}">
+                  </div>
+                  <div class="col-12">
+                    <label class="form-label small mb-1" for="id_refine_destination">Destination</label>
+                    <textarea id="id_refine_destination" name="refine_destination" class="form-control" rows="2">{{ refine_editor_destination }}</textarea>
+                  </div>
+                  <div class="col-12 col-lg-6">
+                    <label class="form-label small mb-1" for="id_refine_success_criteria">Success criteria (one per line)</label>
+                    <textarea id="id_refine_success_criteria" name="refine_success_criteria" class="form-control" rows="4">{{ refine_editor_success_criteria }}</textarea>
+                  </div>
+                  <div class="col-12 col-lg-6">
+                    <label class="form-label small mb-1" for="id_refine_constraints">Constraints (one per line)</label>
+                    <textarea id="id_refine_constraints" name="refine_constraints" class="form-control" rows="4">{{ refine_editor_constraints }}</textarea>
+                  </div>
+                  <div class="col-12 col-lg-6">
+                    <label class="form-label small mb-1" for="id_refine_non_goals">Non-goals (one per line)</label>
+                    <textarea id="id_refine_non_goals" name="refine_non_goals" class="form-control" rows="4">{{ refine_editor_non_goals }}</textarea>
+                  </div>
+                  <div class="col-12 col-lg-6">
+                    <label class="form-label small mb-1" for="id_refine_assumptions">Assumptions (one per line)</label>
+                    <textarea id="id_refine_assumptions" name="refine_assumptions" class="form-control" rows="4">{{ refine_editor_assumptions }}</textarea>
+                  </div>
+                  <div class="col-12">
+                    <label class="form-label small mb-1" for="id_refine_open_questions">Open questions (one per line)</label>
+                    <textarea id="id_refine_open_questions" name="refine_open_questions" class="form-control" rows="3">{{ refine_editor_open_questions }}</textarea>
+                  </div>
+                  <div class="col-12 col-lg-6">
+                    <label class="form-label small mb-1" for="id_refine_adjacent_ideas">Adjacent ideas (one per line)</label>
+                    <textarea id="id_refine_adjacent_ideas" name="refine_adjacent_ideas" class="form-control" rows="4">{{ refine_editor_adjacent_ideas }}</textarea>
+                  </div>
+                  <div class="col-12 col-lg-6">
+                    <label class="form-label small mb-1" for="id_refine_risks">Risks (one per line)</label>
+                    <textarea id="id_refine_risks" name="refine_risks" class="form-control" rows="4">{{ refine_editor_risks }}</textarea>
+                  </div>
+                  <div class="col-12 col-lg-6">
+                    <label class="form-label small mb-1" for="id_refine_tradeoffs">Trade-offs (one per line)</label>
+                    <textarea id="id_refine_tradeoffs" name="refine_tradeoffs" class="form-control" rows="4">{{ refine_editor_tradeoffs }}</textarea>
+                  </div>
+                  <div class="col-12 col-lg-6">
+                    <label class="form-label small mb-1" for="id_refine_reframes">Reframes (one per line)</label>
+                    <textarea id="id_refine_reframes" name="refine_reframes" class="form-control" rows="4">{{ refine_editor_reframes }}</textarea>
+                  </div>
+                  <div class="col-12">
+                    <label class="form-label small mb-1" for="id_refine_parked_items">Parked for later (one per line)</label>
+                    <textarea id="id_refine_parked_items" name="refine_parked_items" class="form-control" rows="3">{{ refine_editor_parked_items }}</textarea>
+                  </div>
+                </div>
+                <div class="d-flex gap-2 align-items-center mt-2">
+                  <button type="submit" id="btn-save-refine-structured" class="btn btn-sm btn-outline-secondary">Save fields</button>
+                  <span id="refine-structured-status" class="small text-muted"></span>
+                </div>
+              </form>
+            </div>
+          </details>
+          <div class="border rounded p-2 mb-2 mt-2">
+            <div class="small fw-semibold mb-1">REFINE turn history (newest first)</div>
+            {% if refine_history_rows %}
+              <div style="max-height: 320px; overflow-y: auto;">
+                {% for row in refine_history_rows %}
+                  <details class="rw-channel mb-1">
+                    <summary class="small">
+                      <strong>{% if row.role == "assistant" %}LLM{% else %}You{% endif %}</strong>
+                      <span class="text-muted">{{ row.timestamp|default:"" }}</span>
+                    </summary>
+                    <div class="pt-2" style="white-space: pre-wrap;">{{ row.display_text|default:row.text }}</div>
+                  </details>
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="small text-muted">No REFINE turns yet.</div>
+            {% endif %}
+          </div>
+          {% if refine_latest_payload_json %}
+          <details class="rw-channel mt-2">
+            <summary class="fw-semibold">Latest REFINE raw JSON</summary>
+            <div class="pt-2">
+              <pre class="small mb-0" style="white-space: pre-wrap; font-family: inherit;">{{ refine_latest_payload_json }}</pre>
+            </div>
+          </details>
+          {% endif %}
           </div>
           {% endif %}
 
@@ -259,7 +447,50 @@
           <details class="rw-channel mt-2">
             <summary class="fw-semibold">REFINE finalised data</summary>
             <div class="pt-2">
-              {% if latest_refine_response %}
+              {% if refine_vm.has_structured %}
+                <div class="small mb-1"><strong>Destination</strong></div>
+                <div class="small mb-2" style="white-space: pre-wrap;">{{ refine_vm.destination|default:"-" }}</div>
+                {% if refine_vm.success_criteria %}
+                  <div class="small mb-1"><strong>Success criteria</strong></div>
+                  <ul class="small">{% for item in refine_vm.success_criteria %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if refine_vm.constraints %}
+                  <div class="small mb-1"><strong>Constraints</strong></div>
+                  <ul class="small">{% for item in refine_vm.constraints %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if refine_vm.non_goals %}
+                  <div class="small mb-1"><strong>Non-goals</strong></div>
+                  <ul class="small">{% for item in refine_vm.non_goals %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if refine_vm.assumptions %}
+                  <div class="small mb-1"><strong>Assumptions</strong></div>
+                  <ul class="small">{% for item in refine_vm.assumptions %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if refine_vm.open_questions %}
+                  <div class="small mb-1"><strong>Open questions</strong></div>
+                  <ul class="small">{% for item in refine_vm.open_questions %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if refine_vm.adjacent_ideas %}
+                  <div class="small mb-1"><strong>Adjacent ideas</strong></div>
+                  <ul class="small">{% for item in refine_vm.adjacent_ideas %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if refine_vm.risks %}
+                  <div class="small mb-1"><strong>Risks</strong></div>
+                  <ul class="small">{% for item in refine_vm.risks %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if refine_vm.tradeoffs %}
+                  <div class="small mb-1"><strong>Trade-offs</strong></div>
+                  <ul class="small">{% for item in refine_vm.tradeoffs %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if refine_vm.reframes %}
+                  <div class="small mb-1"><strong>Reframes</strong></div>
+                  <ul class="small">{% for item in refine_vm.reframes %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if refine_vm.parked_items %}
+                  <div class="small mb-1"><strong>Parked for later</strong></div>
+                  <ul class="small mb-0">{% for item in refine_vm.parked_items %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+              {% elif latest_refine_response %}
                 <div class="small mb-0" style="white-space: pre-wrap;">{{ latest_refine_response }}</div>
               {% else %}
                 <div class="small text-muted">No REFINE finalised data yet.</div>
@@ -267,7 +498,7 @@
               <details class="rw-channel mt-2">
                 <summary class="fw-semibold">REFINE interaction history</summary>
                 <div class="pt-2">
-                  {% include "projects/_derax_define_history.html" with define_history=refine_history_rows %}
+                  {% include "projects/_derax_define_history.html" with define_history=refine_history_rows newest_first=True %}
                 </div>
               </details>
             </div>
@@ -371,23 +602,39 @@
           <details class="rw-channel mt-2">
             <summary class="fw-semibold">Browse project files</summary>
             <div class="pt-2">
-              <div class="d-flex gap-2 flex-wrap mb-2 small">
-                <button type="button" class="btn btn-sm btn-outline-secondary" data-files-sort="updated">Updated</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" data-files-sort="name">Name</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" data-files-sort="size">Size</button>
+              <div class="d-flex gap-1 flex-wrap mb-2 small">
+                <button type="button" class="btn btn-sm btn-outline-secondary px-2 py-0" data-files-sort="updated">Updated</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary px-2 py-0" data-files-sort="name">Name</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary px-2 py-0" data-files-sort="size">Size</button>
               </div>
               {% if all_project_docs %}
               <div class="list-group list-group-flush" id="project-files-list">
                 {% for row in all_project_docs %}
-                <div class="list-group-item px-0 py-2" data-file-name="{{ row.display_name|lower }}" data-file-updated="{{ row.doc.updated_at|date:'U' }}" data-file-size="{{ row.doc.size_bytes|default:0 }}">
+                <div class="list-group-item px-0 py-1" data-file-doc-id="{{ row.doc.id }}" data-file-name="{{ row.display_name|lower }}" data-file-updated="{{ row.doc.updated_at|date:'U' }}" data-file-size="{{ row.doc.size_bytes|default:0 }}">
                   <div class="d-flex justify-content-between align-items-center gap-2">
-                    <div class="small text-truncate" style="min-width: 0;">
+                    <div class="small text-truncate" style="min-width: 0;" title="{{ row.display_name }}">
                       {{ row.display_name }}
                       <span class="text-muted">({{ row.doc.updated_at|date:"Y-m-d H:i" }})</span>
                     </div>
-                    <div class="d-flex gap-2 flex-shrink-0">
-                      <a class="btn btn-sm btn-outline-secondary" href="{% url 'projects:project_document_collabora_edit' project.id row.doc.id %}?next={% url 'projects:derax_project_home' project.id %}">Open</a>
-                      <a class="btn btn-sm btn-outline-secondary" href="{% url 'projects:project_document_download' project.id row.doc.id %}">Download</a>
+                    <div class="d-flex gap-1 flex-shrink-0">
+                      <a class="btn btn-sm btn-outline-secondary px-2 py-0 js-file-open" title="Open" aria-label="Open" href="{% url 'projects:project_document_collabora_edit' project.id row.doc.id %}?next={% url 'projects:derax_project_home' project.id %}">&#128194;</a>
+                      <a class="btn btn-sm btn-outline-secondary px-2 py-0 js-file-download" title="Download" aria-label="Download" href="{% url 'projects:project_document_download' project.id row.doc.id %}">&#8681;</a>
+                      {% if can_archive_project_docs %}
+                      <form method="post" class="d-inline js-file-action-form" data-file-action="project_doc_archive">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="project_doc_archive">
+                        <input type="hidden" name="doc_id" value="{{ row.doc.id }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary px-2 py-0" title="Archive" aria-label="Archive">&#128230;</button>
+                      </form>
+                      {% endif %}
+                      {% if can_hard_delete_project_docs %}
+                      <form method="post" class="d-inline js-file-action-form" data-file-action="project_doc_delete">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="project_doc_delete">
+                        <input type="hidden" name="doc_id" value="{{ row.doc.id }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary px-2 py-0" title="Delete" aria-label="Delete">&#10006;</button>
+                      </form>
+                      {% endif %}
                     </div>
                   </div>
                 </div>
@@ -587,6 +834,13 @@
               <details class="rw-channel mt-2">
                 <summary class="fw-semibold">EXECUTE final JSON</summary>
                 <div class="pt-2">
+                  {% if execute_export_missing %}
+                    <div class="alert alert-warning py-2 small mb-2">
+                      EXECUTE export note. Optional libraries are missing.
+                      Some office files may be skipped, with Markdown fallback.
+                      Missing: {{ execute_export_missing|join:", " }}.
+                    </div>
+                  {% endif %}
                   {% if execute_latest_payload_json %}
                     <pre class="small mb-2" style="white-space: pre-wrap; font-family: inherit;">{{ execute_latest_payload_json }}</pre>
                   {% else %}
@@ -618,7 +872,25 @@
               Source: {{ active_phase_contract.source|default:"-" }}<br>
               Key: {{ active_phase_contract.effective_phase_contract|default:"-" }}
             </div>
-            <div class="small mb-0" style="white-space: pre-wrap; font-family: inherit;">{{ active_phase_contract_raw }}</div>
+            <div class="row g-2">
+              <div class="col-12">
+                <label class="form-label small mb-1">Stage</label>
+                <div class="form-control form-control-sm bg-light">{{ active_phase_upper }}</div>
+                <input type="hidden" id="id_contract_phase" value="{{ active_phase_upper }}">
+              </div>
+              <div class="col-12">
+                <label class="form-label small mb-1" for="id_active_contract_text">Contract text</label>
+                <textarea id="id_active_contract_text" class="form-control" rows="24" readonly>{{ active_phase_contract_raw }}</textarea>
+              </div>
+              <div class="col-12 d-flex align-items-center gap-2">
+                <button type="button" id="btn-contract-edit" class="btn btn-sm btn-outline-secondary" {% if not can_edit_phase_contracts %}disabled{% endif %}>Edit</button>
+                <button type="button" id="btn-contract-cancel" class="btn btn-sm btn-outline-secondary" disabled>Cancel</button>
+                <button type="button" id="btn-contract-default" class="btn btn-sm btn-outline-secondary" {% if not can_edit_phase_contracts %}disabled{% endif %}>Default</button>
+                <span id="contract-save-status" class="small text-muted"></span>
+              </div>
+            </div>
+            {{ contract_effective_by_phase|json_script:"contract-effective-map" }}
+            {{ contract_default_by_phase|json_script:"contract-default-map" }}
           {% else %}
             <div class="small text-muted">No active phase contract resolved.</div>
           {% endif %}
@@ -653,10 +925,40 @@
   var refineButton = document.getElementById("btn-run-refine-turn");
   var refineTurnAction = document.getElementById("id_refine_turn_action");
   var latestRefineBox = document.getElementById("id_refined_refine_output");
+  var refineStructuredForm = document.getElementById("refine-structured-form");
+  var refineStructuredStatus = document.getElementById("refine-structured-status");
+  var refineStructuredButton = document.getElementById("btn-save-refine-structured");
+  var stageStructuredForm = document.getElementById("stage-structured-form");
+  var stageStructuredStatus = document.getElementById("stage-structured-status");
+  var stageStructuredButton = document.getElementById("btn-save-stage-structured");
   var refineLockForm = document.getElementById("refine-lock-form");
   var refineLockInput = document.getElementById("id_lock_refine_input");
+  var refineLockSeedText = document.getElementById("id_lock_refine_text");
+  var defineLockForm = document.getElementById("stage-lock-define-form");
+  var defineLockInput = document.getElementById("id_lock_define_text");
   var exportRefineForm = document.querySelector("form input[name='action'][value='export_refine_input_draft']");
   var refineSubmitting = false;
+  var contractPhaseSelect = document.getElementById("id_contract_phase");
+  var contractTextBox = document.getElementById("id_active_contract_text");
+  var contractEditBtn = document.getElementById("btn-contract-edit");
+  var contractCancelBtn = document.getElementById("btn-contract-cancel");
+  var contractDefaultBtn = document.getElementById("btn-contract-default");
+  var contractSaveStatus = document.getElementById("contract-save-status");
+  var contractEditing = false;
+  var contractDirty = false;
+  var contractSnapshot = "";
+  var contractEffectiveMap = {};
+  var contractDefaultMap = {};
+
+  function parseJsonScript(id) {
+    var node = document.getElementById(id);
+    if (!node) return {};
+    try {
+      return JSON.parse(node.textContent || "{}");
+    } catch (e) {
+      return {};
+    }
+  }
 
   function postAction(payload, onOk, onErr) {
     var body = new FormData();
@@ -693,9 +995,42 @@
       });
   }
 
+  function setContractEditing(on) {
+    contractEditing = !!on;
+    if (!contractTextBox) return;
+    contractTextBox.readOnly = !contractEditing;
+    if (contractCancelBtn) contractCancelBtn.disabled = !contractEditing;
+    if (!contractEditing) contractDirty = false;
+  }
+
+  function loadContractPhase(phase) {
+    if (!contractTextBox) return;
+    var key = String(phase || "").trim().toUpperCase();
+    var text = String(contractEffectiveMap[key] || "");
+    contractTextBox.value = text;
+    contractSnapshot = text;
+    if (contractSaveStatus) contractSaveStatus.textContent = "";
+    setContractEditing(false);
+  }
+
   if (endBox) {
     endBox.addEventListener("blur", function () {
       var text = (endBox.value || "").trim();
+      postAction(
+        { action: "autosave_end_in_mind", end_in_mind: text },
+        function () {
+          if (saveStatus) saveStatus.textContent = "Autosaved";
+        },
+        function (err) {
+          if (saveStatus) saveStatus.textContent = err;
+        }
+      );
+    });
+  }
+
+  if (latestBox) {
+    latestBox.addEventListener("blur", function () {
+      var text = (latestBox.value || "").trim();
       postAction(
         { action: "autosave_end_in_mind", end_in_mind: text },
         function () {
@@ -740,6 +1075,7 @@
         function (data) {
           var latest = (data.latest_define_assistant_text || "").trim();
           if (latestBox) latestBox.value = latest;
+          if (defineInput) defineInput.value = "";
           if (defineStatus) defineStatus.textContent = "Response received.";
           if (defineButton) defineButton.disabled = false;
           window.location.reload();
@@ -817,7 +1153,162 @@
   if (refineLockForm && refineInput && refineLockInput) {
     refineLockForm.addEventListener("submit", function () {
       refineLockInput.value = (refineInput.value || "").trim();
+      if (refineLockSeedText) {
+        var latest = latestRefineBox ? (latestRefineBox.value || "").trim() : "";
+        refineLockSeedText.value = latest || (refineInput.value || "").trim();
+      }
     });
+  }
+
+  if (defineLockForm && defineLockInput && latestBox) {
+    defineLockForm.addEventListener("submit", function () {
+      defineLockInput.value = (latestBox.value || "").trim();
+    });
+  }
+
+  if (refineStructuredForm) {
+    refineStructuredForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (refineStructuredButton) refineStructuredButton.disabled = true;
+      if (refineStructuredStatus) refineStructuredStatus.textContent = "Saving...";
+      var payload = { action: "save_refine_structured" };
+      var fields = refineStructuredForm.querySelectorAll("input[name], textarea[name]");
+      fields.forEach(function (field) {
+        var name = field.getAttribute("name") || "";
+        if (!name || name === "csrfmiddlewaretoken" || name === "action") return;
+        payload[name] = field.value || "";
+      });
+      postAction(
+        payload,
+        function (data) {
+          var refined = (data.refine_text || "").trim();
+          if (latestRefineBox && refined) latestRefineBox.value = refined;
+          if (refineStructuredStatus) refineStructuredStatus.textContent = "Saved.";
+          if (refineStructuredButton) refineStructuredButton.disabled = false;
+          setTimeout(function () {
+            window.location.reload();
+          }, 500);
+        },
+        function (err) {
+          if (refineStructuredStatus) refineStructuredStatus.textContent = err;
+          if (refineStructuredButton) refineStructuredButton.disabled = false;
+        }
+      );
+    });
+  }
+
+  if (stageStructuredForm) {
+    stageStructuredForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (stageStructuredButton) stageStructuredButton.disabled = true;
+      if (stageStructuredStatus) stageStructuredStatus.textContent = "Saving...";
+      var payload = { action: "save_active_stage_structured" };
+      var fields = stageStructuredForm.querySelectorAll("input[name], textarea[name]");
+      fields.forEach(function (field) {
+        var name = field.getAttribute("name") || "";
+        if (!name || name === "csrfmiddlewaretoken" || name === "action") return;
+        payload[name] = field.value || "";
+      });
+      postAction(
+        payload,
+        function (data) {
+          var latest = (data.latest_text || "").trim();
+          if (latestBox && latest) latestBox.value = latest;
+          if (stageStructuredStatus) stageStructuredStatus.textContent = "Saved.";
+          if (stageStructuredButton) stageStructuredButton.disabled = false;
+          setTimeout(function () {
+            window.location.reload();
+          }, 500);
+        },
+        function (err) {
+          if (stageStructuredStatus) stageStructuredStatus.textContent = err;
+          if (stageStructuredButton) stageStructuredButton.disabled = false;
+        }
+      );
+    });
+  }
+
+  if (contractPhaseSelect && contractTextBox) {
+    contractEffectiveMap = parseJsonScript("contract-effective-map");
+    contractDefaultMap = parseJsonScript("contract-default-map");
+    loadContractPhase(contractPhaseSelect.value);
+
+    contractPhaseSelect.addEventListener("change", function () {
+      loadContractPhase(contractPhaseSelect.value);
+    });
+
+    if (contractEditBtn) {
+      contractEditBtn.addEventListener("click", function () {
+        setContractEditing(true);
+        contractTextBox.focus();
+        if (contractSaveStatus) contractSaveStatus.textContent = "Editing...";
+      });
+    }
+
+    if (contractCancelBtn) {
+      contractCancelBtn.addEventListener("click", function () {
+        contractTextBox.value = contractSnapshot;
+        if (contractSaveStatus) contractSaveStatus.textContent = "Changes discarded.";
+        setContractEditing(false);
+      });
+    }
+
+    contractTextBox.addEventListener("input", function () {
+      if (!contractEditing) return;
+      contractDirty = true;
+      if (contractSaveStatus) contractSaveStatus.textContent = "Unsaved changes.";
+    });
+
+    contractTextBox.addEventListener("blur", function () {
+      var phase = String((contractPhaseSelect && contractPhaseSelect.value) || "").trim().toUpperCase();
+      if (!contractEditing || !contractDirty || !phase) return;
+      if (contractSaveStatus) contractSaveStatus.textContent = "Saving...";
+      postAction(
+        {
+          action: "save_phase_contract_text",
+          contract_phase: phase,
+          contract_text: String(contractTextBox.value || "")
+        },
+        function (data) {
+          var effective = String((data && data.effective_text) || "");
+          contractEffectiveMap[phase] = effective;
+          contractTextBox.value = effective;
+          contractSnapshot = effective;
+          contractDirty = false;
+          if (contractSaveStatus) contractSaveStatus.textContent = "Autosaved.";
+          setContractEditing(false);
+        },
+        function (err) {
+          if (contractSaveStatus) contractSaveStatus.textContent = err;
+        }
+      );
+    });
+
+    if (contractDefaultBtn) {
+      contractDefaultBtn.addEventListener("click", function () {
+        var phase = String((contractPhaseSelect && contractPhaseSelect.value) || "").trim().toUpperCase();
+        if (!phase) return;
+        if (contractSaveStatus) contractSaveStatus.textContent = "Reverting to default...";
+        postAction(
+          {
+            action: "reset_phase_contract_text",
+            contract_phase: phase
+          },
+          function (data) {
+            var effective = String((data && data.effective_text) || contractDefaultMap[phase] || "");
+            contractEffectiveMap[phase] = effective;
+            contractTextBox.value = effective;
+            contractSnapshot = effective;
+            contractDirty = false;
+            if (contractSaveStatus) contractSaveStatus.textContent = "Default restored.";
+            setContractEditing(false);
+          },
+          function (err) {
+            if (contractSaveStatus) contractSaveStatus.textContent = err;
+          }
+        );
+      });
+    }
   }
 
   function initProjectFilesSort() {
@@ -897,8 +1388,70 @@
     });
   }
 
+  function initProjectFileActions() {
+    var openLinks = document.querySelectorAll(".js-file-open");
+    openLinks.forEach(function (link) {
+      link.addEventListener("click", function (event) {
+        event.preventDefault();
+        var href = link.getAttribute("href") || "";
+        if (!href) return;
+        window.open(href, "_blank", "noopener");
+      });
+    });
+
+    var downloadLinks = document.querySelectorAll(".js-file-download");
+    downloadLinks.forEach(function (link) {
+      link.addEventListener("click", function (event) {
+        event.preventDefault();
+        var href = link.getAttribute("href") || "";
+        if (!href) return;
+        fetch(href, { method: "GET", credentials: "same-origin" })
+          .then(function (resp) {
+            if (!resp.ok) throw new Error("Download failed");
+            var dispo = resp.headers.get("content-disposition") || "";
+            var match = dispo.match(/filename=\"?([^\";]+)\"?/i);
+            var fileName = match && match[1] ? match[1] : "download.bin";
+            return resp.blob().then(function (blob) {
+              return { blob: blob, fileName: fileName };
+            });
+          })
+          .then(function (out) {
+            var url = URL.createObjectURL(out.blob);
+            var a = document.createElement("a");
+            a.href = url;
+            a.download = out.fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          })
+          .catch(function () {});
+      });
+    });
+
+    var actionForms = document.querySelectorAll(".js-file-action-form");
+    actionForms.forEach(function (form) {
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        var action = form.getAttribute("data-file-action") || "";
+        var docIdInput = form.querySelector("input[name='doc_id']");
+        var docId = docIdInput ? (docIdInput.value || "") : "";
+        if (!action || !docId) return;
+        postAction(
+          { action: action, doc_id: docId },
+          function () {
+            var row = form.closest("[data-file-doc-id]");
+            if (row) row.remove();
+          },
+          function () {}
+        );
+      });
+    });
+  }
+
   applyStoredDrawerStates();
   initProjectFilesSort();
+  initProjectFileActions();
 })();
 </script>
 {% endblock %}

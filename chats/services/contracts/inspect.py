@@ -239,17 +239,36 @@ def get_effective_text(key: str, ctx: Any | None = None) -> str:
     return raw
 
 
+def _project_id_from_ctx(ctx: Any | None) -> int | None:
+    if ctx is None:
+        return None
+    project = getattr(ctx, "project", None)
+    project_id = int(getattr(project, "id", 0) or 0)
+    if project_id > 0:
+        return project_id
+    work_item = getattr(ctx, "work_item", None)
+    project_id = int(getattr(work_item, "project_id", 0) or 0)
+    if project_id > 0:
+        return project_id
+    chat = getattr(ctx, "chat", None)
+    project_id = int(getattr(chat, "project_id", 0) or 0)
+    if project_id > 0:
+        return project_id
+    return None
+
+
 def apply_override_for_block(key: str, raw_text: str, *, user=None, ctx: Any | None = None) -> tuple[str, dict]:
     scoped_key = map_block_key_to_contract_text_key(key, ctx=ctx)
     if scoped_key:
-        resolved = resolve_contract_text(user, scoped_key)
+        resolved = resolve_contract_text(user, scoped_key, project_id=_project_id_from_ctx(ctx))
         effective = str(resolved.get("effective_text") or "")
-        if str(resolved.get("effective_source") or "") == "USER" or effective:
+        effective_source = str(resolved.get("effective_source") or "")
+        if effective_source in {"USER", "PROJECT", "PROJECT_USER"} or effective:
             return effective, {
                 "applied": True,
                 "reason": "contract_text",
                 "contract_text_key": scoped_key,
-                "effective_source": resolved.get("effective_source") or "",
+                "effective_source": effective_source,
             }
 
     override = get_override(key)

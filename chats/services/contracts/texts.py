@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.db.models import Q
+
 from chats.models import ContractText
 
 
@@ -98,41 +100,108 @@ def map_block_key_to_contract_text_key(block_key: str, *, ctx: Any | None = None
     return _BLOCK_TO_TEXT_KEY.get(key)
 
 
-def _active_row(*, key: str, scope_type: str, scope_id: int | None) -> ContractText | None:
+def _active_row(
+    *,
+    key: str,
+    scope_type: str,
+    scope_id: int | None,
+    scope_project_id: int | None = None,
+    scope_user_id: int | None = None,
+) -> ContractText | None:
     qs = ContractText.objects.filter(
         key=key,
         scope_type=scope_type,
-        scope_id=scope_id,
         status=ContractText.Status.ACTIVE,
-    ).order_by("-updated_at", "-id")
+    )
+    if scope_type == ContractText.ScopeType.GLOBAL_DEFAULT:
+        qs = qs.filter(scope_id__isnull=True, scope_project__isnull=True, scope_user__isnull=True)
+    elif scope_type == ContractText.ScopeType.USER:
+        candidate_user_id = int(scope_user_id or scope_id or 0)
+        if candidate_user_id > 0:
+            qs = qs.filter(Q(scope_user_id=candidate_user_id) | Q(scope_id=candidate_user_id))
+        else:
+            qs = qs.filter(scope_user__isnull=True, scope_id__isnull=True)
+    elif scope_type == ContractText.ScopeType.PROJECT:
+        qs = qs.filter(scope_project_id=scope_project_id)
+    elif scope_type == ContractText.ScopeType.PROJECT_USER:
+        qs = qs.filter(scope_project_id=scope_project_id, scope_user_id=scope_user_id)
+    else:
+        qs = qs.filter(scope_id=scope_id)
+    qs = qs.order_by("-updated_at", "-id")
     return qs.first()
 
 
-def resolve_contract_text(user, key: str) -> dict:
+def resolve_contract_text(user, key: str, *, project_id: int | None = None) -> dict:
     contract_key = normalise_contract_text_key(key)
     user_id = int(getattr(user, "id", 0) or 0)
+    project_id_int = int(project_id or 0)
 
     default_row = _active_row(
         key=contract_key,
         scope_type=ContractText.ScopeType.GLOBAL_DEFAULT,
         scope_id=None,
     )
+    project_row = None
+    if project_id_int > 0:
+        project_row = _active_row(
+            key=contract_key,
+            scope_type=ContractText.ScopeType.PROJECT,
+            scope_id=None,
+            scope_project_id=project_id_int,
+        )
+
     user_row = None
     if user_id > 0:
         user_row = _active_row(
             key=contract_key,
             scope_type=ContractText.ScopeType.USER,
             scope_id=user_id,
+            scope_user_id=user_id,
+        )
+    project_user_row = None
+    if project_id_int > 0 and user_id > 0:
+        project_user_row = _active_row(
+            key=contract_key,
+            scope_type=ContractText.ScopeType.PROJECT_USER,
+            scope_id=None,
+            scope_project_id=project_id_int,
+            scope_user_id=user_id,
         )
 
     default_text = str(default_row.text or "") if default_row is not None else ""
+    project_text = str(project_row.text or "") if project_row is not None else None
     user_text = str(user_row.text or "") if user_row is not None else None
+    project_user_text = str(project_user_row.text or "") if project_user_row is not None else None
+
+    if project_user_row is not None:
+        return {
+            "key": contract_key,
+            "default_text": default_text,
+            "project_text": project_text,
+            "user_text": user_text,
+            "project_user_text": project_user_text,
+            "effective_text": str(project_user_row.text or ""),
+            "effective_source": "PROJECT_USER",
+        }
+
+    if project_row is not None:
+        return {
+            "key": contract_key,
+            "default_text": default_text,
+            "project_text": project_text,
+            "user_text": user_text,
+            "project_user_text": project_user_text,
+            "effective_text": str(project_row.text or ""),
+            "effective_source": "PROJECT",
+        }
 
     if user_row is not None:
         return {
             "key": contract_key,
             "default_text": default_text,
+            "project_text": project_text,
             "user_text": user_text,
+            "project_user_text": project_user_text,
             "effective_text": str(user_row.text or ""),
             "effective_source": "USER",
         }
@@ -140,7 +209,9 @@ def resolve_contract_text(user, key: str) -> dict:
     return {
         "key": contract_key,
         "default_text": default_text,
+        "project_text": project_text,
         "user_text": None,
+        "project_user_text": project_user_text,
         "effective_text": default_text,
         "effective_source": "DEFAULT",
     }

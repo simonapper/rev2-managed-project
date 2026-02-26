@@ -334,6 +334,8 @@ class ContractText(models.Model):
     class ScopeType(models.TextChoices):
         GLOBAL_DEFAULT = "GLOBAL_DEFAULT", "Global default"
         USER = "USER", "User"
+        PROJECT = "PROJECT", "Project"
+        PROJECT_USER = "PROJECT_USER", "Project + user"
 
     class Status(models.TextChoices):
         ACTIVE = "ACTIVE", "Active"
@@ -342,6 +344,20 @@ class ContractText(models.Model):
     key = models.CharField(max_length=120)
     scope_type = models.CharField(max_length=20, choices=ScopeType.choices)
     scope_id = models.IntegerField(null=True, blank=True)
+    scope_project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="contract_text_rows",
+    )
+    scope_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="contract_text_scope_rows",
+    )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     text = models.TextField(blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
@@ -357,26 +373,53 @@ class ContractText(models.Model):
         indexes = [
             models.Index(fields=["key", "scope_type", "scope_id"]),
             models.Index(fields=["scope_type", "scope_id", "status"]),
+            models.Index(fields=["key", "scope_type", "scope_project", "scope_user"]),
+            models.Index(fields=["scope_type", "scope_project", "scope_user", "status"]),
         ]
         constraints = [
             models.CheckConstraint(
                 condition=(
-                    (Q(scope_type="GLOBAL_DEFAULT") & Q(scope_id__isnull=True))
-                    | (Q(scope_type="USER") & Q(scope_id__isnull=False))
+                    (Q(scope_type="GLOBAL_DEFAULT") & Q(scope_id__isnull=True) & Q(scope_project__isnull=True) & Q(scope_user__isnull=True))
+                    | (Q(scope_type="USER") & Q(scope_project__isnull=True) & (Q(scope_user__isnull=False) | Q(scope_id__isnull=False)))
+                    | (Q(scope_type="PROJECT") & Q(scope_project__isnull=False) & Q(scope_user__isnull=True))
+                    | (Q(scope_type="PROJECT_USER") & Q(scope_project__isnull=False) & Q(scope_user__isnull=False))
                 ),
                 name="ck_contracttext_scope_shape",
             ),
             models.UniqueConstraint(
-                fields=["key", "scope_type", "scope_id"],
-                condition=Q(status="ACTIVE", scope_id__isnull=False),
-                name="uq_contracttext_active_scoped",
+                fields=["key", "scope_type"],
+                condition=Q(status="ACTIVE", scope_type="GLOBAL_DEFAULT"),
+                name="uq_contracttext_active_global_default",
             ),
             models.UniqueConstraint(
-                fields=["key", "scope_type"],
-                condition=Q(status="ACTIVE", scope_id__isnull=True),
-                name="uq_contracttext_active_global",
+                fields=["key", "scope_type", "scope_user"],
+                condition=Q(status="ACTIVE", scope_type="USER", scope_user__isnull=False),
+                name="uq_contracttext_active_user",
+            ),
+            models.UniqueConstraint(
+                fields=["key", "scope_type", "scope_project"],
+                condition=Q(status="ACTIVE", scope_type="PROJECT", scope_project__isnull=False),
+                name="uq_contracttext_active_project",
+            ),
+            models.UniqueConstraint(
+                fields=["key", "scope_type", "scope_project", "scope_user"],
+                condition=Q(status="ACTIVE", scope_type="PROJECT_USER", scope_project__isnull=False, scope_user__isnull=False),
+                name="uq_contracttext_active_project_user",
             ),
         ]
 
+    def save(self, *args, **kwargs):
+        # Keep legacy scope_id in sync for USER scope during migration period.
+        if str(self.scope_type or "") == self.ScopeType.USER:
+            if self.scope_user_id and self.scope_id is None:
+                self.scope_id = int(self.scope_user_id)
+            elif self.scope_id and self.scope_user_id is None:
+                self.scope_user_id = int(self.scope_id)
+        elif str(self.scope_type or "") == self.ScopeType.GLOBAL_DEFAULT:
+            self.scope_id = None
+            self.scope_project_id = None
+            self.scope_user_id = None
+        return super().save(*args, **kwargs)
+
     def __str__(self) -> str:
-        return f"{self.scope_type}:{self.scope_id}:{self.key}:{self.status}"
+        return f"{self.scope_type}:{self.scope_project_id}:{self.scope_user_id}:{self.scope_id}:{self.key}:{self.status}"

@@ -62,3 +62,8 @@ class DeraxCompilePersistTests(TestCase):
         self.assertIn("Parked A", md)
         doc = persist_compiled_cko(self.work_item, user=self.user)
         self.assertTrue(ProjectDocument.objects.filter(id=doc.id, project=self.project).exists())
+        self.assertTrue(str(doc.original_name or "").lower().endswith(".docx"))
+        self.assertEqual(
+            str(doc.content_type or ""),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )

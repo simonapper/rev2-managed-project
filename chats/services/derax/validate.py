@@ -9,6 +9,52 @@ from chats.services.derax.phase_rules import check_required_nonempty
 from chats.services.derax.schema import empty_payload, validate_structural
 
 
+def _stringify(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _normalise_artefacts(payload: dict) -> dict:
+    out = dict(payload or {})
+    if "artefacts" not in out:
+        return out
+    artefacts = dict(out.get("artefacts") or {})
+
+    proposed_rows = []
+    for item in list(artefacts.get("proposed") or []):
+        if isinstance(item, dict):
+            proposed_rows.append(
+                {
+                    "kind": _stringify(item.get("kind")),
+                    "title": _stringify(item.get("title")),
+                    "notes": _stringify(item.get("notes")),
+                }
+            )
+            continue
+        text = _stringify(item)
+        if text:
+            proposed_rows.append({"kind": "", "title": text, "notes": ""})
+
+    generated_rows = []
+    for item in list(artefacts.get("generated") or []):
+        if isinstance(item, dict):
+            generated_rows.append(
+                {
+                    "artefact_id": _stringify(item.get("artefact_id")),
+                    "kind": _stringify(item.get("kind")),
+                    "title": _stringify(item.get("title")),
+                }
+            )
+            continue
+        text = _stringify(item)
+        if text:
+            generated_rows.append({"artefact_id": "", "kind": "", "title": text})
+
+    artefacts["proposed"] = proposed_rows
+    artefacts["generated"] = generated_rows
+    out["artefacts"] = artefacts
+    return out
+
+
 def extract_strict_json(text: str) -> tuple[dict | None, list[str]]:
     raw = str(text or "")
     stripped = raw.strip()
@@ -31,6 +77,7 @@ def validate_derax_text(text: str) -> tuple[bool, dict | None, list[str]]:
         return False, None, parse_errors
 
     assert payload is not None
+    payload = _normalise_artefacts(payload)
     errors: list[str] = []
 
     schema_ok, schema_errors = validate_structural(payload)

@@ -4,6 +4,10 @@
     <strong>{{ selected.key }}</strong> - {{ selected.label }}
   </div>
   <div class="card-body">
+    <div class="mb-3 d-flex gap-2 align-items-center flex-wrap">
+      <span class="badge text-bg-secondary">Editing scope: {{ selected.editable_scope|default:"USER" }}</span>
+      <span class="badge text-bg-info">Effective source: {{ selected.effective_source|default:"DEFAULT" }}</span>
+    </div>
     <div class="mb-3 row g-3">
       <div class="{% if selected.preset_options %}col-12 col-lg-6{% else %}col-12{% endif %}">
         <label class="form-label"><strong>Default (read-only)</strong></label>
@@ -61,15 +65,15 @@
       {% csrf_token %}
       <input type="hidden" name="action" value="save_user">
       <input type="hidden" name="key" value="{{ selected.key }}">
-      <label class="form-label"><strong>User override</strong></label>
+      <label class="form-label"><strong>{% if selected_project %}Project override{% else %}User override{% endif %}</strong></label>
       <textarea class="form-control mb-2 js-user-override-text" name="user_text" rows="6">{% if selected.user_text is not None %}{{ selected.user_text }}{% endif %}</textarea>
-      <button class="btn btn-sm btn-primary" type="submit">Save user override</button>
+      <button class="btn btn-sm btn-primary" type="submit">{% if selected_project %}Save project override{% else %}Save user override{% endif %}</button>
     </form>
     <form method="post" class="mb-3">
       {% csrf_token %}
       <input type="hidden" name="action" value="reset_user">
       <input type="hidden" name="key" value="{{ selected.key }}">
-      <button class="btn btn-sm btn-outline-success" type="submit">Reset to default</button>
+      <button class="btn btn-sm btn-outline-success" type="submit">{% if selected_project %}Reset project override{% else %}Reset to default{% endif %}</button>
     </form>
     <form method="post" class="mb-3 js-contract-preview-form">
       {% csrf_token %}

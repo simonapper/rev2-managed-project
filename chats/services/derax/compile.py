@@ -9,6 +9,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
 from django.utils import timezone
 
+from chats.services.derax.generate import build_docx_for_markdown
 from projects.models import Project, ProjectDocument, WorkItem
 
 
@@ -206,28 +207,29 @@ def load_derax_chat_payloads(*, project_id: int, chat_id: int) -> list[dict]:
     return out
 
 
-def _persist_markdown_doc(
+def _persist_docx_doc(
     *,
     project: Project,
     chat_id: int,
     title: str,
-    content: str,
+    markdown: str,
     user_id: int | None = None,
 ) -> ProjectDocument:
     user_model = get_user_model()
     user = user_model.objects.filter(id=int(user_id or 0)).first() if user_id else None
     if user is None:
         user = project.owner
-    rel_name = f"derax/{int(chat_id)}/compiled_cko.md"
+    body = build_docx_for_markdown(markdown)
+    rel_name = f"derax/{int(chat_id)}/compiled_cko.docx"
     doc = ProjectDocument(
         project=project,
         title=(title or "DERAX Compiled CKO")[:200],
         original_name=rel_name[:255],
-        content_type="text/markdown",
-        size_bytes=len(content.encode("utf-8")),
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        size_bytes=len(body),
         uploaded_by=user,
     )
-    doc.file.save(rel_name, ContentFile(content.encode("utf-8")), save=False)
+    doc.file.save(rel_name, ContentFile(body), save=False)
     doc.save()
     return doc
 
@@ -238,7 +240,7 @@ def compile_derax_chat_run_to_cko_artefact(*, project_id: int, chat_id: int, tit
         raise ValueError("Project not found.")
     payloads = load_derax_chat_payloads(project_id=int(project_id), chat_id=int(chat_id))
     markdown = compile_derax_run_to_cko_markdown(payloads)
-    doc = _persist_markdown_doc(project=project, chat_id=int(chat_id), title=title, content=markdown)
+    doc = _persist_docx_doc(project=project, chat_id=int(chat_id), title=title, markdown=markdown)
     return str(doc.id)
 
 
@@ -263,11 +265,11 @@ def compile_derax_to_cko(work_item: WorkItem) -> str:
 # Backward-compatible helper used by existing code/tests.
 def persist_compiled_cko(work_item: WorkItem, *, user) -> ProjectDocument:
     markdown = compile_derax_to_cko(work_item)
-    doc = _persist_markdown_doc(
+    doc = _persist_docx_doc(
         project=work_item.project,
         chat_id=int(work_item.id),
         title=f"CKO {int(work_item.id)}",
-        content=markdown,
+        markdown=markdown,
         user_id=getattr(user, "id", None),
     )
     runs = list(getattr(work_item, "derax_runs", []) or [])

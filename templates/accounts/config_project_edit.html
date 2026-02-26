@@ -23,8 +23,8 @@
         <div class="mb-3">
             <label class="form-label">Workflow mode</label>
             <select name="workflow_mode" class="form-select">
-                <option value="PDE" {% if project.workflow_mode == "PDE" %}selected{% endif %}>PDE</option>
-                <option value="DERAX_WORK" {% if project.workflow_mode == "DERAX_WORK" %}selected{% endif %}>DERAX work</option>
+                <option value="PDE" {% if project.workflow_mode == "PDE" %}selected{% endif %}>Managed</option>
+                <option value="DERAX_WORK" {% if project.workflow_mode == "DERAX_WORK" %}selected{% endif %}>DERAX</option>
             </select>
         </div>
         <button type="submit" class="btn btn-primary">Save</button>

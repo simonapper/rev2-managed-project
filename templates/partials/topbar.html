@@ -142,10 +142,12 @@
           <div class="rw-status-label">&nbsp;</div>
           <div class="rw-status-value">
             {% if rw_projects and rw_projects.active %}
-              {% if rw_projects.active.kind == "SANDBOX" %}
+              {% if rw_projects.active.workflow_mode == "DERAX_WORK" %}
+                <span class="text-primary fw-semibold" style="font-size:.7rem;" title="DERAX">DERAX</span>
+              {% elif rw_projects.active.kind == "SANDBOX" %}
                 <span class="text-warning fw-semibold" style="font-size:.7rem;" title="Sandbox">Sandbox</span>
               {% else %}
-                <span class="text-success fw-semibold" style="font-size:.7rem;" title="Controlled">Controlled</span>
+                <span class="text-success fw-semibold" style="font-size:.7rem;" title="Managed">Managed</span>
               {% endif %}
               <div class="rw-status-value" title="{{ rw_projects.active.name }}">
                 {{ rw_projects.active.name }}

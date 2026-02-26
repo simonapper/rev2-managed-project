@@ -31,19 +31,38 @@
     }
   </style>
 
+  <form method="get" class="d-flex gap-2 align-items-center mb-3 flex-wrap">
+    <label for="contracts-project-select" class="form-label mb-0 small text-muted">Scope</label>
+    <select id="contracts-project-select" name="project_id" class="form-select form-select-sm" style="max-width: 360px;" onchange="this.form.submit()">
+      <option value="">Personal override (all projects)</option>
+      {% for p in project_options %}
+      <option value="{{ p.id }}" {% if selected_project and selected_project.id == p.id %}selected{% endif %}>Project default: {{ p.name }}</option>
+      {% endfor %}
+    </select>
+    {% if selected_key %}<input type="hidden" name="key" value="{{ selected_key }}">{% endif %}
+    {% if show_overridden %}<input type="hidden" name="show_overridden" value="1">{% endif %}
+    <noscript><button class="btn btn-sm btn-outline-primary" type="submit">Apply</button></noscript>
+  </form>
+
   <div class="d-flex gap-2 align-items-center mb-3 flex-wrap">
-    <form method="post" action="{% url 'accounts:system_contract_pack_export' %}" id="export-selected-form" class="d-flex gap-2 align-items-center">
+    <form method="post" action="{% url 'accounts:system_contract_pack_export' %}{% if selected_project %}?project_id={{ selected_project.id }}{% endif %}" id="export-selected-form" class="d-flex gap-2 align-items-center">
       {% csrf_token %}
-      <button class="btn btn-sm btn-outline-primary" type="submit">Export selected</button>
+      {% if selected_project %}
+      <input type="hidden" name="project_id" value="{{ selected_project.id }}">
+      {% endif %}
+      <button class="btn btn-sm btn-outline-primary" type="submit">{% if selected_project %}Export project pack{% else %}Export selected{% endif %}</button>
       <button class="btn btn-sm btn-outline-secondary" type="button" onclick="toggleExportKeys(true)">Select all</button>
       <button class="btn btn-sm btn-outline-secondary" type="button" onclick="toggleExportKeys(false)">Clear</button>
     </form>
     <form method="post" action="{% url 'accounts:system_contract_pack_import' %}" enctype="multipart/form-data" class="d-flex gap-2 align-items-center">
       {% csrf_token %}
+      {% if selected_project %}
+      <input type="hidden" name="project_id" value="{{ selected_project.id }}">
+      {% endif %}
       <input id="contract-pack-file" class="form-control form-control-sm" type="file" name="contract_pack" accept="application/json,.json">
-      <button class="btn btn-sm btn-outline-secondary text-nowrap" type="submit">Import overrides</button>
+      <button class="btn btn-sm btn-outline-secondary text-nowrap" type="submit">{% if selected_project %}Import project pack{% else %}Import overrides{% endif %}</button>
     </form>
-    <a class="btn btn-sm {% if show_overridden %}btn-primary{% else %}btn-outline-primary{% endif %}" href="?show_overridden={% if show_overridden %}0{% else %}1{% endif %}">
+    <a class="btn btn-sm {% if show_overridden %}btn-primary{% else %}btn-outline-primary{% endif %}" href="?show_overridden={% if show_overridden %}0{% else %}1{% endif %}{% if selected_key %}&key={{ selected_key|urlencode }}{% endif %}{% if selected_project %}&project_id={{ selected_project.id }}{% endif %}">
       {% if show_overridden %}Show all{% else %}Show only overridden{% endif %}
     </a>
   </div>
@@ -55,7 +74,7 @@
           <th>Export</th>
           <th>Contract</th>
           <th>Flows</th>
-          <th>User override</th>
+          <th>{% if selected_project %}Project override{% else %}User override{% endif %}</th>
         </tr>
       </thead>
       <tbody>
@@ -74,7 +93,7 @@
                    {% if row.has_user_override %}checked{% endif %}>
           </td>
           <td>
-            <a class="param-link" href="?key={{ row.key|urlencode }}{% if show_overridden %}&show_overridden=1{% endif %}">
+            <a class="param-link" href="?key={{ row.key|urlencode }}{% if show_overridden %}&show_overridden=1{% endif %}{% if selected_project %}&project_id={{ selected_project.id }}{% endif %}">
               {{ row.key }}
             </a>
           </td>

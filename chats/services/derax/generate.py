@@ -21,6 +21,25 @@ _SUPPORTED_KINDS = {
 }
 
 _DOCX_OPTIONAL_KINDS = {"workbook", "lesson_plan"}
+_XLSX_OPTIONAL_KINDS = {"run_sheet", "checklist", "workbook"}
+_PPTX_OPTIONAL_KINDS = {"slides_outline"}
+
+
+def execute_export_capabilities() -> dict[str, bool]:
+    caps = {"docx": True, "xlsx": True, "pptx": True}
+    try:
+        import docx  # type: ignore  # noqa: F401
+    except Exception:
+        caps["docx"] = False
+    try:
+        import openpyxl  # type: ignore  # noqa: F401
+    except Exception:
+        caps["xlsx"] = False
+    try:
+        import pptx  # type: ignore  # noqa: F401
+    except Exception:
+        caps["pptx"] = False
+    return caps
 
 
 def _safe_stem(value: str) -> str:
@@ -332,6 +351,92 @@ def build_docx_for_markdown(md_text: str) -> bytes:
     return output.getvalue()
 
 
+def build_xlsx_for_kind(kind: str, payload: dict, title: str, notes: str) -> bytes:
+    try:
+        from openpyxl import Workbook  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(str(exc))
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Plan"
+    ws.append(["Field", "Value"])
+
+    intent = dict(payload.get("intent") or {})
+    destination = str(intent.get("destination") or "").strip() or "[TBD]"
+    ws.append(["Title", str(title or "").strip() or "[TBD]"])
+    ws.append(["Kind", str(kind or "").strip() or "[TBD]"])
+    ws.append(["Destination", destination])
+    if str(notes or "").strip():
+        ws.append(["Notes", str(notes).strip()])
+
+    success = _list_str(intent.get("success_criteria"))
+    constraints = _list_str(intent.get("constraints"))
+    non_goals = _list_str(intent.get("non_goals"))
+    open_questions = _list_str(intent.get("open_questions"))
+
+    ws2 = wb.create_sheet("Checklist")
+    ws2.append(["Group", "Item", "Status"])
+    for item in success or ["[TBD]"]:
+        ws2.append(["Success criteria", item, "TODO"])
+    for item in constraints or ["[TBD]"]:
+        ws2.append(["Constraints", item, "TODO"])
+    for item in non_goals or ["[TBD]"]:
+        ws2.append(["Non-goals", item, "TODO"])
+    for item in open_questions or ["[TBD]"]:
+        ws2.append(["Open questions", item, "TODO"])
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+def build_pptx_for_kind(kind: str, payload: dict, title: str, notes: str) -> bytes:
+    try:
+        from pptx import Presentation  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(str(exc))
+
+    intent = dict(payload.get("intent") or {})
+    destination = str(intent.get("destination") or "").strip() or "[TBD]"
+    success = _list_str(intent.get("success_criteria")) or ["[TBD]"]
+    constraints = _list_str(intent.get("constraints")) or ["[TBD]"]
+    non_goals = _list_str(intent.get("non_goals")) or ["[TBD]"]
+    open_questions = _list_str(intent.get("open_questions")) or ["[TBD]"]
+
+    prs = Presentation()
+
+    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    slide.shapes.title.text = str(title or "").strip() or "EXECUTE Output"
+    slide.placeholders[1].text = destination
+
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text = "Success criteria"
+    slide.placeholders[1].text = "\n".join([f"- {item}" for item in success[:8]])
+
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text = "Constraints and non-goals"
+    slide.placeholders[1].text = (
+        "Constraints:\n"
+        + "\n".join([f"- {item}" for item in constraints[:5]])
+        + "\n\nNon-goals:\n"
+        + "\n".join([f"- {item}" for item in non_goals[:5]])
+    )
+
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text = "Open questions"
+    slide.placeholders[1].text = "\n".join([f"- {item}" for item in open_questions[:8]])
+
+    if str(notes or "").strip():
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text = "Notes"
+        slide.placeholders[1].text = str(notes).strip()
+
+    output = io.BytesIO()
+    prs.save(output)
+    return output.getvalue()
+
+
 def generate_artefacts_from_execute_payload(
     *,
     project_id: int,
@@ -351,11 +456,10 @@ def generate_artefacts_from_execute_payload(
 
     results_generated: list[dict] = []
     warnings: list[str] = list(normalise_warnings)
-    docx_available = True
-    try:
-        import docx  # type: ignore  # noqa: F401
-    except Exception:
-        docx_available = False
+    caps = execute_export_capabilities()
+    docx_available = bool(caps.get("docx"))
+    xlsx_available = bool(caps.get("xlsx"))
+    pptx_available = bool(caps.get("pptx"))
 
     for row in proposed:
         if not isinstance(row, dict):
@@ -406,6 +510,54 @@ def generate_artefacts_from_execute_payload(
             docx_entry = {"artefact_id": str(docx_doc.id), "kind": kind, "title": f"{title} (docx)"}
             generated_rows.append(docx_entry)
             results_generated.append(docx_entry)
+
+        if kind in _XLSX_OPTIONAL_KINDS:
+            if not xlsx_available:
+                warnings.append(f"openpyxl not installed; skipped xlsx for {kind}")
+            else:
+                try:
+                    xlsx_bytes = build_xlsx_for_kind(kind, payload, title, notes)
+                except Exception:
+                    warnings.append(f"xlsx generation failed for {kind}; markdown created")
+                else:
+                    xlsx_doc = _persist_execute_artefact(
+                        project=project,
+                        chat_id=chat_id,
+                        turn_id=turn_id,
+                        kind=kind,
+                        title=title,
+                        ext="xlsx",
+                        body=xlsx_bytes,
+                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        user_id=user_id,
+                    )
+                    xlsx_entry = {"artefact_id": str(xlsx_doc.id), "kind": kind, "title": f"{title} (xlsx)"}
+                    generated_rows.append(xlsx_entry)
+                    results_generated.append(xlsx_entry)
+
+        if kind in _PPTX_OPTIONAL_KINDS:
+            if not pptx_available:
+                warnings.append(f"python-pptx not installed; skipped pptx for {kind}")
+            else:
+                try:
+                    pptx_bytes = build_pptx_for_kind(kind, payload, title, notes)
+                except Exception:
+                    warnings.append(f"pptx generation failed for {kind}; markdown created")
+                else:
+                    pptx_doc = _persist_execute_artefact(
+                        project=project,
+                        chat_id=chat_id,
+                        turn_id=turn_id,
+                        kind=kind,
+                        title=title,
+                        ext="pptx",
+                        body=pptx_bytes,
+                        content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                        user_id=user_id,
+                    )
+                    pptx_entry = {"artefact_id": str(pptx_doc.id), "kind": kind, "title": f"{title} (pptx)"}
+                    generated_rows.append(pptx_entry)
+                    results_generated.append(pptx_entry)
 
     artefacts["proposed"] = proposed
     artefacts["generated"] = generated_rows

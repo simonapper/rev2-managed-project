@@ -8,6 +8,7 @@ from django.core.files.base import ContentFile
 
 from projects.models import Project, WorkItem
 from projects.models import ProjectDocument
+from chats.models import ContractText
 
 class DeraxModeTests(TestCase):
     def setUp(self):
@@ -47,6 +48,27 @@ class DeraxModeTests(TestCase):
 
         response = self.client.get(reverse("accounts:project_home", args=[project.id]))
         self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            reverse("projects:derax_project_home", args=[project.id]),
+        )
+
+    def test_project_create_can_select_derax_workflow(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            reverse("accounts:project_create"),
+            {
+                "name": "DERAX Created Project",
+                "purpose": "Create directly in DERAX mode",
+                "project_flow": "DERAX",
+                "kind": Project.Kind.STANDARD,
+                "primary_type": Project.PrimaryType.DELIVERY,
+                "mode": Project.Mode.PLAN,
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        project = Project.objects.get(name="DERAX Created Project")
+        self.assertEqual(project.workflow_mode, Project.WorkflowMode.DERAX_WORK)
         self.assertEqual(
             response["Location"],
             reverse("projects:derax_project_home", args=[project.id]),
@@ -206,6 +228,124 @@ class DeraxModeTests(TestCase):
         self.assertIsNotNone(work_item)
         self.assertEqual(work_item.intent_raw, "Autosaved end in mind text.")
 
+    def test_phase_contract_save_ajax_creates_project_user_override(self):
+        project = Project.objects.create(
+            name="DERAX Contract Save Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+
+        response = self.client.post(
+            url,
+            {
+                "action": "save_phase_contract_text",
+                "contract_phase": "DEFINE",
+                "contract_text": "Custom DEFINE contract text.",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content.decode("utf-8"))
+        self.assertTrue(payload.get("ok"))
+
+        row = ContractText.objects.filter(
+            key="phase.define",
+            scope_type=ContractText.ScopeType.PROJECT_USER,
+            scope_project_id=project.id,
+            scope_user_id=self.owner.id,
+            status=ContractText.Status.ACTIVE,
+        ).first()
+        self.assertIsNotNone(row)
+        self.assertEqual(str(row.text or ""), "Custom DEFINE contract text.")
+
+    def test_phase_contract_default_ajax_retires_project_user_override(self):
+        project = Project.objects.create(
+            name="DERAX Contract Reset Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        ContractText.objects.create(
+            key="phase.define",
+            scope_type=ContractText.ScopeType.PROJECT_USER,
+            scope_project_id=project.id,
+            scope_user_id=self.owner.id,
+            status=ContractText.Status.ACTIVE,
+            text="Temporary override",
+            updated_by=self.owner,
+        )
+
+        response = self.client.post(
+            url,
+            {
+                "action": "reset_phase_contract_text",
+                "contract_phase": "DEFINE",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content.decode("utf-8"))
+        self.assertTrue(payload.get("ok"))
+        self.assertEqual(str(payload.get("source") or ""), "DEFAULT")
+
+        active_row = ContractText.objects.filter(
+            key="phase.define",
+            scope_type=ContractText.ScopeType.PROJECT_USER,
+            scope_project_id=project.id,
+            scope_user_id=self.owner.id,
+            status=ContractText.Status.ACTIVE,
+        ).first()
+        self.assertIsNone(active_row)
+
+    def test_derax_file_archive_action_archives_document(self):
+        project = Project.objects.create(
+            name="DERAX File Archive Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        doc = ProjectDocument.objects.create(
+            project=project,
+            title="Archive me",
+            original_name="archive_me.odt",
+            content_type="application/vnd.oasis.opendocument.text",
+            size_bytes=5,
+            uploaded_by=self.owner,
+        )
+        doc.file.save("archive_me.odt", ContentFile(b"hello"), save=True)
+
+        response = self.client.post(url, {"action": "project_doc_archive", "doc_id": str(doc.id)})
+        self.assertEqual(response.status_code, 302)
+        doc.refresh_from_db()
+        self.assertTrue(doc.is_archived)
+        self.assertEqual(doc.archived_by_id, self.owner.id)
+
+    def test_derax_file_delete_action_requires_admin(self):
+        project = Project.objects.create(
+            name="DERAX File Delete Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        doc = ProjectDocument.objects.create(
+            project=project,
+            title="Do not delete",
+            original_name="keep_me.odt",
+            content_type="application/vnd.oasis.opendocument.text",
+            size_bytes=5,
+            uploaded_by=self.owner,
+        )
+        doc.file.save("keep_me.odt", ContentFile(b"hello"), save=True)
+
+        response = self.client.post(url, {"action": "project_doc_delete", "doc_id": str(doc.id)})
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(ProjectDocument.objects.filter(id=doc.id).exists())
+
     def test_use_define_response_as_intent(self):
         project = Project.objects.create(
             name="DERAX Use Intent Project",
@@ -259,6 +399,48 @@ class DeraxModeTests(TestCase):
         self.assertEqual(len(list(work_item.seed_log or [])), 1)
         first = dict((work_item.seed_log or [])[0] or {})
         self.assertEqual(first.get("seed_text"), "Locked define intent text.")
+        self.assertEqual(first.get("reason"), "DEFINE_LOCKED")
+
+    def test_lock_define_uses_latest_define_response_when_intent_blank(self):
+        project = Project.objects.create(
+            name="DERAX Lock Define Fallback Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        self.client.get(url)
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        self.assertIsNotNone(work_item)
+        work_item.intent_raw = ""
+        work_item.derax_define_history = [
+            {
+                "role": "assistant",
+                "text": json.dumps(
+                    {
+                        "meta": {"phase": "DEFINE"},
+                        "intent": {"destination": "Intent from DEFINE payload"},
+                        "explore": {},
+                        "parked_for_later": {"items": []},
+                        "artefacts": {"proposed": [], "generated": []},
+                        "validation": {"schema_ok": "", "errors": []},
+                        "canonical_summary": "",
+                    }
+                ),
+                "timestamp": "2026-02-24T10:00:00Z",
+            }
+        ]
+        work_item.save(update_fields=["intent_raw", "derax_define_history", "updated_at"])
+
+        response = self.client.post(url, {"action": "lock_define_and_explore"})
+        self.assertEqual(response.status_code, 302)
+
+        work_item.refresh_from_db()
+        self.assertEqual(work_item.active_phase, WorkItem.PHASE_EXPLORE)
+        self.assertEqual(work_item.intent_raw, "Intent from DEFINE payload")
+        self.assertEqual(len(list(work_item.seed_log or [])), 1)
+        first = dict((work_item.seed_log or [])[0] or {})
+        self.assertEqual(first.get("seed_text"), "Intent from DEFINE payload")
         self.assertEqual(first.get("reason"), "DEFINE_LOCKED")
 
     @patch(

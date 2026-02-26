@@ -12,6 +12,7 @@ from django.conf import settings
 from django.http import HttpResponse
 from django.http import Http404
 from django.http import JsonResponse
+from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -857,6 +858,13 @@ def _save_boundary_profile(ctx: ContractContext, profile: dict, user) -> str:
 def system_contracts_dashboard(request):
     ctx = _contracts_context_from_request(request)
     active_level4 = _active_level4_for_dashboard(ctx, request.user)
+    project_ctx_id = int(getattr(getattr(ctx, "project", None), "id", 0) or 0)
+    project_options = list(accessible_projects_qs(request.user).order_by("name", "id"))
+    selected_project = None
+    for row in project_options:
+        if int(getattr(row, "id", 0) or 0) == project_ctx_id:
+            selected_project = row
+            break
 
     if request.method == "POST":
         action = str(request.POST.get("action") or "").strip().lower()
@@ -919,47 +927,98 @@ def system_contracts_dashboard(request):
 
         if action == "save_user" and contract_key in _DASHBOARD_TEXT_KEYS:
             text = str(request.POST.get("user_text") or "")
-            row = (
-                ContractText.objects.filter(
-                    key=contract_key,
-                    scope_type=ContractText.ScopeType.USER,
-                    scope_id=request.user.id,
-                    status=ContractText.Status.ACTIVE,
+            if project_ctx_id > 0:
+                row = (
+                    ContractText.objects.filter(
+                        key=contract_key,
+                        scope_type=ContractText.ScopeType.PROJECT,
+                        scope_project_id=project_ctx_id,
+                        status=ContractText.Status.ACTIVE,
+                    )
+                    .order_by("-updated_at", "-id")
+                    .first()
                 )
-                .order_by("-updated_at", "-id")
-                .first()
-            )
+            else:
+                row = (
+                    ContractText.objects.filter(
+                        key=contract_key,
+                        scope_type=ContractText.ScopeType.USER,
+                        status=ContractText.Status.ACTIVE,
+                    )
+                    .filter(Q(scope_user_id=request.user.id) | Q(scope_id=request.user.id))
+                    .order_by("-updated_at", "-id")
+                    .first()
+                )
             if row is None:
-                ContractText.objects.create(
-                    key=contract_key,
-                    scope_type=ContractText.ScopeType.USER,
-                    scope_id=request.user.id,
-                    status=ContractText.Status.ACTIVE,
-                    text=text,
-                    updated_by=request.user,
-                )
+                if project_ctx_id > 0:
+                    ContractText.objects.create(
+                        key=contract_key,
+                        scope_type=ContractText.ScopeType.PROJECT,
+                        scope_project_id=project_ctx_id,
+                        status=ContractText.Status.ACTIVE,
+                        text=text,
+                        updated_by=request.user,
+                    )
+                else:
+                    ContractText.objects.create(
+                        key=contract_key,
+                        scope_type=ContractText.ScopeType.USER,
+                        scope_user_id=request.user.id,
+                        status=ContractText.Status.ACTIVE,
+                        text=text,
+                        updated_by=request.user,
+                    )
             else:
                 row.text = text
                 row.updated_by = request.user
                 row.save(update_fields=["text", "updated_by", "updated_at"])
-            messages.success(request, f"Saved user override for {contract_key}.")
-            return redirect(reverse("accounts:system_contracts_dashboard") + f"?key={contract_key}")
+            if project_ctx_id > 0:
+                messages.success(request, f"Saved project override for {contract_key}.")
+            else:
+                messages.success(request, f"Saved user override for {contract_key}.")
+            redirect_url = reverse("accounts:system_contracts_dashboard") + f"?key={contract_key}"
+            if project_ctx_id > 0:
+                redirect_url += f"&project_id={project_ctx_id}"
+            return redirect(redirect_url)
 
         if action == "reset_user" and contract_key in _DASHBOARD_TEXT_KEYS:
-            updated = ContractText.objects.filter(
-                key=contract_key,
-                scope_type=ContractText.ScopeType.USER,
-                scope_id=request.user.id,
-                status=ContractText.Status.ACTIVE,
-            ).update(
-                status=ContractText.Status.RETIRED,
-                updated_by=request.user,
-            )
-            if updated:
-                messages.success(request, f"Reset user override for {contract_key}.")
+            if project_ctx_id > 0:
+                updated = ContractText.objects.filter(
+                    key=contract_key,
+                    scope_type=ContractText.ScopeType.PROJECT,
+                    scope_project_id=project_ctx_id,
+                    status=ContractText.Status.ACTIVE,
+                ).update(
+                    status=ContractText.Status.RETIRED,
+                    updated_by=request.user,
+                )
             else:
-                messages.info(request, f"No user override to reset for {contract_key}.")
-            return redirect(reverse("accounts:system_contracts_dashboard") + f"?key={contract_key}")
+                updated = (
+                    ContractText.objects.filter(
+                        key=contract_key,
+                        scope_type=ContractText.ScopeType.USER,
+                        status=ContractText.Status.ACTIVE,
+                    )
+                    .filter(Q(scope_user_id=request.user.id) | Q(scope_id=request.user.id))
+                    .update(
+                        status=ContractText.Status.RETIRED,
+                        updated_by=request.user,
+                    )
+                )
+            if updated:
+                if project_ctx_id > 0:
+                    messages.success(request, f"Reset project override for {contract_key}.")
+                else:
+                    messages.success(request, f"Reset user override for {contract_key}.")
+            else:
+                if project_ctx_id > 0:
+                    messages.info(request, f"No project override to reset for {contract_key}.")
+                else:
+                    messages.info(request, f"No user override to reset for {contract_key}.")
+            redirect_url = reverse("accounts:system_contracts_dashboard") + f"?key={contract_key}"
+            if project_ctx_id > 0:
+                redirect_url += f"&project_id={project_ctx_id}"
+            return redirect(redirect_url)
 
     show_overridden = str(request.GET.get("show_overridden") or "").strip() in {"1", "true", "on", "yes"}
     rows = []
@@ -1009,13 +1068,21 @@ def system_contracts_dashboard(request):
 
             if key in _DASHBOARD_TEXT_KEYS:
                 fallback = _raw_contract_default(ctx, key)
-                resolved = resolve_contract_text(request.user, key)
+                resolved = resolve_contract_text(
+                    request.user,
+                    key,
+                    project_id=project_ctx_id if project_ctx_id > 0 else None,
+                )
                 default_text = str(resolved.get("default_text") or "") or fallback
                 effective_source = str(resolved.get("effective_source") or "DEFAULT")
                 effective_text = str(resolved.get("effective_text") or "")
                 if effective_source == "DEFAULT" and not effective_text:
                     effective_text = default_text
-                has_user_override = resolved.get("user_text") is not None
+                if project_ctx_id > 0:
+                    editable_text = resolved.get("project_text")
+                else:
+                    editable_text = resolved.get("user_text")
+                has_user_override = editable_text is not None
                 if show_overridden and not has_user_override:
                     continue
                 preset_axis, active_preset_name, preset_options = _preset_options_for_key(key, active_level4)
@@ -1027,9 +1094,10 @@ def system_contracts_dashboard(request):
                         "is_read_only": False,
                         "is_json": False,
                         "default_text": default_text,
-                        "user_text": str(resolved.get("user_text") or "") if has_user_override else "",
+                        "user_text": str(editable_text or "") if has_user_override else "",
                         "effective_text": effective_text,
                         "effective_source": effective_source,
+                        "editable_scope": "PROJECT" if project_ctx_id > 0 else "USER",
                         "resolved_from": _resolved_from(ctx, key),
                         "used_in": str(usage.get("used_in") or ""),
                         "flows": str(usage.get("flows") or ""),
@@ -1080,6 +1148,7 @@ def system_contracts_dashboard(request):
             "accounts/system/_contracts_selected_panel.html",
             {
                 "selected": selected,
+                "selected_project": selected_project,
             },
             request=request,
         )
@@ -1098,6 +1167,9 @@ def system_contracts_dashboard(request):
             "rows": rows,
             "selected_key": selected_key,
             "selected": selected,
+            "project_options": project_options,
+            "selected_project": selected_project,
+            "project_ctx_id": project_ctx_id,
             "show_overridden": show_overridden,
             "show_trace": bool(settings.DEBUG),
         },
@@ -1106,6 +1178,60 @@ def system_contracts_dashboard(request):
 
 @login_required
 def system_contract_pack_export(request):
+    project_id_raw = str(request.GET.get("project_id") or request.POST.get("project_id") or "").strip()
+    project = None
+    if project_id_raw.isdigit():
+        project = accessible_projects_qs(request.user).filter(id=int(project_id_raw)).first()
+    if project is not None:
+        selected_keys_raw = []
+        if request.method == "POST":
+            selected_keys_raw = list(request.POST.getlist("keys") or [])
+            if not selected_keys_raw:
+                messages.error(request, "Select at least one contract to export.")
+                return redirect(reverse("accounts:system_contracts_dashboard") + f"?project_id={project.id}")
+        else:
+            selected_keys_raw = list(request.GET.getlist("keys") or [])
+        selected_keys = [str(k or "").strip().lower() for k in selected_keys_raw if str(k or "").strip()]
+        selected_set = set(k for k in selected_keys if k in _USER_OVERRIDE_KEYS)
+
+        if selected_keys_raw and not selected_set:
+            messages.error(request, "Select at least one valid contract key to export.")
+            return redirect(reverse("accounts:system_contracts_dashboard") + f"?project_id={project.id}")
+
+        entries = []
+        rows_qs = (
+            ContractText.objects.filter(
+                scope_type=ContractText.ScopeType.PROJECT,
+                scope_project=project,
+                status=ContractText.Status.ACTIVE,
+                key__in=list(_USER_OVERRIDE_KEYS),
+            )
+            .order_by("key", "-updated_at")
+        )
+        if selected_set:
+            rows_qs = rows_qs.filter(key__in=list(selected_set))
+
+        seen = set()
+        for row in rows_qs:
+            if row.key in seen:
+                continue
+            seen.add(row.key)
+            entries.append({"key": row.key, "text": row.text})
+
+        payload = {
+            "pack_type": "ProjectContractPack",
+            "version": 1,
+            "exported_at": timezone.now().isoformat(),
+            "project_id": project.id,
+            "project_name": str(project.name or ""),
+            "selected_keys": sorted(list(selected_set)) if selected_set else [],
+            "contracts": entries,
+        }
+        body = json.dumps(payload, indent=2, ensure_ascii=True)
+        response = HttpResponse(body, content_type="application/json")
+        response["Content-Disposition"] = f"attachment; filename=project_contract_pack_{project.id}.json"
+        return response
+
     selected_keys_raw = []
     if request.method == "POST":
         selected_keys_raw = list(request.POST.getlist("keys") or [])
@@ -1125,10 +1251,10 @@ def system_contract_pack_export(request):
     rows_qs = (
         ContractText.objects.filter(
             scope_type=ContractText.ScopeType.USER,
-            scope_id=request.user.id,
             status=ContractText.Status.ACTIVE,
             key__in=list(_USER_OVERRIDE_KEYS),
         )
+        .filter(Q(scope_user_id=request.user.id) | Q(scope_id=request.user.id))
         .order_by("key", "-updated_at")
     )
     if selected_set:
@@ -1177,6 +1303,59 @@ def system_contract_pack_import(request):
         messages.error(request, "ContractPack missing contracts list.")
         return redirect("accounts:system_contracts_dashboard")
 
+    pack_type = str(payload.get("pack_type") or "ContractPack").strip()
+    project_id_raw = str(request.POST.get("project_id") or request.GET.get("project_id") or "").strip()
+    project = None
+    if project_id_raw.isdigit():
+        project = accessible_projects_qs(request.user).filter(id=int(project_id_raw)).first()
+
+    if pack_type == "ProjectContractPack":
+        if project is None:
+            messages.error(request, "Select a project before importing a project contract pack.")
+            return redirect("accounts:system_contracts_dashboard")
+        if not (request.user.is_staff or request.user.is_superuser or request.user.id == project.owner_id):
+            messages.error(request, "Only the project owner or admin can import project contract packs.")
+            return redirect(reverse("accounts:system_contracts_dashboard") + f"?project_id={project.id}")
+        imported = 0
+        ignored = []
+        for item in contracts:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key") or "").strip().lower()
+            text = str(item.get("text") or "")
+            if key not in _USER_OVERRIDE_KEYS:
+                ignored.append(key or "(blank)")
+                continue
+            row = (
+                ContractText.objects.filter(
+                    key=key,
+                    scope_type=ContractText.ScopeType.PROJECT,
+                    scope_project=project,
+                    status=ContractText.Status.ACTIVE,
+                )
+                .order_by("-updated_at", "-id")
+                .first()
+            )
+            if row is None:
+                ContractText.objects.create(
+                    key=key,
+                    scope_type=ContractText.ScopeType.PROJECT,
+                    scope_project=project,
+                    status=ContractText.Status.ACTIVE,
+                    text=text,
+                    updated_by=request.user,
+                )
+            else:
+                row.text = text
+                row.updated_by = request.user
+                row.save(update_fields=["text", "updated_by", "updated_at"])
+            imported += 1
+        if imported:
+            messages.success(request, f"Imported {imported} project overrides.")
+        if ignored:
+            messages.warning(request, "Ignored unsupported keys: " + ", ".join(sorted(set(ignored))))
+        return redirect(reverse("accounts:system_contracts_dashboard") + f"?project_id={project.id}")
+
     imported = 0
     ignored = []
     for item in contracts:
@@ -1191,9 +1370,9 @@ def system_contract_pack_import(request):
             ContractText.objects.filter(
                 key=key,
                 scope_type=ContractText.ScopeType.USER,
-                scope_id=request.user.id,
                 status=ContractText.Status.ACTIVE,
             )
+            .filter(Q(scope_user_id=request.user.id) | Q(scope_id=request.user.id))
             .order_by("-updated_at", "-id")
             .first()
         )
@@ -1201,7 +1380,7 @@ def system_contract_pack_import(request):
             ContractText.objects.create(
                 key=key,
                 scope_type=ContractText.ScopeType.USER,
-                scope_id=request.user.id,
+                scope_user_id=request.user.id,
                 status=ContractText.Status.ACTIVE,
                 text=text,
                 updated_by=request.user,
