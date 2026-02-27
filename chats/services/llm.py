@@ -1066,7 +1066,11 @@ def generate_derax(
             latest_errors = []
             break
         latest_errors = list(errors or [])
-        loop_user_text = build_correction_message(latest_errors)
+        loop_user_text = build_correction_message(
+            latest_errors,
+            phase=phase,
+            payload_optional=maybe_payload if isinstance(maybe_payload, dict) else None,
+        )
 
     if payload is None:
         joined = "; ".join(latest_errors) if latest_errors else "Invalid DERAX output"

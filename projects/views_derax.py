@@ -28,7 +28,7 @@ from chats.services.contracts.phase_resolver import resolve_phase_contract
 from chats.services.contracts.texts import resolve_contract_text
 from chats.services.derax.contracts import DERAX_PHASES, build_phase_contract_text
 from chats.services.derax.persist import persist_derax_payload
-from chats.services.derax.validate import derax_json_correction_prompt, validate_derax_response
+from chats.services.derax.validate import derax_json_correction_prompt, validate_derax_response, validate_derax_text
 from chats.services.derax.schema import empty_payload, validate_structural
 from chats.services.derax.phase_rules import check_required_nonempty
 from chats.services.derax.compile import persist_compiled_cko
@@ -329,8 +329,8 @@ def _guess_execute_kind(text: str) -> str:
 
 
 def _coerce_execute_payload_shape(payload: dict) -> dict:
-    out = dict(payload or {})
-    artefacts = dict(out.get("artefacts") or {})
+    out = _as_dict(payload)
+    artefacts = _as_dict(out.get("artefacts"))
     proposed_rows = []
     for row in list(artefacts.get("proposed") or []):
         if isinstance(row, dict):
@@ -360,12 +360,203 @@ def _coerce_execute_payload_shape(payload: dict) -> dict:
     return out
 
 
+def _as_dict(value: object) -> dict:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _as_list_of_str(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _coerce_phase_payload_any(payload: dict, *, phase: str) -> dict:
+    phase_upper = str(phase or "").strip().upper() or WorkItem.PHASE_DEFINE
+    src = _as_dict(payload)
+
+    # Unwrap common wrappers.
+    for key in ("payload", "data", "response", "result", "output", "json"):
+        inner = src.get(key)
+        if isinstance(inner, dict):
+            src = _as_dict(inner)
+            break
+        if isinstance(inner, str):
+            parsed = _try_parse_json_payload(inner)
+            if isinstance(parsed, dict):
+                src = _as_dict(parsed)
+                break
+
+    out = empty_payload(phase_upper)
+    out["meta"]["phase"] = phase_upper
+    out["canonical_summary"] = str(src.get("canonical_summary") or src.get("headline") or "").strip()
+
+    intent = _as_dict(src.get("intent"))
+    explore = _as_dict(src.get("explore"))
+    core = _as_dict(src.get("core"))
+
+    out["intent"]["destination"] = str(
+        intent.get("destination") or src.get("destination") or core.get("end_in_mind") or ""
+    ).strip()
+    out["intent"]["success_criteria"] = (
+        _as_list_of_str(intent.get("success_criteria"))
+        or _as_list_of_str(src.get("success_criteria"))
+        or _as_list_of_str(core.get("destination_conditions"))
+    )
+    out["intent"]["constraints"] = (
+        _as_list_of_str(intent.get("constraints"))
+        or _as_list_of_str(src.get("constraints"))
+        or _as_list_of_str(core.get("assumptions"))
+    )
+    out["intent"]["non_goals"] = (
+        _as_list_of_str(intent.get("non_goals"))
+        or _as_list_of_str(src.get("non_goals"))
+        or _as_list_of_str(core.get("non_goals"))
+    )
+    out["intent"]["assumptions"] = (
+        _as_list_of_str(intent.get("assumptions"))
+        or _as_list_of_str(src.get("assumptions"))
+        or _as_list_of_str(core.get("assumptions"))
+    )
+    out["intent"]["open_questions"] = (
+        _as_list_of_str(intent.get("open_questions"))
+        or _as_list_of_str(src.get("open_questions"))
+        or _as_list_of_str(core.get("ambiguities"))
+    )
+
+    out["explore"]["adjacent_ideas"] = (
+        _as_list_of_str(explore.get("adjacent_ideas"))
+        or _as_list_of_str(src.get("adjacent_ideas"))
+        or _as_list_of_str(core.get("adjacent_angles"))
+    )
+    out["explore"]["risks"] = (
+        _as_list_of_str(explore.get("risks"))
+        or _as_list_of_str(src.get("risks"))
+        or _as_list_of_str(core.get("risks"))
+    )
+    out["explore"]["tradeoffs"] = (
+        _as_list_of_str(explore.get("tradeoffs"))
+        or _as_list_of_str(src.get("tradeoffs"))
+        or _as_list_of_str(core.get("scope_changes"))
+    )
+    out["explore"]["reframes"] = (
+        _as_list_of_str(explore.get("reframes"))
+        or _as_list_of_str(src.get("reframes"))
+        or _as_list_of_str(core.get("ambiguities"))
+    )
+
+    parked = _as_dict(src.get("parked_for_later"))
+    parked_items = []
+    for row in list(parked.get("items") or []):
+        if isinstance(row, dict):
+            title = str(row.get("title") or "").strip()
+            detail = str(row.get("detail") or "").strip()
+            if title or detail:
+                parked_items.append({"title": title, "detail": detail})
+        else:
+            text = str(row or "").strip()
+            if text:
+                parked_items.append({"title": text, "detail": ""})
+    for text in _as_list_of_str(src.get("parked")):
+        parked_items.append({"title": text, "detail": ""})
+    out["parked_for_later"]["items"] = parked_items
+
+    artefacts = _as_dict(src.get("artefacts"))
+    out["artefacts"]["proposed"] = list(artefacts.get("proposed") or [])
+    out["artefacts"]["generated"] = list(artefacts.get("generated") or [])
+    return out
+
+
+def _phase_payload_recovered(payload: dict, *, phase: str) -> tuple[bool, dict, str]:
+    coerced = _coerce_phase_payload_any(payload, phase=phase)
+    ok_schema, schema_errors = validate_structural(coerced)
+    ok_phase, phase_errors = check_required_nonempty(coerced, phase=phase)
+    if ok_schema and ok_phase:
+        return True, coerced, ""
+    error_text = "; ".join(
+        [
+            str(e)
+            for e in list(schema_errors or []) + list(phase_errors or [])
+            if str(e).strip()
+        ]
+    ).strip()
+    return False, coerced, error_text or "Recovered payload still invalid."
+
+
+def _backfill_refine_from_explore(*, refine_payload: dict, explore_payload: dict) -> dict:
+    out = _as_dict(refine_payload)
+    intent = _as_dict(out.get("intent"))
+    explore = _as_dict(out.get("explore"))
+    src_intent = _as_dict(_as_dict(explore_payload).get("intent"))
+    src_explore = _as_dict(_as_dict(explore_payload).get("explore"))
+
+    def _pick_list(current: object, fallback: object) -> list[str]:
+        cur = _as_list_of_str(current)
+        if cur:
+            return cur
+        return _as_list_of_str(fallback)
+
+    destination = str(intent.get("destination") or "").strip() or str(src_intent.get("destination") or "").strip()
+    intent["destination"] = destination
+    intent["success_criteria"] = _pick_list(intent.get("success_criteria"), src_intent.get("success_criteria"))
+    intent["constraints"] = _pick_list(intent.get("constraints"), src_intent.get("constraints"))
+    intent["non_goals"] = _pick_list(intent.get("non_goals"), src_intent.get("non_goals"))
+    intent["assumptions"] = _pick_list(intent.get("assumptions"), src_intent.get("assumptions"))
+    intent["open_questions"] = _pick_list(intent.get("open_questions"), src_intent.get("open_questions"))
+
+    explore["adjacent_ideas"] = _pick_list(explore.get("adjacent_ideas"), src_explore.get("adjacent_ideas"))
+    explore["risks"] = _pick_list(explore.get("risks"), src_explore.get("risks"))
+    explore["tradeoffs"] = _pick_list(explore.get("tradeoffs"), src_explore.get("tradeoffs"))
+    explore["reframes"] = _pick_list(explore.get("reframes"), src_explore.get("reframes"))
+
+    out["intent"] = intent
+    out["explore"] = explore
+    return out
+
+
+def _backfill_approve_from_refine(*, approve_payload: dict, refine_payload: dict) -> dict:
+    out = _as_dict(approve_payload)
+    src = _as_dict(refine_payload)
+    intent = _as_dict(out.get("intent"))
+    explore = _as_dict(out.get("explore"))
+    src_intent = _as_dict(src.get("intent"))
+    src_explore = _as_dict(src.get("explore"))
+
+    def _pick_list(current: object, fallback: object) -> list[str]:
+        cur = _as_list_of_str(current)
+        if cur:
+            return cur
+        return _as_list_of_str(fallback)
+
+    if not str(out.get("canonical_summary") or "").strip():
+        summary = str(src.get("canonical_summary") or "").strip()
+        if not summary:
+            summary = str(src_intent.get("destination") or "").strip()
+        out["canonical_summary"] = summary[:240]
+
+    intent["destination"] = str(intent.get("destination") or "").strip() or str(src_intent.get("destination") or "").strip()
+    intent["success_criteria"] = _pick_list(intent.get("success_criteria"), src_intent.get("success_criteria"))
+    intent["constraints"] = _pick_list(intent.get("constraints"), src_intent.get("constraints"))
+    intent["non_goals"] = _pick_list(intent.get("non_goals"), src_intent.get("non_goals"))
+    intent["assumptions"] = _pick_list(intent.get("assumptions"), src_intent.get("assumptions"))
+    intent["open_questions"] = _pick_list(intent.get("open_questions"), src_intent.get("open_questions"))
+
+    explore["adjacent_ideas"] = _pick_list(explore.get("adjacent_ideas"), src_explore.get("adjacent_ideas"))
+    explore["risks"] = _pick_list(explore.get("risks"), src_explore.get("risks"))
+    explore["tradeoffs"] = _pick_list(explore.get("tradeoffs"), src_explore.get("tradeoffs"))
+    explore["reframes"] = _pick_list(explore.get("reframes"), src_explore.get("reframes"))
+
+    out["intent"] = intent
+    out["explore"] = explore
+    return out
+
+
 def _sanitise_execute_payload(payload: dict) -> dict:
-    out = dict(payload or {})
+    out = _as_dict(payload)
     out.setdefault("meta", {})
     out["meta"]["phase"] = WorkItem.PHASE_EXECUTE
 
-    intent_in = dict(out.get("intent") or {})
+    intent_in = _as_dict(out.get("intent"))
     out["intent"] = {
         "destination": "",
         "success_criteria": [],
@@ -380,11 +571,18 @@ def _sanitise_execute_payload(payload: dict) -> dict:
         "tradeoffs": [],
         "reframes": [],
     }
+    artefacts_in = _as_dict(out.get("artefacts"))
+    proposed = list(artefacts_in.get("proposed") or [])
+    generated = list(artefacts_in.get("generated") or [])
+    out["artefacts"] = {
+        "proposed": proposed,
+        "generated": generated,
+    }
     return out
 
 
 def _sanitise_define_payload(payload: dict) -> dict:
-    out = dict(payload or {})
+    out = _as_dict(payload)
     out.setdefault("meta", {})
     out["meta"]["phase"] = WorkItem.PHASE_DEFINE
     out.setdefault("explore", {})
@@ -875,6 +1073,35 @@ def _try_parse_json_payload(raw_text: str):
             return payload
     except Exception:
         return None
+    return None
+
+
+def _payload_shape_debug(raw_text: str) -> str:
+    text = str(raw_text or "").strip()
+    _ok, parsed, _errors = validate_derax_text(text)
+    if not isinstance(parsed, dict):
+        parsed = _try_parse_json_payload(text)
+    if not isinstance(parsed, dict):
+        return "shape=unparsed"
+    top_keys = sorted([str(k) for k in parsed.keys()])
+    wrapped_keys = []
+    for key in ("payload", "data", "response", "result", "output", "json"):
+        inner = parsed.get(key)
+        if isinstance(inner, dict):
+            wrapped_keys.append(f"{key}:{','.join(sorted([str(k) for k in inner.keys()]))}")
+    if wrapped_keys:
+        return f"shape=parsed; keys={','.join(top_keys)}; wrapped={';'.join(wrapped_keys)}"
+    return f"shape=parsed; keys={','.join(top_keys)}"
+
+
+def _payload_candidate_from_text(raw_text: str):
+    text = str(raw_text or "").strip()
+    _ok, parsed, _errors = validate_derax_text(text)
+    if isinstance(parsed, dict):
+        return parsed
+    parsed = _try_parse_json_payload(text)
+    if isinstance(parsed, dict):
+        return parsed
     return None
 
 
@@ -1726,7 +1953,7 @@ def derax_project_home(request, project_id: int):
             finally:
                 work_item.active_phase = original_phase
 
-            payload = dict(payload_or_error or {})
+            payload = _as_dict(payload_or_error)
             payload = _sanitise_define_payload(payload)
             persist_derax_payload(work_item=work_item, payload=payload, user=request.user, chat=None)
             now_iso = timezone.now().isoformat()
@@ -1824,6 +2051,18 @@ def derax_project_home(request, project_id: int):
                 )
                 ok, payload_or_error = validate_derax_response(str(llm_text or ""))
                 if not ok:
+                    parsed_payload = _payload_candidate_from_text(str(llm_text or ""))
+                    if isinstance(parsed_payload, dict):
+                        recovered_ok, recovered_payload, recovered_error = _phase_payload_recovered(
+                            parsed_payload,
+                            phase=WorkItem.PHASE_EXPLORE,
+                        )
+                        if recovered_ok:
+                            ok = True
+                            payload_or_error = recovered_payload
+                        else:
+                            payload_or_error = recovered_error or payload_or_error
+                if not ok:
                     correction = derax_json_correction_prompt(str(payload_or_error or ""), phase=WorkItem.PHASE_EXPLORE)
                     llm_text = generate_text(
                         system_blocks=[],
@@ -1835,6 +2074,18 @@ def derax_project_home(request, project_id: int):
                         contract_ctx=contract_ctx,
                     )
                     ok, payload_or_error = validate_derax_response(str(llm_text or ""))
+                    if not ok:
+                        parsed_payload = _payload_candidate_from_text(str(llm_text or ""))
+                        if isinstance(parsed_payload, dict):
+                            recovered_ok, recovered_payload, recovered_error = _phase_payload_recovered(
+                                parsed_payload,
+                                phase=WorkItem.PHASE_EXPLORE,
+                            )
+                            if recovered_ok:
+                                ok = True
+                                payload_or_error = recovered_payload
+                            else:
+                                payload_or_error = recovered_error or payload_or_error
                 if not ok:
                     raise ValueError("DERAX EXPLORE response invalid JSON schema: " + str(payload_or_error or ""))
             except Exception as exc:
@@ -1846,7 +2097,7 @@ def derax_project_home(request, project_id: int):
             finally:
                 work_item.active_phase = original_phase
 
-            payload = dict(payload_or_error or {})
+            payload = _as_dict(payload_or_error)
             persist_derax_payload(work_item=work_item, payload=payload, user=request.user, chat=None)
             now_iso = timezone.now().isoformat()
             history_entries.append({"role": "user", "text": user_input, "timestamp": now_iso})
@@ -1942,6 +2193,34 @@ def derax_project_home(request, project_id: int):
                 )
                 ok, payload_or_error = validate_derax_response(str(llm_text or ""))
                 if not ok:
+                    parsed_payload = _payload_candidate_from_text(str(llm_text or ""))
+                    if isinstance(parsed_payload, dict):
+                        recovered_ok, recovered_payload, recovered_error = _phase_payload_recovered(
+                            parsed_payload,
+                            phase=WorkItem.PHASE_REFINE,
+                        )
+                        if (not recovered_ok) and isinstance(recovered_payload, dict):
+                            explore_seed = _latest_payload_for_phase(work_item, WorkItem.PHASE_EXPLORE)
+                            if isinstance(explore_seed, dict) and explore_seed:
+                                merged_payload = _backfill_refine_from_explore(
+                                    refine_payload=recovered_payload,
+                                    explore_payload=explore_seed,
+                                )
+                                merged_ok, merged_payload2, merged_error = _phase_payload_recovered(
+                                    merged_payload,
+                                    phase=WorkItem.PHASE_REFINE,
+                                )
+                                if merged_ok:
+                                    recovered_ok = True
+                                    recovered_payload = merged_payload2
+                                else:
+                                    recovered_error = merged_error or recovered_error
+                        if recovered_ok:
+                            ok = True
+                            payload_or_error = recovered_payload
+                        else:
+                            payload_or_error = recovered_error or payload_or_error
+                if not ok:
                     correction = derax_json_correction_prompt(str(payload_or_error or ""), phase=WorkItem.PHASE_REFINE)
                     llm_text = generate_text(
                         system_blocks=[],
@@ -1953,8 +2232,41 @@ def derax_project_home(request, project_id: int):
                         contract_ctx=contract_ctx,
                     )
                     ok, payload_or_error = validate_derax_response(str(llm_text or ""))
+                    if not ok:
+                        parsed_payload = _payload_candidate_from_text(str(llm_text or ""))
+                        if isinstance(parsed_payload, dict):
+                            recovered_ok, recovered_payload, recovered_error = _phase_payload_recovered(
+                                parsed_payload,
+                                phase=WorkItem.PHASE_REFINE,
+                            )
+                            if (not recovered_ok) and isinstance(recovered_payload, dict):
+                                explore_seed = _latest_payload_for_phase(work_item, WorkItem.PHASE_EXPLORE)
+                                if isinstance(explore_seed, dict) and explore_seed:
+                                    merged_payload = _backfill_refine_from_explore(
+                                        refine_payload=recovered_payload,
+                                        explore_payload=explore_seed,
+                                    )
+                                    merged_ok, merged_payload2, merged_error = _phase_payload_recovered(
+                                        merged_payload,
+                                        phase=WorkItem.PHASE_REFINE,
+                                    )
+                                    if merged_ok:
+                                        recovered_ok = True
+                                        recovered_payload = merged_payload2
+                                    else:
+                                        recovered_error = merged_error or recovered_error
+                            if recovered_ok:
+                                ok = True
+                                payload_or_error = recovered_payload
+                            else:
+                                payload_or_error = recovered_error or payload_or_error
                 if not ok:
-                    raise ValueError("DERAX REFINE response invalid JSON schema: " + str(payload_or_error or ""))
+                    debug_shape = _payload_shape_debug(str(llm_text or ""))
+                    raise ValueError(
+                        "DERAX REFINE response invalid JSON schema: "
+                        + str(payload_or_error or "")
+                        + f" [{debug_shape}]"
+                    )
             except Exception as exc:
                 if _is_ajax(request):
                     return JsonResponse({"ok": False, "error": f"REFINE LLM turn failed: {exc}"}, status=500)
@@ -1964,7 +2276,7 @@ def derax_project_home(request, project_id: int):
             finally:
                 work_item.active_phase = original_phase
 
-            payload = dict(payload_or_error or {})
+            payload = _as_dict(payload_or_error)
             persist_derax_payload(work_item=work_item, payload=payload, user=request.user, chat=None)
             refined_text = _readable_derax_text(json.dumps(payload, ensure_ascii=True, indent=2))
             work_item.append_activity(
@@ -2042,6 +2354,34 @@ def derax_project_home(request, project_id: int):
                 )
                 ok, payload_or_error = validate_derax_response(str(llm_text or ""))
                 if not ok:
+                    parsed_payload = _payload_candidate_from_text(str(llm_text or ""))
+                    if isinstance(parsed_payload, dict):
+                        recovered_ok, recovered_payload, recovered_error = _phase_payload_recovered(
+                            parsed_payload,
+                            phase=WorkItem.PHASE_APPROVE,
+                        )
+                        if (not recovered_ok) and isinstance(recovered_payload, dict):
+                            refine_seed = _latest_payload_from_runs(work_item, WorkItem.PHASE_REFINE)
+                            if isinstance(refine_seed, dict) and refine_seed:
+                                merged_payload = _backfill_approve_from_refine(
+                                    approve_payload=recovered_payload,
+                                    refine_payload=refine_seed,
+                                )
+                                merged_ok, merged_payload2, merged_error = _phase_payload_recovered(
+                                    merged_payload,
+                                    phase=WorkItem.PHASE_APPROVE,
+                                )
+                                if merged_ok:
+                                    recovered_ok = True
+                                    recovered_payload = merged_payload2
+                                else:
+                                    recovered_error = merged_error or recovered_error
+                        if recovered_ok:
+                            ok = True
+                            payload_or_error = recovered_payload
+                        else:
+                            payload_or_error = recovered_error or payload_or_error
+                if not ok:
                     correction = derax_json_correction_prompt(str(payload_or_error or ""), phase=WorkItem.PHASE_APPROVE)
                     llm_text = generate_text(
                         system_blocks=[],
@@ -2053,6 +2393,34 @@ def derax_project_home(request, project_id: int):
                         contract_ctx=contract_ctx,
                     )
                     ok, payload_or_error = validate_derax_response(str(llm_text or ""))
+                    if not ok:
+                        parsed_payload = _payload_candidate_from_text(str(llm_text or ""))
+                        if isinstance(parsed_payload, dict):
+                            recovered_ok, recovered_payload, recovered_error = _phase_payload_recovered(
+                                parsed_payload,
+                                phase=WorkItem.PHASE_APPROVE,
+                            )
+                            if (not recovered_ok) and isinstance(recovered_payload, dict):
+                                refine_seed = _latest_payload_from_runs(work_item, WorkItem.PHASE_REFINE)
+                                if isinstance(refine_seed, dict) and refine_seed:
+                                    merged_payload = _backfill_approve_from_refine(
+                                        approve_payload=recovered_payload,
+                                        refine_payload=refine_seed,
+                                    )
+                                    merged_ok, merged_payload2, merged_error = _phase_payload_recovered(
+                                        merged_payload,
+                                        phase=WorkItem.PHASE_APPROVE,
+                                    )
+                                    if merged_ok:
+                                        recovered_ok = True
+                                        recovered_payload = merged_payload2
+                                    else:
+                                        recovered_error = merged_error or recovered_error
+                            if recovered_ok:
+                                ok = True
+                                payload_or_error = recovered_payload
+                            else:
+                                payload_or_error = recovered_error or payload_or_error
                 if not ok:
                     raise ValueError("DERAX APPROVE response invalid JSON schema: " + str(payload_or_error or ""))
             except Exception as exc:
@@ -2064,7 +2432,7 @@ def derax_project_home(request, project_id: int):
             finally:
                 work_item.active_phase = original_phase
 
-            payload = dict(payload_or_error or {})
+            payload = _as_dict(payload_or_error)
             persist_derax_payload(work_item=work_item, payload=payload, user=request.user, chat=None)
             approved_text = _readable_derax_text(json.dumps(payload, ensure_ascii=True, indent=2))
             work_item.append_activity(
@@ -2144,7 +2512,7 @@ def derax_project_home(request, project_id: int):
                     llm_text = json.dumps(parsed_payload, ensure_ascii=True)
                 ok, payload_or_error = validate_derax_response(str(llm_text or ""))
                 if ok and isinstance(payload_or_error, dict):
-                    payload_check = dict(payload_or_error)
+                    payload_check = payload_or_error
                     payload_phase = str((payload_check.get("meta") or {}).get("phase") or "").strip().upper()
                     phase_ok, phase_errors = check_required_nonempty(payload_check, phase=WorkItem.PHASE_EXECUTE)
                     if payload_phase != WorkItem.PHASE_EXECUTE:
@@ -2172,7 +2540,7 @@ def derax_project_home(request, project_id: int):
                         llm_text = json.dumps(parsed_payload, ensure_ascii=True)
                     ok, payload_or_error = validate_derax_response(str(llm_text or ""))
                     if ok and isinstance(payload_or_error, dict):
-                        payload_check = dict(payload_or_error)
+                        payload_check = payload_or_error
                         payload_phase = str((payload_check.get("meta") or {}).get("phase") or "").strip().upper()
                         phase_ok, phase_errors = check_required_nonempty(payload_check, phase=WorkItem.PHASE_EXECUTE)
                         if payload_phase != WorkItem.PHASE_EXECUTE:
@@ -2194,10 +2562,15 @@ def derax_project_home(request, project_id: int):
             finally:
                 work_item.active_phase = original_phase
 
-            payload = _sanitise_execute_payload(dict(payload_or_error or {}))
+            payload_obj = payload_or_error if isinstance(payload_or_error, dict) else {}
+            if not payload_obj:
+                fallback_obj = _try_parse_json_payload(str(payload_or_error or ""))
+                if isinstance(fallback_obj, dict):
+                    payload_obj = fallback_obj
+            payload = _sanitise_execute_payload(payload_obj)
             warnings = []
             proposed_rows = [
-                row for row in list((dict(payload.get("artefacts") or {})).get("proposed") or [])
+                row for row in list((_as_dict(payload.get("artefacts"))).get("proposed") or [])
                 if isinstance(row, dict) or str(row or "").strip()
             ]
             if not proposed_rows:

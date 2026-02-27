@@ -38,3 +38,9 @@ class DeraxContractsTests(SimpleTestCase):
 
     def test_execute_manifest_present(self):
         self.assertIn("EXECUTE", PHASE_MANIFEST)
+
+    def test_define_is_questions_first(self):
+        txt = build_phase_contract_text("DEFINE")
+        self.assertIn("SUBTEXT", txt)
+        self.assertIn("HYPOTHESIS", txt)
+        self.assertIn("provisional", txt.lower())

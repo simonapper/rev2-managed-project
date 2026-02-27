@@ -7,17 +7,15 @@ DERAX_PHASES = ["DEFINE", "EXPLORE", "REFINE", "APPROVE", "EXECUTE"]
 
 PHASE_MANIFEST = {
     "DEFINE": {
-        "title": "Intent Distillation",
-        "goal": "Extract the destination only and park all operational detail.",
+        "title": "Clarify Destination",
+        "goal": "Identify the core destination and expose ambiguity.",
         "required_paths": [
             "intent.destination",
-            "intent.success_criteria",
         ],
         "target_paths": [
             "intent.destination",
-            "intent.success_criteria",
-            "intent.assumptions",
             "intent.open_questions",
+            "intent.assumptions",
             "parked_for_later.items",
         ],
         "forbidden_prefixes": [
@@ -25,16 +23,26 @@ PHASE_MANIFEST = {
             "artefacts.",
         ],
         "guidance": [
-            "Extract a single clear end-state in user-owned voice.",
-            "Derive destination conditions as success criteria.",
-            "Convert operational language into implied goals.",
-            "Park route and implementation detail.",
-            "Do not design plans or implementation systems.",
-            "Realism rule: Respect explicitly stated time and capacity constraints. Output alignment-level agreements, not mechanism-level design when context is limited.",
-            "Precedence rule: Earlier high-level intent defines scope. Later detail must not override or intensify it.",
-            "Contention rule: If later content conflicts with earlier intent, preserve the earlier intent and record the conflict as an open question (intent.open_questions) rather than resolving it silently.",
-            "Do not invent additional specificity to resolve ambiguity unless explicitly instructed.",
+            "Produce ONE provisional destination sentence.",
+            "Ask 1-3 high-leverage clarification questions.",
+            "Always include at least one subtext question (what problem this solves, why now, or what changes if it succeeds).",
+            "If clearly implied, include at most ONE hypothesis in intent.assumptions prefixed with 'HYPOTHESIS:'.",
+            "Do NOT generate success criteria.",
+            "Do NOT design frameworks, artefacts, scorecards, or plans.",
+            "Do NOT merge, optimise, or expand.",
+            "Maximum 3 parked items.",
+            "Keep everything concise.",
+            "Realism rule: respect constraints but do not elaborate.",
+            "Precedence rule: earlier high-level intent defines scope.",
         ],
+        "caps": {
+            "intent.open_questions": 3,
+            "parked_for_later.items": 3,
+            "intent.assumptions": 1,
+            "intent.success_criteria": 0,
+            "artefacts.proposed": 0,
+            "canonical_summary_words": 10,
+        },
     },
     "EXPLORE": {
         "title": "Exploration and Realism Stress Test",

@@ -107,3 +107,38 @@ class ContractTextResolverTests(TestCase):
         resolved = resolve_contract_text(self.other_user, "tone", project_id=self.project.id)
         self.assertEqual(resolved["effective_text"], "Project tone")
         self.assertEqual(resolved["effective_source"], "PROJECT")
+
+    def test_invalid_define_override_falls_back_to_default(self):
+        ContractText.objects.create(
+            key="phase.define",
+            scope_type=ContractText.ScopeType.GLOBAL_DEFAULT,
+            status=ContractText.Status.ACTIVE,
+            text="Safe default. Return JSON only. Do NOT generate success criteria. No markdown.",
+            updated_by=self.user,
+        )
+        ContractText.objects.create(
+            key="phase.define",
+            scope_type=ContractText.ScopeType.PROJECT_USER,
+            scope_project=self.project,
+            scope_user=self.user,
+            status=ContractText.Status.ACTIVE,
+            text="Generate success criteria and provide markdown.",
+            updated_by=self.user,
+        )
+
+        resolved = resolve_contract_text(self.user, "phase.define", project_id=self.project.id)
+        self.assertEqual(resolved["effective_source"], "DEFAULT")
+        self.assertIn("Do NOT generate success criteria", str(resolved["effective_text"]))
+
+    def test_invalid_define_default_is_not_effective(self):
+        ContractText.objects.create(
+            key="phase.define",
+            scope_type=ContractText.ScopeType.GLOBAL_DEFAULT,
+            status=ContractText.Status.ACTIVE,
+            text="Generate success criteria and provide markdown.",
+            updated_by=self.user,
+        )
+
+        resolved = resolve_contract_text(self.user, "phase.define", project_id=self.project.id)
+        self.assertEqual(resolved["effective_source"], "DEFAULT_INVALID")
+        self.assertEqual(str(resolved["effective_text"] or ""), "")

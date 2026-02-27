@@ -14,17 +14,20 @@ class DeraxGenerateTests(SimpleTestCase):
     def test_generate_derax_retries_then_succeeds(self):
         valid_payload = empty_payload(phase="DEFINE")
         valid_payload["intent"]["destination"] = "Launch DERAX v1"
-        valid_payload["intent"]["success_criteria"] = ["Schema and rules implemented"]
         valid_payload["intent"]["constraints"] = ["No LLM integration in this slice"]
         valid_payload["intent"]["non_goals"] = ["No UI drawers yet"]
         valid_text = json.dumps(valid_payload)
+        invalid_payload = empty_payload(phase="DEFINE")
+        invalid_payload["intent"]["destination"] = "Launch DERAX v1"
+        invalid_payload["intent"]["success_criteria"] = ["Should fail in DEFINE"]
+        invalid_text = json.dumps(invalid_payload)
 
         calls = {"n": 0}
 
         def stub_llm_raw_text(**kwargs):
             calls["n"] += 1
             if calls["n"] == 1:
-                return "Here you go:\n" + valid_text
+                return invalid_text
             return valid_text
 
         out = generate_derax(

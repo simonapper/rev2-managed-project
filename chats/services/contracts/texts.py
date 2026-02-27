@@ -7,6 +7,7 @@ from typing import Any
 from django.db.models import Q
 
 from chats.models import ContractText
+from chats.services.contracts.lint import lint_contract_text
 
 
 SUPPORTED_CONTRACT_TEXT_KEYS = (
@@ -168,12 +169,18 @@ def resolve_contract_text(user, key: str, *, project_id: int | None = None) -> d
             scope_user_id=user_id,
         )
 
+    def _row_ok(row: ContractText | None) -> bool:
+        if row is None:
+            return False
+        lint = lint_contract_text(key=contract_key, text=str(row.text or ""))
+        return bool(lint.get("ok"))
+
     default_text = str(default_row.text or "") if default_row is not None else ""
     project_text = str(project_row.text or "") if project_row is not None else None
     user_text = str(user_row.text or "") if user_row is not None else None
     project_user_text = str(project_user_row.text or "") if project_user_row is not None else None
 
-    if project_user_row is not None:
+    if project_user_row is not None and _row_ok(project_user_row):
         return {
             "key": contract_key,
             "default_text": default_text,
@@ -184,7 +191,7 @@ def resolve_contract_text(user, key: str, *, project_id: int | None = None) -> d
             "effective_source": "PROJECT_USER",
         }
 
-    if project_row is not None:
+    if project_row is not None and _row_ok(project_row):
         return {
             "key": contract_key,
             "default_text": default_text,
@@ -195,7 +202,7 @@ def resolve_contract_text(user, key: str, *, project_id: int | None = None) -> d
             "effective_source": "PROJECT",
         }
 
-    if user_row is not None:
+    if user_row is not None and _row_ok(user_row):
         return {
             "key": contract_key,
             "default_text": default_text,
@@ -206,12 +213,18 @@ def resolve_contract_text(user, key: str, *, project_id: int | None = None) -> d
             "effective_source": "USER",
         }
 
+    default_effective_text = default_text
+    default_effective_source = "DEFAULT"
+    if default_row is not None and not _row_ok(default_row):
+        default_effective_text = ""
+        default_effective_source = "DEFAULT_INVALID"
+
     return {
         "key": contract_key,
         "default_text": default_text,
         "project_text": project_text,
         "user_text": None,
         "project_user_text": project_user_text,
-        "effective_text": default_text,
-        "effective_source": "DEFAULT",
+        "effective_text": default_effective_text,
+        "effective_source": default_effective_source,
     }
