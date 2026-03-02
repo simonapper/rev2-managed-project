@@ -63,7 +63,7 @@
           {% elif is_approve_phase %}
             <p class="small text-muted mb-2">Run APPROVE to stress-test stability of the refined destination and capture unresolved conflicts.</p>
           {% elif is_execute_phase %}
-            <p class="small text-muted mb-2">Run EXECUTE to produce delivery output from approved destination decisions.</p>
+            <p class="small text-muted mb-2">EXECUTE is two-step: run intake first, then generate artefacts when requirements are satisfied.</p>
           {% endif %}
 
           {% if not is_refine_phase %}
@@ -89,6 +89,10 @@
             {% csrf_token %}
             <input type="hidden" name="action" value="lock_execute_stage">
           </form>
+          <form method="post" class="d-none" id="execute-generate-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="generate_execute_artefacts">
+          </form>
           <form method="post" class="d-none" id="stage-export-form">
             {% csrf_token %}
             <input type="hidden" name="action" value="export_latest_derax_draft">
@@ -111,8 +115,8 @@
         <textarea id="id_define_user_input" name="phase_user_input" class="form-control mb-2" rows="4" placeholder="Ask the LLM to validate stability and identify unresolved conflicts.">{{ phase_input_text }}</textarea>
         {% else %}
         <input type="hidden" name="action" id="id_phase_turn_action" value="execute_llm_turn">
-        <label class="form-label small mb-1" for="id_define_user_input">Message to EXECUTE LLM</label>
-        <textarea id="id_define_user_input" name="phase_user_input" class="form-control mb-2" rows="4" placeholder="Ask for explicit artefacts.proposed (kind/title/notes), e.g. workbook + run_sheet + checklist.">{{ phase_input_text }}</textarea>
+        <label class="form-label small mb-1" for="id_define_user_input">EXECUTE intake prompt</label>
+        <textarea id="id_define_user_input" name="phase_user_input" class="form-control mb-2" rows="4" placeholder="Ask for artefacts.proposed and, if inputs are missing, artefacts.requirements.">{{ phase_input_text }}</textarea>
         {% endif %}
         <div class="d-flex gap-2 align-items-center flex-wrap">
           {% if is_define_phase %}
@@ -122,10 +126,98 @@
           {% elif is_approve_phase %}
           <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Approve</button>
           {% else %}
-          <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Execute</button>
+          <button type="submit" id="btn-send-define-turn" class="btn btn-sm btn-outline-primary">Run Intake</button>
+          <button type="submit" form="execute-generate-form" id="btn-generate-execute" class="btn btn-sm btn-outline-secondary" {% if not execute_ready_for_generation or execute_phase_locked %}disabled{% endif %}>Generate READY docs</button>
           {% endif %}
           <span id="define-turn-status" class="small text-muted ms-2"></span>
         </div>
+        {% if is_execute_phase %}
+          {% if execute_missing_requirement_kinds %}
+          <div class="small text-warning mt-1">
+            Intake incomplete.
+            {% if execute_missing_requirement_kinds|length == 1 and execute_missing_requirement_kinds.0 == "unspecified_kind" %}
+            One or more proposed documents are missing a kind.
+            {% else %}
+            Missing requirements decision for: {{ execute_missing_requirement_kinds|join:", " }}.
+            {% endif %}
+          </div>
+          {% elif execute_requirements_pending %}
+          <div class="small text-warning mt-1">
+            Requirements pending for: {{ execute_unresolved_requirement_kinds|join:", " }}.
+            Update intake so those requirement lists are cleared before generation.
+          </div>
+          {% elif execute_ready_for_generation %}
+          <div class="small text-success mt-1">Ready docs: {{ execute_ready_docs_count }}. Pending docs: {{ execute_pending_docs_count }}.</div>
+          {% elif not execute_has_proposed %}
+          <div class="small text-muted mt-1">Run intake to propose artefacts before generation.</div>
+          {% endif %}
+          {% if execute_proposed_rows_ui %}
+          <details class="rw-channel mt-2" open>
+            <summary class="fw-semibold small">Intake: proposed delivery documents</summary>
+            <div class="pt-2">
+              <div class="small text-muted mb-2">Uncheck documents you want to skip before generation.</div>
+              {% for row in execute_proposed_rows_ui %}
+              <div class="border rounded p-2 mb-2">
+                <div class="form-check mb-1">
+                  <input class="form-check-input js-execute-skip-doc" type="checkbox" value="{{ row.idx }}" id="id_execute_doc_{{ row.idx }}" checked>
+                  <label class="form-check-label small fw-semibold" for="id_execute_doc_{{ row.idx }}">
+                    {% if row.kind %}{{ row.kind }}{% else %}document{% endif %}: {{ row.title|default:"(untitled)" }}
+                  </label>
+                </div>
+                <div class="mb-1">
+                  <button type="button" class="btn btn-sm btn-outline-danger js-execute-skip-persist" data-doc-idx="{{ row.idx }}">Skip this file</button>
+                </div>
+                <div class="small mb-1">
+                  {% if row.status == "READY" %}
+                  <span class="badge text-bg-success">READY</span>
+                  {% else %}
+                  <span class="badge text-bg-warning">MISSING_INPUTS</span>
+                  {% endif %}
+                </div>
+                {% if row.why_text %}
+                <div class="small mb-1"><strong>Why this document</strong></div>
+                <div class="small text-muted mb-1">{{ row.why_text }}</div>
+                {% elif row.notes %}
+                <div class="small mb-1"><strong>Why this document</strong></div>
+                <div class="small text-muted mb-1">{{ row.notes }}</div>
+                {% endif %}
+                {% if row.strawman_text %}
+                <div class="small mb-1"><strong>Strawman seed</strong></div>
+                <div class="small text-muted mb-1" style="white-space: pre-wrap;">{{ row.strawman_text }}</div>
+                {% endif %}
+                {% if row.topics_list %}
+                <div class="small mb-1"><strong>Suggested topics</strong></div>
+                <ul class="small mb-1">
+                  {% for topic in row.topics_list %}
+                  <li>{{ topic }}</li>
+                  {% endfor %}
+                </ul>
+                {% endif %}
+                <div class="mt-2">
+                  <label class="form-label small mb-1" for="id_execute_doc_input_{{ row.idx }}">Add inputs for this document</label>
+                  <textarea id="id_execute_doc_input_{{ row.idx }}" class="form-control form-control-sm js-execute-doc-input" data-doc-idx="{{ row.idx }}" rows="2" placeholder="Add the specific details needed for this document."></textarea>
+                  <div class="mt-1">
+                    <button type="button" class="btn btn-sm btn-outline-secondary js-execute-recheck" data-doc-idx="{{ row.idx }}">Re-check intake</button>
+                  </div>
+                </div>
+                {% if row.requirements %}
+                <div class="small"><strong>Additional content sought</strong></div>
+                <ul class="small mb-0">
+                  {% for req in row.requirements %}
+                  <li>{{ req }}</li>
+                  {% endfor %}
+                </ul>
+                {% elif not row.kind %}
+                <div class="small text-warning">This document is missing a kind. Set kind first in intake.</div>
+                {% else %}
+                <div class="small text-success">No missing inputs listed for this document.</div>
+                {% endif %}
+              </div>
+              {% endfor %}
+            </div>
+          </details>
+          {% endif %}
+        {% endif %}
           </form>
           {% endif %}
 
@@ -257,8 +349,8 @@
             </form>
           </div>
         </details>
-        <div class="border rounded p-2 mb-2 mt-2">
-          <div class="small fw-semibold mb-1">{{ active_phase_upper }} turn history (newest first)</div>
+        <details class="rw-channel border rounded p-2 mb-2 mt-2" open>
+          <summary class="small fw-semibold mb-1">{{ active_phase_upper }} turn history (newest first)</summary>
           {% if phase_history %}
             <div style="max-height: 320px; overflow-y: auto;">
               {% include "projects/_derax_define_history.html" with define_history=phase_history newest_first=False %}
@@ -266,7 +358,7 @@
           {% else %}
             <div class="small text-muted">No {{ active_phase_upper }} turns yet.</div>
           {% endif %}
-        </div>
+        </details>
         {% if latest_phase_payload_json %}
         <details class="rw-channel mt-2">
           <summary class="fw-semibold">Latest {{ active_phase_upper }} raw JSON</summary>
@@ -398,8 +490,8 @@
               </form>
             </div>
           </details>
-          <div class="border rounded p-2 mb-2 mt-2">
-            <div class="small fw-semibold mb-1">REFINE turn history (newest first)</div>
+          <details class="rw-channel border rounded p-2 mb-2 mt-2" open>
+            <summary class="small fw-semibold mb-1">REFINE turn history (newest first)</summary>
             {% if refine_history_rows %}
               <div style="max-height: 320px; overflow-y: auto;">
                 {% for row in refine_history_rows %}
@@ -415,7 +507,7 @@
             {% else %}
               <div class="small text-muted">No REFINE turns yet.</div>
             {% endif %}
-          </div>
+          </details>
           {% if refine_latest_payload_json %}
           <details class="rw-channel mt-2">
             <summary class="fw-semibold">Latest REFINE raw JSON</summary>
@@ -916,6 +1008,8 @@
   var defineInput = document.getElementById("id_define_user_input");
   var defineStatus = document.getElementById("define-turn-status");
   var defineButton = document.getElementById("btn-send-define-turn");
+  var executeGenerateForm = document.getElementById("execute-generate-form");
+  var executeGenerateButton = document.getElementById("btn-generate-execute");
   var latestBox = document.getElementById("id_refined_intent");
   var phaseTurnAction = document.getElementById("id_phase_turn_action");
   var refineInput = document.getElementById("id_refine_input");
@@ -1085,6 +1179,97 @@
           if (defineButton) defineButton.disabled = false;
         }
       );
+    });
+  }
+
+  if (executeGenerateForm && executeGenerateButton) {
+    executeGenerateForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      executeGenerateButton.disabled = true;
+      if (defineStatus) defineStatus.textContent = "Generating artefacts...";
+      var skipRows = [];
+      var docInputs = {};
+      var docChecks = document.querySelectorAll(".js-execute-skip-doc");
+      docChecks.forEach(function (cb) {
+        if (!cb.checked) {
+          skipRows.push(String(cb.value || "").trim());
+        }
+      });
+      var docInputNodes = document.querySelectorAll(".js-execute-doc-input");
+      docInputNodes.forEach(function (node) {
+        var idx = String(node.getAttribute("data-doc-idx") || "").trim();
+        var value = String(node.value || "").trim();
+        if (idx && value) {
+          docInputs[idx] = value;
+        }
+      });
+      postAction(
+        {
+          action: "generate_execute_artefacts",
+          execute_skip_rows: skipRows.join(","),
+          execute_doc_inputs_json: JSON.stringify(docInputs)
+        },
+        function (data) {
+          var latest = (data.latest_define_assistant_text || "").trim();
+          if (latestBox && latest) latestBox.value = latest;
+          if (defineStatus) defineStatus.textContent = "Artefacts generated.";
+          executeGenerateButton.disabled = false;
+          window.location.reload();
+        },
+        function (err) {
+          if (defineStatus) defineStatus.textContent = err;
+          executeGenerateButton.disabled = false;
+        }
+      );
+    });
+  }
+
+  var recheckButtons = document.querySelectorAll(".js-execute-recheck");
+  if (recheckButtons && recheckButtons.length) {
+    recheckButtons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var idx = String(btn.getAttribute("data-doc-idx") || "").trim();
+        var inputNode = document.getElementById("id_execute_doc_input_" + idx);
+        var text = inputNode ? String(inputNode.value || "").trim() : "";
+        btn.disabled = true;
+        if (defineStatus) defineStatus.textContent = "Re-checking intake...";
+        postAction(
+          { action: "execute_recheck_doc_intake", doc_idx: idx, doc_input: text },
+          function () {
+            if (defineStatus) defineStatus.textContent = "Intake updated.";
+            btn.disabled = false;
+            window.location.reload();
+          },
+          function (err) {
+            if (defineStatus) defineStatus.textContent = err;
+            btn.disabled = false;
+          }
+        );
+      });
+    });
+  }
+
+  var skipPersistButtons = document.querySelectorAll(".js-execute-skip-persist");
+  if (skipPersistButtons && skipPersistButtons.length) {
+    skipPersistButtons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var idx = String(btn.getAttribute("data-doc-idx") || "").trim();
+        if (!idx) return;
+        btn.disabled = true;
+        if (defineStatus) defineStatus.textContent = "Skipping file...";
+        postAction(
+          { action: "execute_skip_doc", doc_idx: idx },
+          function () {
+            if (defineStatus) defineStatus.textContent = "File skipped.";
+            btn.disabled = false;
+            window.location.reload();
+          },
+          function (err) {
+            if (defineStatus) defineStatus.textContent = err;
+            btn.disabled = false;
+          }
+        );
+      });
     });
   }
 

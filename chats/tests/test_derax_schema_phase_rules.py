@@ -23,19 +23,15 @@ class DeraxSchemaPhaseRulesTests(TestCase):
         ok, errs = check_required_nonempty(payload)
         self.assertFalse(ok)
         self.assertTrue(any("intent.destination" in e for e in errs))
-        self.assertTrue(any("intent.success_criteria" in e for e in errs))
 
     def test_define_minimal_payload_passes_required_nonempty(self):
         payload = empty_payload("DEFINE")
         payload["meta"]["phase"] = "DEFINE"
         payload["intent"]["destination"] = "Clear end state"
-        payload["intent"]["success_criteria"] = ["Outcome is clear"]
-        payload["intent"]["constraints"] = ["Constraint A"]
-        payload["intent"]["non_goals"] = ["No execution plan"]
         ok, errs = check_required_nonempty(payload)
         self.assertTrue(ok, msg=str(errs))
 
     def test_required_paths_for_phase_returns_define_paths(self):
         paths = required_paths_for_phase("DEFINE")
         self.assertIn("intent.destination", paths)
-        self.assertIn("intent.success_criteria", paths)
+        self.assertEqual(paths, ["intent.destination"])

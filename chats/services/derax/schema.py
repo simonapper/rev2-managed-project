@@ -132,6 +132,28 @@ def get_schema() -> dict:
                             },
                         },
                     },
+                    "requirements": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "intake": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["status", "requirements"],
+                            "properties": {
+                                "status": {"type": "string"},
+                                "requirements": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                        },
+                    },
                 },
             },
             "validation": {
@@ -178,6 +200,8 @@ def empty_payload(phase: str = "") -> DeraxPayload:
         "artefacts": {
             "proposed": [],
             "generated": [],
+            "requirements": {},
+            "intake": {},
         },
         "validation": {
             "schema_ok": "",
@@ -272,6 +296,40 @@ def _minimal_structural_checks(payload: dict) -> list[str]:
                     errs.append(f"artefacts.generated[{idx}].{key} missing")
                 elif not isinstance(item.get(key), str):
                     errs.append(f"artefacts.generated[{idx}].{key} must be string")
+    if "requirements" in artefacts:
+        reqs = artefacts.get("requirements")
+        if not isinstance(reqs, dict):
+            errs.append("artefacts.requirements must be object")
+        else:
+            for req_key, req_value in dict(reqs).items():
+                if not isinstance(req_key, str):
+                    errs.append("artefacts.requirements keys must be string")
+                if not isinstance(req_value, list):
+                    errs.append(f"artefacts.requirements.{req_key} must be list")
+                else:
+                    for ridx, item in enumerate(list(req_value)):
+                        if not isinstance(item, str):
+                            errs.append(f"artefacts.requirements.{req_key}[{ridx}] must be string")
+    if "intake" in artefacts:
+        intake = artefacts.get("intake")
+        if not isinstance(intake, dict):
+            errs.append("artefacts.intake must be object")
+        else:
+            for intake_key, intake_value in dict(intake).items():
+                if not isinstance(intake_key, str):
+                    errs.append("artefacts.intake keys must be string")
+                if not isinstance(intake_value, dict):
+                    errs.append(f"artefacts.intake.{intake_key} must be object")
+                    continue
+                if not isinstance(intake_value.get("status"), str):
+                    errs.append(f"artefacts.intake.{intake_key}.status must be string")
+                reqs = intake_value.get("requirements")
+                if not isinstance(reqs, list):
+                    errs.append(f"artefacts.intake.{intake_key}.requirements must be list")
+                else:
+                    for ridx, item in enumerate(list(reqs)):
+                        if not isinstance(item, str):
+                            errs.append(f"artefacts.intake.{intake_key}.requirements[{ridx}] must be string")
 
     validation = payload.get("validation", {})
     if "schema_ok" not in validation:

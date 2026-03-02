@@ -28,7 +28,7 @@ class DeraxContractsTests(SimpleTestCase):
         txt = build_phase_contract_text("DEFINE")
         self.assertIn("Precedence rule", txt)
         self.assertIn("Realism rule", txt)
-        self.assertIn("Contention rule", txt)
+        self.assertNotIn("Contention rule", txt)
 
     def test_execute_contract_renders(self):
         txt = build_phase_contract_text("EXECUTE")
@@ -41,6 +41,6 @@ class DeraxContractsTests(SimpleTestCase):
 
     def test_define_is_questions_first(self):
         txt = build_phase_contract_text("DEFINE")
-        self.assertIn("SUBTEXT", txt)
+        self.assertIn("subtext", txt.lower())
         self.assertIn("HYPOTHESIS", txt)
         self.assertIn("provisional", txt.lower())

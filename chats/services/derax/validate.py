@@ -85,6 +85,28 @@ def _forbidden_prefix_has_content(payload: dict, prefix: str) -> bool:
     return _is_nonempty(value)
 
 
+def _execute_row_has_placeholder_text(row: dict) -> bool:
+    text = " ".join(
+        [
+            _stringify(row.get("kind")),
+            _stringify(row.get("title")),
+            _stringify(row.get("notes")),
+        ]
+    ).lower()
+    if not text.strip():
+        return True
+    markers = ("tbd", "todo", "placeholder", "unknown", "n/a", "to be decided", "to be confirmed", "???")
+    return any(marker in text for marker in markers)
+
+
+def _execute_generated_row_has_empty_fields(row: dict) -> bool:
+    return not (
+        _stringify(row.get("artefact_id"))
+        and _stringify(row.get("kind"))
+        and _stringify(row.get("title"))
+    )
+
+
 def _phase_policy_errors(payload: dict) -> list[str]:
     errors: list[str] = []
     meta = _as_dict(payload.get("meta"))
@@ -99,6 +121,43 @@ def _phase_policy_errors(payload: dict) -> list[str]:
     for pref in list(manifest.get("forbidden_prefixes") or []):
         if _forbidden_prefix_has_content(payload, str(pref)):
             errors.append(f"Forbidden content present under {pref} for phase {phase}")
+
+    if phase == "EXECUTE":
+        artefacts = _as_dict(payload.get("artefacts"))
+        proposed = list(artefacts.get("proposed") or [])
+        generated = list(artefacts.get("generated") or [])
+        requirements = _as_dict(artefacts.get("requirements"))
+
+        # If generated is present, rows must be complete (no empty sections).
+        for idx, row in enumerate(generated):
+            if not isinstance(row, dict):
+                errors.append(f"EXECUTE generated row invalid at index {idx}: must be object")
+                continue
+            if _execute_generated_row_has_empty_fields(row):
+                errors.append(
+                    f"EXECUTE generated row {idx} has empty fields. artefact_id/kind/title must be non-empty."
+                )
+
+        # Infer missing-input state from placeholders/empty proposal rows.
+        inferred_insufficient = False
+        if not proposed and not generated:
+            inferred_insufficient = True
+        for row in proposed:
+            if not isinstance(row, dict):
+                inferred_insufficient = True
+                continue
+            if _execute_row_has_placeholder_text(row):
+                inferred_insufficient = True
+
+        if inferred_insufficient and not _is_nonempty(requirements):
+            errors.append(
+                "EXECUTE sufficiency check failed: add artefacts.requirements when inputs are missing."
+            )
+        if _is_nonempty(requirements) and generated:
+            errors.append(
+                "EXECUTE should not populate artefacts.generated when artefacts.requirements is present."
+            )
+        return errors
 
     if phase != "DEFINE":
         return errors
@@ -385,8 +444,30 @@ def _normalise_artefacts(payload: dict) -> dict:
         if text:
             generated_rows.append({"artefact_id": "", "kind": "", "title": text})
 
+    requirements_obj = {}
+    raw_requirements = artefacts.get("requirements")
+    if isinstance(raw_requirements, dict):
+        for req_kind, req_values in dict(raw_requirements).items():
+            kind = _stringify(req_kind)
+            if not kind:
+                continue
+            requirements_obj[kind] = _listify(req_values)
+    intake_obj = {}
+    raw_intake = artefacts.get("intake")
+    if isinstance(raw_intake, dict):
+        for intake_key, intake_value in dict(raw_intake).items():
+            key = _stringify(intake_key)
+            if not key:
+                continue
+            value = _as_dict(intake_value)
+            status = _stringify(value.get("status")).upper() or "MISSING_INPUTS"
+            reqs = _listify(value.get("requirements"))
+            intake_obj[key] = {"status": status, "requirements": reqs}
+
     artefacts["proposed"] = proposed_rows
     artefacts["generated"] = generated_rows
+    artefacts["requirements"] = requirements_obj
+    artefacts["intake"] = intake_obj
     out["artefacts"] = artefacts
     return out
 

@@ -6,6 +6,7 @@ import json
 import re
 import io
 import zipfile
+import copy
 from xml.etree import ElementTree as ET
 
 from django.contrib import messages
@@ -164,6 +165,23 @@ def _readable_derax_text(text: str) -> str:
             text_row = str(row or "").strip()
             if text_row:
                 generated.append({"artefact_id": "", "kind": "", "title": text_row})
+    requirements = {}
+    for req_kind, req_rows in dict(artefacts.get("requirements") or {}).items():
+        key = str(req_kind or "").strip()
+        if not key:
+            continue
+        rows = _as_list_of_str(req_rows)
+        if rows:
+            requirements[key] = rows
+    intake = {}
+    for idx_key, intake_row in dict(artefacts.get("intake") or {}).items():
+        key = str(idx_key or "").strip()
+        if not key:
+            continue
+        row = _as_dict(intake_row)
+        status = str(row.get("status") or "").strip().upper() or "MISSING_INPUTS"
+        reqs = _as_list_of_str(row.get("requirements"))
+        intake[key] = {"status": status, "requirements": reqs}
     is_execute = phase == WorkItem.PHASE_EXECUTE
     if is_execute:
         if proposed:
@@ -191,6 +209,19 @@ def _readable_derax_text(text: str) -> str:
                     lines.append(f"- {label} (id {artefact_id})")
                 else:
                     lines.append(f"- {label}")
+        if requirements:
+            lines.append("Required inputs by artefact:")
+            for req_kind, req_rows in requirements.items():
+                lines.append(f"- {req_kind}:")
+                for req in req_rows:
+                    lines.append(f"  - {req}")
+        if intake:
+            lines.append("Per-document intake status:")
+            for idx_key, row in intake.items():
+                status = str(row.get("status") or "").strip().upper()
+                lines.append(f"- doc {idx_key}: {status or 'MISSING_INPUTS'}")
+                for req in list(row.get("requirements") or []):
+                    lines.append(f"  - {req}")
         if not proposed and not generated:
             lines.append("No execute artefacts returned.")
             lines.append("Ask for explicit artefacts.proposed with kind/title/notes.")
@@ -305,9 +336,10 @@ def _execute_prompt_guide() -> str:
         "",
         "Use this prompt pattern:",
         "Propose exactly 3 artefacts in artefacts.proposed:",
-        "1) kind=workbook, title=\"Session Workbook\", notes=\"2-hour session with decision capture\"",
-        "2) kind=run_sheet, title=\"Facilitator Run Sheet\", notes=\"minute-by-minute flow\"",
-        "3) kind=checklist, title=\"Before/During/After Checklist\", notes=\"aligned to success criteria\"",
+        "1) kind=workbook, title=\"Session Workbook\", notes=\"Why: ...\\nStrawman: ...\\nTopics: ...\"",
+        "2) kind=run_sheet, title=\"Facilitator Run Sheet\", notes=\"Why: ...\\nStrawman: ...\\nTopics: ...\"",
+        "3) kind=checklist, title=\"Before/During/After Checklist\", notes=\"Why: ...\\nStrawman: ...\\nTopics: ...\"",
+        "For each document include short seed content in notes with prefixes Why:/Strawman:/Topics:.",
         "Do not add any other kinds.",
     ]
     return "\n".join(lines)
@@ -337,6 +369,20 @@ def _coerce_execute_payload_shape(payload: dict) -> dict:
             kind = str(row.get("kind") or "").strip().lower()
             title = str(row.get("title") or "").strip()
             notes = str(row.get("notes") or "").strip()
+            rationale = str(row.get("why") or row.get("rationale") or row.get("purpose") or "").strip()
+            strawman = str(row.get("strawman") or row.get("seed") or row.get("seed_content") or "").strip()
+            topics_raw = row.get("topics") or row.get("suggested_topics")
+            topics = [str(v).strip() for v in list(topics_raw or []) if str(v).strip()]
+            needed_inputs_raw = row.get("needed_inputs") or row.get("required_inputs") or row.get("requirements")
+            needed_inputs = [str(v).strip() for v in list(needed_inputs_raw or []) if str(v).strip()]
+            if rationale:
+                notes = (notes + "\n" if notes else "") + f"Why: {rationale}"
+            if strawman:
+                notes = (notes + "\n" if notes else "") + f"Strawman: {strawman}"
+            if topics:
+                notes = (notes + "\n" if notes else "") + "Topics: " + "; ".join(topics)
+            if needed_inputs:
+                notes = (notes + "\n" if notes else "") + "Needs: " + "; ".join(needed_inputs)
             if not kind and title:
                 kind = _guess_execute_kind(title)
             if not title:
@@ -356,6 +402,26 @@ def _coerce_execute_payload_shape(payload: dict) -> dict:
     artefacts["proposed"] = proposed_rows
     # Never trust model-authored generated rows. Generated rows are system-produced only.
     artefacts["generated"] = []
+    requirements_in = _as_dict(artefacts.get("requirements"))
+    requirements_out = {}
+    for req_kind, req_rows in requirements_in.items():
+        kind = str(req_kind or "").strip()
+        if not kind:
+            continue
+        rows = _as_list_of_str(req_rows)
+        requirements_out[kind] = rows
+    intake_in = _as_dict(artefacts.get("intake"))
+    intake_out = {}
+    for idx_key, intake_row in intake_in.items():
+        key = str(idx_key or "").strip()
+        if not key:
+            continue
+        row = _as_dict(intake_row)
+        status = str(row.get("status") or "").strip().upper() or "MISSING_INPUTS"
+        reqs = _as_list_of_str(row.get("requirements"))
+        intake_out[key] = {"status": status, "requirements": reqs}
+    artefacts["requirements"] = requirements_out
+    artefacts["intake"] = intake_out
     out["artefacts"] = artefacts
     return out
 
@@ -574,10 +640,194 @@ def _sanitise_execute_payload(payload: dict) -> dict:
     artefacts_in = _as_dict(out.get("artefacts"))
     proposed = list(artefacts_in.get("proposed") or [])
     generated = list(artefacts_in.get("generated") or [])
+    requirements_in = _as_dict(artefacts_in.get("requirements"))
+    requirements = {}
+    for req_kind, req_rows in requirements_in.items():
+        key = str(req_kind or "").strip()
+        if not key:
+            continue
+        rows = _as_list_of_str(req_rows)
+        requirements[key] = rows
+    intake_in = _as_dict(artefacts_in.get("intake"))
+    intake = {}
+    for intake_key, intake_row in intake_in.items():
+        idx_key = str(intake_key or "").strip()
+        if not idx_key:
+            continue
+        row = _as_dict(intake_row)
+        status = str(row.get("status") or "").strip().upper() or "MISSING_INPUTS"
+        reqs = _as_list_of_str(row.get("requirements"))
+        intake[idx_key] = {"status": status, "requirements": reqs}
     out["artefacts"] = {
         "proposed": proposed,
         "generated": generated,
+        "requirements": requirements,
+        "intake": intake,
     }
+    return out
+
+
+def _execute_requirements_map(payload: dict) -> dict:
+    artefacts = _as_dict(_as_dict(payload).get("artefacts"))
+    requirements = _as_dict(artefacts.get("requirements"))
+    out = {}
+    for req_kind, req_rows in requirements.items():
+        key = str(req_kind or "").strip()
+        if not key:
+            continue
+        rows = _as_list_of_str(req_rows)
+        out[key] = rows
+    return out
+
+
+def _execute_has_requirements(payload: dict) -> bool:
+    return bool(_execute_requirements_map(payload))
+
+
+def _execute_proposed_kinds(payload: dict) -> list[str]:
+    artefacts = _as_dict(_as_dict(payload).get("artefacts"))
+    out = []
+    for row in list(artefacts.get("proposed") or []):
+        row_dict = _as_dict(row)
+        kind = str(row_dict.get("kind") or "").strip()
+        if kind and kind not in out:
+            out.append(kind)
+    return out
+
+
+def _execute_has_missing_proposed_kind(payload: dict) -> bool:
+    artefacts = _as_dict(_as_dict(payload).get("artefacts"))
+    for row in list(artefacts.get("proposed") or []):
+        row_dict = _as_dict(row)
+        kind = str(row_dict.get("kind") or "").strip()
+        title = str(row_dict.get("title") or "").strip()
+        notes = str(row_dict.get("notes") or "").strip()
+        if (title or notes) and not kind:
+            return True
+    return False
+
+
+def _execute_missing_requirement_kinds(payload: dict) -> list[str]:
+    if _execute_has_missing_proposed_kind(payload):
+        return ["unspecified_kind"]
+    kinds = _execute_proposed_kinds(payload)
+    reqs = _execute_requirements_map(payload)
+    missing = []
+    for kind in kinds:
+        if kind not in reqs:
+            missing.append(kind)
+    return missing
+
+
+def _execute_unresolved_requirement_kinds(payload: dict) -> list[str]:
+    if _execute_has_missing_proposed_kind(payload):
+        return ["unspecified_kind"]
+    kinds = _execute_proposed_kinds(payload)
+    reqs = _execute_requirements_map(payload)
+    unresolved = []
+    for kind in kinds:
+        if len(list(reqs.get(kind) or [])) > 0:
+            unresolved.append(kind)
+    return unresolved
+
+
+def _parse_execute_doc_inputs(raw_text: str) -> dict[int, str]:
+    raw = str(raw_text or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    out: dict[int, str] = {}
+    for key, value in parsed.items():
+        try:
+            idx = int(str(key or "").strip())
+        except Exception:
+            continue
+        text = str(value or "").strip()
+        if idx >= 0 and text:
+            out[idx] = text
+    return out
+
+
+def _execute_doc_why_text(row: dict) -> str:
+    notes = str(_as_dict(row).get("notes") or "").strip()
+    if not notes:
+        return ""
+    lines = [str(x).strip() for x in notes.splitlines() if str(x).strip()]
+    for line in lines:
+        lower = line.lower()
+        if lower.startswith("why:"):
+            return line.split(":", 1)[1].strip()
+    return lines[0] if lines else ""
+
+
+def _execute_doc_strawman_text(row: dict) -> str:
+    notes = str(_as_dict(row).get("notes") or "").strip()
+    if not notes:
+        return ""
+    lines = [str(x).strip() for x in notes.splitlines() if str(x).strip()]
+    for line in lines:
+        lower = line.lower()
+        if lower.startswith("strawman:") or lower.startswith("seed:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _execute_doc_topics(row: dict) -> list[str]:
+    notes = str(_as_dict(row).get("notes") or "").strip()
+    if not notes:
+        return []
+    lines = [str(x).strip() for x in notes.splitlines() if str(x).strip()]
+    for line in lines:
+        lower = line.lower()
+        if lower.startswith("topics:") or lower.startswith("suggested topics:"):
+            raw = line.split(":", 1)[1].strip()
+            parts = [p.strip(" -") for p in re.split(r"[;,]", raw) if p.strip(" -")]
+            return parts
+    return []
+
+
+def _execute_intake_map(payload: dict) -> dict[str, dict]:
+    artefacts = _as_dict(_as_dict(payload).get("artefacts"))
+    intake = _as_dict(artefacts.get("intake"))
+    out = {}
+    for key, value in intake.items():
+        idx_key = str(key or "").strip()
+        if not idx_key:
+            continue
+        row = _as_dict(value)
+        status = str(row.get("status") or "").strip().upper() or "MISSING_INPUTS"
+        reqs = _as_list_of_str(row.get("requirements"))
+        out[idx_key] = {"status": status, "requirements": reqs}
+    return out
+
+
+def _refresh_execute_intake(payload: dict) -> dict:
+    out = _sanitise_execute_payload(payload)
+    artefacts = _as_dict(out.get("artefacts"))
+    proposed = list(artefacts.get("proposed") or [])
+    req_by_kind = _execute_requirements_map(out)
+    intake = {}
+    for idx, row in enumerate(proposed):
+        row_dict = _as_dict(row)
+        kind = str(row_dict.get("kind") or "").strip()
+        title = str(row_dict.get("title") or "").strip()
+        kind_has_decision = bool(kind and (kind in req_by_kind))
+        reqs = list(req_by_kind.get(kind) or []) if kind_has_decision else []
+        if not kind:
+            reqs = ["Set document kind"]
+        if not title:
+            reqs = list(reqs) + ["Set document title"]
+        if kind and title and not kind_has_decision:
+            reqs = list(reqs) + ["Intake has not listed required inputs for this document yet"]
+        status = "READY" if (kind and title and kind_has_decision and not reqs) else "MISSING_INPUTS"
+        intake[str(idx)] = {"status": status, "requirements": reqs}
+    artefacts["intake"] = intake
+    out["artefacts"] = artefacts
     return out
 
 
@@ -2568,6 +2818,7 @@ def derax_project_home(request, project_id: int):
                 if isinstance(fallback_obj, dict):
                     payload_obj = fallback_obj
             payload = _sanitise_execute_payload(payload_obj)
+            payload = _refresh_execute_intake(payload)
             warnings = []
             proposed_rows = [
                 row for row in list((_as_dict(payload.get("artefacts"))).get("proposed") or [])
@@ -2577,24 +2828,15 @@ def derax_project_home(request, project_id: int):
                 warnings.append(
                     "No artefacts were proposed. Ask EXECUTE for explicit artefacts.proposed with kind/title/notes."
                 )
-            try:
-                gen_result = generate_artefacts_from_execute_payload(
-                    project_id=project.id,
-                    chat_id=int(work_item.id),
-                    turn_id=timezone.now().strftime("%Y%m%dT%H%M%S"),
-                    payload=payload,
-                    user_id=getattr(request.user, "id", None),
-                )
-                warnings = list(gen_result.get("warnings") or [])
-            except Exception as exc:
-                warnings.append(f"Execute artefact generation skipped: {exc}")
+            if _execute_has_requirements(payload):
+                warnings.append("Execute intake identified missing inputs in artefacts.requirements.")
 
             persist_derax_payload(work_item=work_item, payload=payload, user=request.user, chat=None)
             execute_text = _readable_derax_text(json.dumps(payload, ensure_ascii=True, indent=2))
             work_item.append_activity(
                 actor=request.user,
                 action="execute_llm_turn",
-                notes="EXECUTE turn recorded.",
+                notes="EXECUTE intake turn recorded.",
             )
             if warnings:
                 work_item.append_activity(
@@ -2605,9 +2847,223 @@ def derax_project_home(request, project_id: int):
             if _is_ajax(request):
                 return JsonResponse({"ok": True, "latest_define_assistant_text": execute_text})
             if warnings:
-                messages.warning(request, "EXECUTE response generated with warnings: " + "; ".join(warnings))
+                messages.warning(request, "EXECUTE intake captured: " + "; ".join(warnings))
             else:
-                messages.success(request, "EXECUTE response generated and artefacts created.")
+                messages.success(request, "EXECUTE intake captured. Use Generate artefacts when ready.")
+            return redirect("projects:derax_project_home", project_id=project.id)
+
+        if action == "generate_execute_artefacts":
+            latest_execute_payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_EXECUTE)
+            if not isinstance(latest_execute_payload, dict):
+                err_text = "Run EXECUTE intake first before generating artefacts."
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": err_text}, status=400)
+                messages.error(request, err_text)
+                return redirect("projects:derax_project_home", project_id=project.id)
+            payload = _refresh_execute_intake(latest_execute_payload)
+            doc_inputs = _parse_execute_doc_inputs(str(request.POST.get("execute_doc_inputs_json") or ""))
+            skip_raw = str(request.POST.get("execute_skip_rows") or "").strip()
+            skip_indexes = set()
+            if skip_raw:
+                for token in skip_raw.split(","):
+                    token = str(token or "").strip()
+                    if not token:
+                        continue
+                    try:
+                        idx = int(token)
+                    except Exception:
+                        continue
+                    if idx >= 0:
+                        skip_indexes.add(idx)
+            artefacts = _as_dict(payload.get("artefacts"))
+            proposed_rows = list(artefacts.get("proposed") or [])
+            kept_rows_with_idx = [(idx, row) for idx, row in enumerate(proposed_rows) if idx not in skip_indexes]
+            kept_rows = []
+            for row_idx, row in kept_rows_with_idx:
+                row_dict = _as_dict(row)
+                doc_input = str(doc_inputs.get(row_idx) or "").strip()
+                if doc_input:
+                    notes = str(row_dict.get("notes") or "").strip()
+                    row_dict["notes"] = (notes + "\n" if notes else "") + "Input provided: " + doc_input
+                kept_rows.append(row_dict)
+            artefacts["proposed"] = kept_rows
+            requirements_map = _execute_requirements_map(payload)
+            kept_kinds = set()
+            for row in kept_rows:
+                row_kind = str(_as_dict(row).get("kind") or "").strip()
+                if row_kind:
+                    kept_kinds.add(row_kind)
+            filtered_requirements = {
+                key: value
+                for key, value in requirements_map.items()
+                if key in kept_kinds
+            }
+            for row_idx, row in kept_rows_with_idx:
+                row_kind = str(_as_dict(row).get("kind") or "").strip()
+                if not row_kind:
+                    continue
+                if str(doc_inputs.get(row_idx) or "").strip():
+                    filtered_requirements[row_kind] = []
+            artefacts["requirements"] = filtered_requirements
+            payload["artefacts"] = artefacts
+            payload = _refresh_execute_intake(payload)
+            proposed_rows = [
+                row for row in list((_as_dict(payload.get("artefacts"))).get("proposed") or [])
+                if isinstance(row, dict) or str(row or "").strip()
+            ]
+            if not proposed_rows:
+                err_text = "No artefacts proposed after skipping. Keep at least one document in the delivery package."
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": err_text}, status=400)
+                messages.error(request, err_text)
+                return redirect("projects:derax_project_home", project_id=project.id)
+            if _execute_has_missing_proposed_kind(payload):
+                err_text = "EXECUTE intake incomplete. Each proposed document must include a kind."
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": err_text}, status=400)
+                messages.error(request, err_text)
+                return redirect("projects:derax_project_home", project_id=project.id)
+
+            intake_map = _execute_intake_map(payload)
+            ready_rows = []
+            for idx, row in enumerate(list((_as_dict(payload.get("artefacts"))).get("proposed") or [])):
+                intake = _as_dict(intake_map.get(str(idx)))
+                if str(intake.get("status") or "").strip().upper() == "READY":
+                    ready_rows.append(row)
+            if not ready_rows:
+                err_text = "No READY documents to generate. Fill missing inputs or skip unresolved documents."
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": err_text}, status=400)
+                messages.error(request, err_text)
+                return redirect("projects:derax_project_home", project_id=project.id)
+
+            warnings = []
+            try:
+                payload_for_generation = copy.deepcopy(payload)
+                artefacts_for_generation = _as_dict(payload_for_generation.get("artefacts"))
+                artefacts_for_generation["proposed"] = ready_rows
+                payload_for_generation["artefacts"] = artefacts_for_generation
+                gen_result = generate_artefacts_from_execute_payload(
+                    project_id=project.id,
+                    chat_id=int(work_item.id),
+                    turn_id=timezone.now().strftime("%Y%m%dT%H%M%S"),
+                    payload=payload_for_generation,
+                    user_id=getattr(request.user, "id", None),
+                )
+                warnings = list(gen_result.get("warnings") or [])
+                generated_rows = list((_as_dict(payload_for_generation.get("artefacts"))).get("generated") or [])
+                artefacts_final = _as_dict(payload.get("artefacts"))
+                artefacts_final["generated"] = generated_rows
+                payload["artefacts"] = artefacts_final
+            except Exception as exc:
+                err_text = f"Execute artefact generation failed: {exc}"
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": err_text}, status=500)
+                messages.error(request, err_text)
+                return redirect("projects:derax_project_home", project_id=project.id)
+
+            persist_derax_payload(work_item=work_item, payload=payload, user=request.user, chat=None)
+            execute_text = _readable_derax_text(json.dumps(payload, ensure_ascii=True, indent=2))
+            work_item.append_activity(
+                actor=request.user,
+                action="execute_generate_artefacts",
+                notes="EXECUTE artefacts generated from latest intake payload.",
+            )
+            if warnings:
+                work_item.append_activity(
+                    actor="system",
+                    action="execute_artefact_generation_warning",
+                    notes="; ".join([str(w) for w in warnings if str(w).strip()])[:500],
+                )
+            if _is_ajax(request):
+                return JsonResponse({"ok": True, "latest_define_assistant_text": execute_text})
+            if warnings:
+                messages.warning(request, "EXECUTE artefacts generated with warnings: " + "; ".join(warnings))
+            else:
+                messages.success(request, "EXECUTE artefacts generated.")
+            return redirect("projects:derax_project_home", project_id=project.id)
+
+        if action == "execute_recheck_doc_intake":
+            latest_execute_payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_EXECUTE)
+            if not isinstance(latest_execute_payload, dict):
+                err_text = "Run EXECUTE intake first."
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": err_text}, status=400)
+                messages.error(request, err_text)
+                return redirect("projects:derax_project_home", project_id=project.id)
+            try:
+                doc_idx = int(str(request.POST.get("doc_idx") or "").strip())
+            except Exception:
+                doc_idx = -1
+            doc_input = str(request.POST.get("doc_input") or "").strip()
+            payload = _refresh_execute_intake(latest_execute_payload)
+            artefacts = _as_dict(payload.get("artefacts"))
+            proposed = list(artefacts.get("proposed") or [])
+            if doc_idx < 0 or doc_idx >= len(proposed):
+                err_text = "Invalid document index for intake re-check."
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": err_text}, status=400)
+                messages.error(request, err_text)
+                return redirect("projects:derax_project_home", project_id=project.id)
+            row_dict = _as_dict(proposed[doc_idx])
+            row_kind = str(row_dict.get("kind") or "").strip()
+            if doc_input:
+                notes = str(row_dict.get("notes") or "").strip()
+                row_dict["notes"] = (notes + "\n" if notes else "") + "Input provided: " + doc_input
+                proposed[doc_idx] = row_dict
+                artefacts["proposed"] = proposed
+                req_map = _execute_requirements_map(payload)
+                if row_kind:
+                    req_map[row_kind] = []
+                artefacts["requirements"] = req_map
+                payload["artefacts"] = artefacts
+            payload = _refresh_execute_intake(payload)
+            persist_derax_payload(work_item=work_item, payload=payload, user=request.user, chat=None)
+            if _is_ajax(request):
+                return JsonResponse({"ok": True, "latest_define_assistant_text": _readable_derax_text(json.dumps(payload, ensure_ascii=True, indent=2))})
+            messages.success(request, "Document intake re-checked.")
+            return redirect("projects:derax_project_home", project_id=project.id)
+
+        if action == "execute_skip_doc":
+            latest_execute_payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_EXECUTE)
+            if not isinstance(latest_execute_payload, dict):
+                err_text = "Run EXECUTE intake first."
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": err_text}, status=400)
+                messages.error(request, err_text)
+                return redirect("projects:derax_project_home", project_id=project.id)
+            try:
+                doc_idx = int(str(request.POST.get("doc_idx") or "").strip())
+            except Exception:
+                doc_idx = -1
+            payload = _refresh_execute_intake(latest_execute_payload)
+            artefacts = _as_dict(payload.get("artefacts"))
+            proposed = list(artefacts.get("proposed") or [])
+            if doc_idx < 0 or doc_idx >= len(proposed):
+                err_text = "Invalid document index for skip."
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": err_text}, status=400)
+                messages.error(request, err_text)
+                return redirect("projects:derax_project_home", project_id=project.id)
+            removed_row = _as_dict(proposed[doc_idx])
+            removed_kind = str(removed_row.get("kind") or "").strip()
+            kept_rows = [row for idx, row in enumerate(proposed) if idx != doc_idx]
+            artefacts["proposed"] = kept_rows
+            req_map = _execute_requirements_map(payload)
+            if removed_kind:
+                req_map = {k: v for k, v in req_map.items() if str(k).strip() != removed_kind}
+            artefacts["requirements"] = req_map
+            payload["artefacts"] = artefacts
+            payload = _refresh_execute_intake(payload)
+            persist_derax_payload(work_item=work_item, payload=payload, user=request.user, chat=None)
+            work_item.append_activity(
+                actor=request.user,
+                action="execute_skip_doc",
+                notes=f"Skipped execute document at index {doc_idx}.",
+            )
+            if _is_ajax(request):
+                return JsonResponse({"ok": True, "latest_define_assistant_text": _readable_derax_text(json.dumps(payload, ensure_ascii=True, indent=2))})
+            messages.success(request, "Document skipped from delivery package.")
             return redirect("projects:derax_project_home", project_id=project.id)
 
         if action == "lock_define_and_explore":
@@ -2913,6 +3369,47 @@ def derax_project_home(request, project_id: int):
     approve_latest_payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_APPROVE)
     refine_latest_payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_REFINE)
     execute_latest_payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_EXECUTE)
+    execute_payload_for_ui = _sanitise_execute_payload(execute_latest_payload) if isinstance(execute_latest_payload, dict) else {}
+    execute_missing_requirement_kinds = _execute_missing_requirement_kinds(execute_payload_for_ui)
+    execute_unresolved_requirement_kinds = _execute_unresolved_requirement_kinds(execute_payload_for_ui)
+    execute_requirements_pending = bool(execute_unresolved_requirement_kinds)
+    execute_requirements_map = _execute_requirements_map(execute_payload_for_ui)
+    execute_intake_map = _execute_intake_map(execute_payload_for_ui)
+    execute_has_proposed = bool(list((_as_dict(execute_payload_for_ui.get("artefacts"))).get("proposed") or []))
+    execute_ready_for_generation = bool(
+        execute_has_proposed
+        and not execute_missing_requirement_kinds
+        and not execute_requirements_pending
+    )
+    execute_proposed_rows_ui = []
+    execute_ready_docs_count = 0
+    execute_pending_docs_count = 0
+    for idx, row in enumerate(list((_as_dict(execute_payload_for_ui.get("artefacts"))).get("proposed") or [])):
+        row_dict = _as_dict(row)
+        row_kind = str(row_dict.get("kind") or "").strip()
+        row_title = str(row_dict.get("title") or "").strip()
+        row_notes = str(row_dict.get("notes") or "").strip()
+        intake_row = _as_dict(execute_intake_map.get(str(idx)))
+        row_status = str(intake_row.get("status") or "").strip().upper() or "MISSING_INPUTS"
+        req_rows = list(intake_row.get("requirements") or [])
+        if row_status == "READY":
+            execute_ready_docs_count += 1
+        else:
+            execute_pending_docs_count += 1
+        execute_proposed_rows_ui.append(
+            {
+                "idx": idx,
+                "kind": row_kind,
+                "title": row_title,
+                "notes": row_notes,
+                "why_text": _execute_doc_why_text(row_dict),
+                "strawman_text": _execute_doc_strawman_text(row_dict),
+                "topics_list": _execute_doc_topics(row_dict),
+                "status": row_status,
+                "requirements": req_rows,
+            }
+        )
+    execute_ready_for_generation = bool(execute_ready_docs_count > 0)
     execute_export_caps = execute_export_capabilities()
     execute_export_missing = [name for name, ok in execute_export_caps.items() if not ok]
     latest_refine_response = _latest_refine_response_text(work_item)
@@ -3065,6 +3562,16 @@ def derax_project_home(request, project_id: int):
             "approve_latest_payload_json": json.dumps(approve_latest_payload, ensure_ascii=True, indent=2) if approve_latest_payload else "",
             "execute_latest_payload_json": json.dumps(execute_latest_payload, ensure_ascii=True, indent=2) if execute_latest_payload else "",
             "execute_export_missing": execute_export_missing,
+            "execute_requirements_pending": execute_requirements_pending,
+            "execute_missing_requirement_kinds": execute_missing_requirement_kinds,
+            "execute_unresolved_requirement_kinds": execute_unresolved_requirement_kinds,
+            "execute_requirements_map": execute_requirements_map,
+            "execute_intake_map": execute_intake_map,
+            "execute_has_proposed": execute_has_proposed,
+            "execute_ready_for_generation": execute_ready_for_generation,
+            "execute_proposed_rows_ui": execute_proposed_rows_ui,
+            "execute_ready_docs_count": execute_ready_docs_count,
+            "execute_pending_docs_count": execute_pending_docs_count,
             "phase_input_text": phase_input_text,
             "refine_input_text": refine_input_text,
             "refine_editor_canonical_summary": refine_editor_canonical_summary,

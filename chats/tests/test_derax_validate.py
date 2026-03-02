@@ -242,3 +242,35 @@ class DeraxValidateTests(TestCase):
         self.assertFalse(ok)
         joined = "; ".join(errors)
         self.assertIn("Cap exceeded: canonical_summary has 11 words (max 10) for phase DEFINE", joined)
+
+    def test_execute_generated_rows_cannot_have_empty_sections(self):
+        payload = empty_payload(phase="EXECUTE")
+        payload["meta"]["phase"] = "EXECUTE"
+        payload["artefacts"]["proposed"] = [{"kind": "workbook", "title": "Workbook", "notes": "Ready"}]
+        payload["artefacts"]["generated"] = [{"artefact_id": "", "kind": "workbook", "title": "Workbook"}]
+        ok, _parsed_payload, errors = validate_derax_text(json.dumps(payload))
+        self.assertFalse(ok)
+        joined = "; ".join(errors)
+        self.assertIn("EXECUTE generated row 0 has empty fields", joined)
+
+    def test_execute_insufficient_requires_requirements(self):
+        payload = empty_payload(phase="EXECUTE")
+        payload["meta"]["phase"] = "EXECUTE"
+        payload["artefacts"]["proposed"] = [{"kind": "workbook", "title": "Workbook", "notes": "TBD from user input"}]
+        payload["artefacts"]["generated"] = []
+        ok, _parsed_payload, errors = validate_derax_text(json.dumps(payload))
+        self.assertFalse(ok)
+        joined = "; ".join(errors)
+        self.assertIn("EXECUTE sufficiency check failed", joined)
+
+    def test_execute_requirements_allows_no_generation(self):
+        payload = empty_payload(phase="EXECUTE")
+        payload["meta"]["phase"] = "EXECUTE"
+        payload["artefacts"]["proposed"] = [{"kind": "workbook", "title": "Workbook", "notes": "TBD from user input"}]
+        payload["artefacts"]["generated"] = []
+        payload["artefacts"]["requirements"] = {
+            "workbook": ["Audience profile", "Session objectives"],
+        }
+        ok, parsed_payload, errors = validate_derax_text(json.dumps(payload))
+        self.assertTrue(ok, msg=str(errors))
+        self.assertIsInstance(parsed_payload, dict)
