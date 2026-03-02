@@ -361,8 +361,15 @@ def _guess_execute_kind(text: str) -> str:
 
 
 def _coerce_execute_payload_shape(payload: dict) -> dict:
-    out = _as_dict(payload)
-    artefacts = _as_dict(out.get("artefacts"))
+    src = _as_dict(payload)
+    out = empty_payload(WorkItem.PHASE_EXECUTE)
+    out["meta"]["phase"] = WorkItem.PHASE_EXECUTE
+    out["canonical_summary"] = str(src.get("canonical_summary") or "").strip()
+    out["intent"] = _as_dict(src.get("intent")) if isinstance(src.get("intent"), dict) else out["intent"]
+    out["explore"] = _as_dict(src.get("explore")) if isinstance(src.get("explore"), dict) else out["explore"]
+    out["parked_for_later"] = _as_dict(src.get("parked_for_later")) if isinstance(src.get("parked_for_later"), dict) else out["parked_for_later"]
+    out["validation"] = _as_dict(src.get("validation")) if isinstance(src.get("validation"), dict) else out["validation"]
+    artefacts = _as_dict(src.get("artefacts"))
     proposed_rows = []
     for row in list(artefacts.get("proposed") or []):
         if isinstance(row, dict):
@@ -399,6 +406,20 @@ def _coerce_execute_payload_shape(payload: dict) -> dict:
                 "notes": "",
             }
         )
+    if not proposed_rows:
+        # Recovery path: if model only gave requirements-by-kind, derive proposed rows.
+        req_map = _as_dict(artefacts.get("requirements"))
+        for req_kind in req_map.keys():
+            kind = str(req_kind or "").strip().lower()
+            if not kind:
+                continue
+            proposed_rows.append(
+                {
+                    "kind": kind,
+                    "title": kind.replace("_", " ").title(),
+                    "notes": "",
+                }
+            )
     artefacts["proposed"] = proposed_rows
     # Never trust model-authored generated rows. Generated rows are system-produced only.
     artefacts["generated"] = []

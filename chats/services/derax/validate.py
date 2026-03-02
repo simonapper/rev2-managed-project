@@ -23,7 +23,27 @@ def _listify(value: Any) -> list[str]:
 
 
 def _as_dict(value: Any) -> dict:
-    return dict(value) if isinstance(value, dict) else {}
+    if isinstance(value, dict):
+        try:
+            return {k: v for k, v in value.items()}
+        except Exception:
+            return {}
+    return {}
+
+
+def _mapping_items(value: Any) -> list[tuple[Any, Any]]:
+    if isinstance(value, dict):
+        try:
+            return list(value.items())
+        except Exception:
+            return []
+    if isinstance(value, list):
+        items: list[tuple[Any, Any]] = []
+        for row in value:
+            if isinstance(row, (list, tuple)) and len(row) == 2:
+                items.append((row[0], row[1]))
+        return items
+    return []
 
 
 def _get_by_dotted_path(payload: dict, path: str):
@@ -118,10 +138,6 @@ def _phase_policy_errors(payload: dict) -> list[str]:
     except Exception:
         return errors
 
-    for pref in list(manifest.get("forbidden_prefixes") or []):
-        if _forbidden_prefix_has_content(payload, str(pref)):
-            errors.append(f"Forbidden content present under {pref} for phase {phase}")
-
     if phase == "EXECUTE":
         artefacts = _as_dict(payload.get("artefacts"))
         proposed = list(artefacts.get("proposed") or [])
@@ -161,6 +177,10 @@ def _phase_policy_errors(payload: dict) -> list[str]:
 
     if phase != "DEFINE":
         return errors
+
+    for pref in list(manifest.get("forbidden_prefixes") or []):
+        if _forbidden_prefix_has_content(payload, str(pref)):
+            errors.append(f"Forbidden content present under {pref} for phase {phase}")
 
     define_caps = {
         "intent.open_questions": 3,
@@ -247,6 +267,13 @@ def _normalise_payload_shape(payload: dict) -> dict:
         "tradeoffs",
         "reframes",
     }
+    root_meta_alias_keys = {
+        "derax_version",
+        "tko_id",
+        "timestamp",
+        "source_chat_id",
+        "source_turn_id",
+    }
 
     def _apply_local_shape_rules(obj: dict) -> dict:
         if canonical_keys.issubset(set(obj.keys())):
@@ -261,6 +288,18 @@ def _normalise_payload_shape(payload: dict) -> dict:
             for key in canonical_keys:
                 if key in obj:
                     seeded[key] = obj.get(key)
+            seeded_meta = _as_dict(seeded.get("meta"))
+            if not _stringify(seeded_meta.get("derax_version")):
+                seeded_meta["derax_version"] = _stringify(obj.get("derax_version"))
+            if not _stringify(seeded_meta.get("tko_id")):
+                seeded_meta["tko_id"] = _stringify(obj.get("tko_id"))
+            if not _stringify(seeded_meta.get("timestamp")):
+                seeded_meta["timestamp"] = _stringify(obj.get("timestamp"))
+            if not _stringify(seeded_meta.get("source_chat_id")):
+                seeded_meta["source_chat_id"] = _stringify(obj.get("source_chat_id"))
+            if not _stringify(seeded_meta.get("source_turn_id")):
+                seeded_meta["source_turn_id"] = _stringify(obj.get("source_turn_id"))
+            seeded["meta"] = seeded_meta
             return seeded
 
         # Root-alias payload: phase + flat fields without canonical envelope.
@@ -279,6 +318,28 @@ def _normalise_payload_shape(payload: dict) -> dict:
     out = _apply_local_shape_rules(out)
     if canonical_keys.issubset(set(out.keys())):
         return out
+
+    # Root meta-alias payload: top-level phase/meta fragments.
+    if _stringify(out.get("phase")) and len(set(out.keys()).intersection(root_meta_alias_keys)) >= 2:
+        phase_guess = _stringify(out.get("phase")).upper() or "DEFINE"
+        seeded = empty_payload(phase_guess)
+        for key in canonical_keys:
+            if key in out:
+                seeded[key] = out.get(key)
+        seeded_meta = _as_dict(seeded.get("meta"))
+        seeded_meta["phase"] = phase_guess
+        if not _stringify(seeded_meta.get("derax_version")):
+            seeded_meta["derax_version"] = _stringify(out.get("derax_version"))
+        if not _stringify(seeded_meta.get("tko_id")):
+            seeded_meta["tko_id"] = _stringify(out.get("tko_id"))
+        if not _stringify(seeded_meta.get("timestamp")):
+            seeded_meta["timestamp"] = _stringify(out.get("timestamp"))
+        if not _stringify(seeded_meta.get("source_chat_id")):
+            seeded_meta["source_chat_id"] = _stringify(out.get("source_chat_id"))
+        if not _stringify(seeded_meta.get("source_turn_id")):
+            seeded_meta["source_turn_id"] = _stringify(out.get("source_turn_id"))
+        seeded["meta"] = seeded_meta
+        out = seeded
 
     # Unwrap common wrappers first.
     for key in ("payload", "data", "response", "result", "output", "json"):
@@ -344,31 +405,49 @@ def _normalise_alias_fields(payload: dict) -> dict:
     out["meta"] = meta
 
     if not _stringify(intent.get("destination")):
+        intent["destination"] = _stringify(intent.get("end_in_mind"))
+    if not _stringify(intent.get("destination")):
+        intent["destination"] = _stringify(intent.get("goal"))
+    if not _stringify(intent.get("destination")):
         intent["destination"] = _stringify(core.get("end_in_mind"))
     if not _stringify(intent.get("destination")):
         intent["destination"] = _stringify(out.get("destination"))
+    if not _stringify(intent.get("destination")):
+        intent["destination"] = _stringify(out.get("end_in_mind"))
+    if not _listify(intent.get("success_criteria")):
+        intent["success_criteria"] = _listify(intent.get("destination_conditions"))
     if not _listify(intent.get("success_criteria")):
         intent["success_criteria"] = _listify(core.get("destination_conditions"))
     if not _listify(intent.get("success_criteria")):
         intent["success_criteria"] = _listify(out.get("success_criteria"))
     if not _listify(intent.get("constraints")):
+        intent["constraints"] = _listify(intent.get("limits"))
+    if not _listify(intent.get("constraints")):
         intent["constraints"] = _listify(core.get("assumptions"))
     if not _listify(intent.get("constraints")):
         intent["constraints"] = _listify(out.get("constraints"))
+    if not _listify(intent.get("non_goals")):
+        intent["non_goals"] = _listify(intent.get("out_of_scope"))
     if not _listify(intent.get("non_goals")):
         intent["non_goals"] = _listify(core.get("non_goals"))
     if not _listify(intent.get("non_goals")):
         intent["non_goals"] = _listify(out.get("non_goals"))
     if not _listify(intent.get("assumptions")):
+        intent["assumptions"] = _listify(intent.get("hypotheses"))
+    if not _listify(intent.get("assumptions")):
         intent["assumptions"] = _listify(core.get("assumptions"))
     if not _listify(intent.get("assumptions")):
         intent["assumptions"] = _listify(out.get("assumptions"))
+    if not _listify(intent.get("open_questions")):
+        intent["open_questions"] = _listify(intent.get("questions"))
     if not _listify(intent.get("open_questions")):
         intent["open_questions"] = _listify(core.get("ambiguities"))
     if not _listify(intent.get("open_questions")):
         intent["open_questions"] = _listify(out.get("open_questions"))
     out["intent"] = intent
 
+    if not _listify(explore.get("adjacent_ideas")):
+        explore["adjacent_ideas"] = _listify(explore.get("adjacent_angles"))
     if not _listify(explore.get("adjacent_ideas")):
         explore["adjacent_ideas"] = _listify(core.get("adjacent_angles"))
     if not _listify(explore.get("adjacent_ideas")):
@@ -377,6 +456,8 @@ def _normalise_alias_fields(payload: dict) -> dict:
         explore["risks"] = _listify(core.get("risks"))
     if not _listify(explore.get("risks")):
         explore["risks"] = _listify(out.get("risks"))
+    if not _listify(explore.get("tradeoffs")):
+        explore["tradeoffs"] = _listify(explore.get("scope_changes"))
     if not _listify(explore.get("tradeoffs")):
         explore["tradeoffs"] = _listify(core.get("scope_changes"))
     if not _listify(explore.get("tradeoffs")):
@@ -405,6 +486,11 @@ def _normalise_alias_fields(payload: dict) -> dict:
             parked_rows.append({"title": text, "detail": ""})
     parked["items"] = parked_rows
     out["parked_for_later"] = parked
+
+    if not _stringify(out.get("canonical_summary")):
+        destination_summary = _stringify(intent.get("destination"))
+        if destination_summary:
+            out["canonical_summary"] = " ".join(destination_summary.split()[:10])
     return out
 
 
@@ -446,16 +532,14 @@ def _normalise_artefacts(payload: dict) -> dict:
 
     requirements_obj = {}
     raw_requirements = artefacts.get("requirements")
-    if isinstance(raw_requirements, dict):
-        for req_kind, req_values in dict(raw_requirements).items():
+    for req_kind, req_values in _mapping_items(raw_requirements):
             kind = _stringify(req_kind)
             if not kind:
                 continue
             requirements_obj[kind] = _listify(req_values)
     intake_obj = {}
     raw_intake = artefacts.get("intake")
-    if isinstance(raw_intake, dict):
-        for intake_key, intake_value in dict(raw_intake).items():
+    for intake_key, intake_value in _mapping_items(raw_intake):
             key = _stringify(intake_key)
             if not key:
                 continue

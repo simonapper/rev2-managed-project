@@ -274,3 +274,54 @@ class DeraxValidateTests(TestCase):
         ok, parsed_payload, errors = validate_derax_text(json.dumps(payload))
         self.assertTrue(ok, msg=str(errors))
         self.assertIsInstance(parsed_payload, dict)
+
+    def test_root_meta_alias_shape_is_normalised(self):
+        payload = {
+            "phase": "REFINE",
+            "derax_version": "v1",
+            "tko_id": "abc123",
+            "timestamp": "2026-03-02T10:00:00Z",
+            "source_chat_id": "22",
+            "source_turn_id": "109",
+            "intent": {
+                "destination": "Ship robust DERAX flow",
+                "destination_conditions": ["Stable through all stages"],
+                "limits": ["Small team"],
+                "non_goals": ["No major UI changes"],
+            },
+            "explore": {
+                "risks": ["Provider drift"],
+                "scope_changes": ["Less detail for speed"],
+            },
+            "parked_for_later": {"items": []},
+        }
+        ok, parsed_payload, errors = validate_derax_text(json.dumps(payload))
+        self.assertTrue(ok, msg=str(errors))
+        self.assertEqual((parsed_payload.get("meta") or {}).get("phase"), "REFINE")
+        self.assertEqual((parsed_payload.get("meta") or {}).get("source_turn_id"), "109")
+        self.assertEqual((parsed_payload.get("intent") or {}).get("success_criteria"), ["Stable through all stages"])
+        self.assertEqual((parsed_payload.get("intent") or {}).get("constraints"), ["Small team"])
+        self.assertEqual((parsed_payload.get("explore") or {}).get("tradeoffs"), ["Less detail for speed"])
+        self.assertEqual((parsed_payload.get("canonical_summary") or ""), "Ship robust DERAX flow")
+
+    def test_execute_accepts_pair_list_requirements_and_intake(self):
+        payload = empty_payload(phase="EXECUTE")
+        payload["meta"]["phase"] = "EXECUTE"
+        payload["artefacts"]["proposed"] = [{"kind": "workbook", "title": "Workbook", "notes": "Needs details"}]
+        payload["artefacts"]["generated"] = []
+        payload["artefacts"]["requirements"] = [
+            ["workbook", ["Audience", "Objectives"]],
+            ["ignored_bad_row", "Single value"],
+            ["bad", "row", "shape"],
+        ]
+        payload["artefacts"]["intake"] = [
+            ["0", {"status": "MISSING_INPUTS", "requirements": ["Audience"]}],
+            ["bad", "row", "shape"],
+        ]
+        ok, parsed_payload, errors = validate_derax_text(json.dumps(payload))
+        self.assertTrue(ok, msg=str(errors))
+        self.assertIsInstance(parsed_payload, dict)
+        artefacts = dict((parsed_payload or {}).get("artefacts") or {})
+        self.assertEqual(dict(artefacts.get("requirements") or {}).get("workbook"), ["Audience", "Objectives"])
+        intake = dict(artefacts.get("intake") or {})
+        self.assertEqual(dict(intake.get("0") or {}).get("status"), "MISSING_INPUTS")
