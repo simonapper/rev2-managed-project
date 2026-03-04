@@ -41,6 +41,50 @@ Turn selection is client-side; server still renders canonical HTML.-->
     background-color: #fff3cd !important;
   }
   .msg-ignored { opacity: 0.45; filter: grayscale(0.25); }
+  .rw-chat-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.2rem;
+    flex-wrap: wrap;
+  }
+  .rw-chat-toolbar .rw-topbar-btn {
+    min-width: 0 !important;
+  }
+  .rw-icon-btn {
+    width: 1.35rem;
+    height: 1.55rem;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  .rw-icon-btn i {
+    font-size: 1.02rem;
+  }
+  .rw-icon-label-btn {
+    width: 2.6rem;
+    min-width: 2.6rem;
+    max-width: 2.6rem;
+    min-height: 1.55rem;
+    padding: 0 0.2rem;
+    font-size: 0.8rem;
+    line-height: 1;
+  }
+  .rw-chat-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .rw-derax-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0;
+  }
 </style>
 <div class="rw-main-inner">
   <div class="rw-workarea">
@@ -50,42 +94,75 @@ Turn selection is client-side; server still renders canonical HTML.-->
         <!--<hr class="my-3">-->
 
         <!-- Top row: controls + input -->
-<div class="d-flex align-items-start justify-content-end mb-2">
-  <div class="d-flex flex-column align-items-end gap-1">
-    {% if ppde_return_url %}
-      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="{{ ppde_return_url }}">Return to PPDE</a>
+<div class="rw-chat-header-row">
+  <form method="post" action="{% url 'accounts:derax_toggle' chat.id %}" class="rw-derax-inline">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next_url_no_turn }}">
+    <div class="form-check m-0">
+      <input class="form-check-input" type="checkbox" id="rw-derax-enabled" name="enabled" value="1" {% if chat.derax_enabled %}checked{% endif %} onchange="this.form.submit()">
+      <label class="form-check-label small" for="rw-derax-enabled">DERAX</label>
+    </div>
+    {% if chat.derax_enabled %}
+      <span class="small text-secondary">On</span>
     {% endif %}
+  </form>
+
+  <div class="rw-chat-toolbar">
+    {% if ppde_return_url %}
+      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2 rw-icon-label-btn" href="{{ ppde_return_url }}">PPDE</a>
+    {% endif %}
+    {% if fullscreen %}
+      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs rw-icon-btn"
+         href="?{{ qs_normal }}"
+         title="Exit full screen"
+         aria-label="Exit full screen">
+        <i class="bi bi-fullscreen-exit"></i>
+      </a>
+    {% else %}
+      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs rw-icon-btn"
+         href="?{{ qs_fullscreen }}"
+         title="Full screen"
+         aria-label="Full screen">
+        <i class="bi bi-arrows-fullscreen"></i>
+      </a>
+    {% endif %}
+    {% if show_system %}
+      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs rw-icon-label-btn"
+         href="?{{ qs_no_system }}"
+         title="Hide system messages"
+         aria-label="Hide system messages">
+        -<i class="bi bi-info-circle ms-1"></i>
+      </a>
+    {% else %}
+      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs rw-icon-label-btn"
+         href="?{{ qs_with_system }}"
+         title="Show system messages"
+         aria-label="Show system messages">
+        +<i class="bi bi-info-circle ms-1"></i>
+      </a>
+    {% endif %}
+    <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs rw-icon-btn"
+       href="{% url 'accounts:chat_detail_print' chat.id %}?{{ request.GET.urlencode }}"
+       target="_blank"
+       rel="noopener"
+       title="Print"
+       aria-label="Print">
+      <i class="bi bi-printer"></i>
+    </a>
     {% if topic_chat_return_url %}
       <form method="post" action="{% url 'accounts:chat_topic_delete' chat.id %}" class="m-0">
         {% csrf_token %}
-        <button type="submit" class="btn btn-outline-danger rw-topbar-btn rw-btn-xs py-1 px-2" onclick="return confirm('Delete this topic chat?');">Delete topic chat</button>
+        <button type="submit"
+                class="btn btn-outline-danger rw-topbar-btn rw-btn-xs rw-icon-btn"
+                title="Delete topic chat"
+                aria-label="Delete topic chat"
+                onclick="return confirm('Delete this topic chat?');">
+          <i class="bi bi-trash"></i>
+        </button>
       </form>
     {% endif %}
-    {% if fullscreen %}
-      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_normal }}">Exit full screen</a>
-    {% else %}
-      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_fullscreen }}">Full screen</a>
-    {% endif %}
-    {% if show_system %}
-      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_no_system }}">Hide system</a>
-    {% else %}
-      <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="?{{ qs_with_system }}">Show system</a>
-    {% endif %}
-    <a class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs py-1 px-2" href="{% url 'accounts:chat_detail_print' chat.id %}?{{ request.GET.urlencode }}" target="_blank" rel="noopener">Print</a>
   </div>
 </div>
-
-<form method="post" action="{% url 'accounts:derax_toggle' chat.id %}" class="mb-2 d-flex align-items-center gap-2">
-  {% csrf_token %}
-  <input type="hidden" name="next" value="{{ next_url_no_turn }}">
-  <div class="form-check m-0">
-    <input class="form-check-input" type="checkbox" id="rw-derax-enabled" name="enabled" value="1" {% if chat.derax_enabled %}checked{% endif %} onchange="this.form.submit()">
-    <label class="form-check-label small" for="rw-derax-enabled">DERAX</label>
-  </div>
-  {% if chat.derax_enabled %}
-    <span class="small text-secondary">DERAX mode is on for this chat.</span>
-  {% endif %}
-</form>
 
 <form method="post" action="{% url 'accounts:chat_message_create' %}" enctype="multipart/form-data">
   {% csrf_token %}
@@ -193,18 +270,20 @@ Turn selection is client-side; server still renders canonical HTML.-->
   </form>
 {% endif %}
 
-        <div class="d-flex align-items-center gap-2 mb-2">
-          <form method="post" action="{% url 'accounts:chat_use_selected' %}" id="rw-use-selected-form" class="d-flex gap-2 m-0">
-            {% csrf_token %}
-            <input type="hidden" name="chat_id" value="{{ chat.id }}">
-            <input type="hidden" name="selected_text" id="rw-selected-text" value="">
-            <input type="hidden" name="apply_mode" id="rw-selected-mode" value="replace">
-            <button type="button" class="btn btn-sm btn-outline-primary" data-apply-mode="replace">Use selected (replace)</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-mode="append">Use selected (append)</button>
-            <button type="button" class="btn btn-sm btn-outline-primary" data-apply-mode="replace" data-source="input">Use input (replace)</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-mode="append" data-source="input">Use input (append)</button>
-          </form>
-        </div>
+        {% if chat.derax_enabled %}
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <form method="post" action="{% url 'accounts:chat_use_selected' %}" id="rw-use-selected-form" class="d-flex gap-2 m-0">
+              {% csrf_token %}
+              <input type="hidden" name="chat_id" value="{{ chat.id }}">
+              <input type="hidden" name="selected_text" id="rw-selected-text" value="">
+              <input type="hidden" name="apply_mode" id="rw-selected-mode" value="replace">
+              <button type="button" class="btn btn-sm btn-outline-primary" data-apply-mode="replace">Use selected (replace)</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-mode="append">Use selected (append)</button>
+              <button type="button" class="btn btn-sm btn-outline-primary" data-apply-mode="replace" data-source="input">Use input (replace)</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary" data-apply-mode="append" data-source="input">Use input (append)</button>
+            </form>
+          </div>
+        {% endif %}
 
         {# Attachments list #}
         {% if attachments %}

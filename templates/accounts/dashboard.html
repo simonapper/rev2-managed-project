@@ -57,10 +57,18 @@
                           {# Optional tiny status hint (ASCII only) #}
                           <div class="text-muted mt-1" style="font-size:0.75rem;">
                             Status:
-                            {% if p.kind == "SANDBOX" %}
+                            {% if p.workflow_mode == "DERAX_WORK" %}
+                              <span class="badge bg-primary">DERAX</span>
+                            {% elif p.kind == "SANDBOX" %}
                               <span class="badge bg-secondary">SANDBOX</span>
                             {% elif p.defined_cko %}
                               <span class="badge bg-success">DEFINED</span>
+                            {% elif p.status == "ACTIVE" %}
+                              <span class="badge bg-success">ACTIVE</span>
+                            {% elif p.status == "PAUSED" %}
+                              <span class="badge bg-warning text-dark">PAUSED</span>
+                            {% elif p.status == "ARCHIVED" %}
+                              <span class="badge bg-dark">ARCHIVED</span>
                             {% else %}
                               <span class="badge bg-warning text-dark">UNASSIGNED</span>
                             {% endif %}

@@ -3,6 +3,28 @@
 {% extends "base.html" %}
 
 {% block content %}
+<style>
+  .rw-project-link {
+    color: inherit;
+    text-decoration: none;
+  }
+  .rw-project-link:hover {
+    text-decoration: underline;
+  }
+  .rw-project-icon-btn {
+    width: 1.35rem;
+    height: 1.35rem;
+    min-width: 1.35rem;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  .rw-project-icon-btn i {
+    font-size: 0.9rem;
+  }
+</style>
 <div class="container-fluid px-4 pt-1 pb-3 rw-browse">
 
   <div class="d-flex align-items-center justify-content-between mb-3">
@@ -44,6 +66,7 @@
                     {% if sort == 'owner' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
                   </a>
                 </th>
+                <th>Type</th>
                 <th class="rw-updated-col">
                   <a href="?sort=updated&dir={% if sort == 'updated' and dir == 'asc' %}desc{% else %}asc{% endif %}{% if page_obj.number %}&page={{ page_obj.number }}{% endif %}">
                     Updated
@@ -57,34 +80,41 @@
             <tbody>
               {% for p, can_rename in projects_with_permissions %}
                 <tr class="{% if p.kind == 'SANDBOX' %}rw-row-sandbox{% else %}rw-row-controlled{% endif %}">
-                  <td class="fw-semibold">{{ p.name }}</td>
+                  <td class="fw-semibold">
+                    <a class="rw-project-link" href="{% url 'accounts:project_home' p.id %}" title="Open project">
+                      {{ p.name }}
+                    </a>
+                  </td>
                   <td class="text-secondary">{{ p.owner.username }}</td>
+                  <td class="text-secondary small">
+                    {% if p.workflow_mode == "DERAX_WORK" %}
+                      DERAX
+                    {% elif p.kind == "SANDBOX" %}
+                      SANDBOX
+                    {% else %}
+                      {{ p.primary_type|default:"STANDARD" }}
+                    {% endif %}
+                  </td>
                   <td class="text-secondary small rw-updated-col">{{ p.updated_at }}</td>
                   <td class="text-start">
                       <div class="d-inline-flex gap-1 align-items-center">
-                        <a class="btn btn-sm btn-outline-primary rw-project-action"
-                           href="{% url 'accounts:project_config_edit' p.id %}">Edit</a>
-
-                        <a class="btn btn-sm btn-outline-success rw-project-action"
-                            href="{% url 'accounts:project_home' p.id %}">Select</a>
-
-                        {% if can_rename %}
-                          <a class="btn btn-sm btn-outline-primary rw-project-action"
-                             href="{% url 'projects:rename_project' p.id %}">Rename</a>
-                        {% endif %}
                         {% if request.user.is_superuser or p.owner_id == request.user.id %}
                           <form method="post" action="{% url 'accounts:project_export' p.id %}" class="d-inline-flex m-0 align-items-center">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-outline-primary rw-project-action"
+                            <button type="submit" class="btn btn-sm btn-outline-primary rw-project-action rw-project-icon-btn"
+                                    title="Export project"
+                                    aria-label="Export project"
                                     onclick="return confirm('Export this project and its chats to ZIP?');">
-                              Export
+                              <i class="bi bi-download"></i>
                             </button>
                           </form>
                           <form method="post" action="{% url 'accounts:project_delete' p.id %}" class="d-inline-flex m-0 align-items-center">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-outline-danger rw-project-action"
+                            <button type="submit" class="btn btn-sm btn-outline-danger rw-project-action rw-project-icon-btn"
+                                    title="Delete project"
+                                    aria-label="Delete project"
                                     onclick="return confirm('Permanently delete this project and all chats?');">
-                              Delete
+                              <i class="bi bi-trash"></i>
                             </button>
                           </form>
                         {% endif %}

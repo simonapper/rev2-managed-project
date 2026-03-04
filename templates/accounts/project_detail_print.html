@@ -27,7 +27,7 @@
     <h1>{{ project.name }}</h1>
     <div class="small">Owner: {{ project.owner.username }}</div>
     <div class="small">Kind: {{ project.kind }}</div>
-    <div class="small">Status: {% if project.defined_cko_id %}DEFINED{% else %}UNDEFINED{% endif %}</div>
+    <div class="small">Status: {{ project.status }}</div>
     <div class="small">Generated: {{ generated_at|date:"Y-m-d H:i" }}</div>
     <div class="actions">
       <button type="button" class="btn" onclick="window.print();">Print</button>

@@ -4,6 +4,28 @@
 {% block title %}Browse Chats — Reasoning Workbench{% endblock %}
 
 {% block content %}
+<style>
+  .rw-chat-link {
+    color: inherit;
+    text-decoration: none;
+  }
+  .rw-chat-link:hover {
+    text-decoration: underline;
+  }
+  .rw-chat-icon-btn {
+    width: 1.35rem;
+    height: 1.35rem;
+    min-width: 1.35rem;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  .rw-chat-icon-btn i {
+    font-size: 0.9rem;
+  }
+</style>
 
 <div class="container-fluid px-4 pt-1 pb-3 rw-browse">
     {% if active_project %}
@@ -125,7 +147,11 @@
               {% for c in page_obj.object_list %}
                 {% with row_color=c.row_color %}
                 <tr>
-                  <td class="fw-semibold" style="background-color: {{ row_color }};">{{ c.title }}</td>
+                  <td class="fw-semibold" style="background-color: {{ row_color }};">
+                    <a class="rw-chat-link" href="{% url 'accounts:chat_detail' c.id %}" title="Open chat">
+                      {{ c.title }}
+                    </a>
+                  </td>
                   <td class="text-secondary" style="background-color: {{ row_color }};">{{ c.project.name }}</td>
                   <td class="text-secondary" style="background-color: {{ row_color }};">{{ c.created_by.username }}</td>
                   <td class="text-center text-secondary small" style="background-color: {{ row_color }};">{{ c.turn_count }}</td>
@@ -139,20 +165,17 @@
                 </td>         
                   <td class="text-end" style="background-color: {{ row_color }};">
                     <div class="d-inline-flex gap-1">
-
-                    <a class="btn btn-sm rw-btn-xs btn-outline-secondary rw-chat-action"
-                       href="{% url 'accounts:chat_detail' c.id %}">
-                      Open
-                    </a>
                     {% if request.user.is_superuser or c.project.owner_id == request.user.id %}
                         <form method="post"
                             action="{% url 'accounts:chat_export' c.id %}"
                             class="d-inline">
                         {% csrf_token %}
                         <button type="submit"
-                                class="btn btn-sm rw-btn-xs btn-outline-primary rw-chat-action"
+                                class="btn btn-sm rw-btn-xs btn-outline-primary rw-chat-action rw-chat-icon-btn"
+                                title="Export chat"
+                                aria-label="Export chat"
                                 onclick="return confirm('Export this chat to ZIP?');">
-                          Export
+                          <i class="bi bi-download"></i>
                         </button>
                         </form>
 
@@ -161,9 +184,11 @@
                             class="d-inline">
                         {% csrf_token %}
                         <button type="submit"
-                                class="btn btn-sm rw-btn-xs btn-outline-danger rw-chat-action"
+                                class="btn btn-sm rw-btn-xs btn-outline-danger rw-chat-action rw-chat-icon-btn"
+                                title="Delete chat"
+                                aria-label="Delete chat"
                                 onclick="return confirm('Permanently delete this chat?');">
-                          Delete
+                          <i class="bi bi-trash"></i>
                         </button>
                         </form>
                     {% endif %}

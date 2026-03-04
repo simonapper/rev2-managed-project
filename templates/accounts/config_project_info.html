@@ -56,7 +56,7 @@
             <div class="small text-secondary">
               Owner: {{ project.owner }} |
               Kind: {{ project.kind }} |
-              Status: {% if project.defined_cko_id %}DEFINED{% else %}UNDEFINED{% endif %}
+              Status: {{ project.status }}
             </div>
             <div class="small text-muted mt-1">
               Created: {{ project.created_at }} |
