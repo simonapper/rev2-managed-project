@@ -5,6 +5,68 @@
 {% block title %}Dashboard — Reasoning Workbench{% endblock %}
 
 {% block content %}
+<style>
+  .rw-dashboard-status {
+    margin-top: 0.25rem;
+    min-height: 1.25rem;
+  }
+  .rw-dashboard-status .badge {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    padding: 0.22rem 0.42rem;
+    font-size: 0.68rem;
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  @media (max-width: 576px) {
+    .rw-dashboard-status .badge {
+      padding: 0.18rem 0.34rem;
+      font-size: 0.62rem;
+    }
+  }
+  /* Intermediate viewport band where Bootstrap xl tile density is too tight. */
+  @media (min-width: 1200px) and (max-width: 1620px) {
+    .rw-project-tiles > div {
+      flex: 0 0 20%;
+      max-width: 20%;
+    }
+  }
+  @media (min-width: 1200px) and (max-width: 1620px) and (max-width: 1360px) {
+    .rw-project-tiles > div {
+      flex: 0 0 25%;
+      max-width: 25%;
+    }
+  }
+  @media (min-width: 992px) and (max-width: 1080px) {
+    .rw-project-tiles > div {
+      flex: 0 0 33.333333%;
+      max-width: 33.333333%;
+    }
+  }
+  @media (min-width: 1090px) and (max-width: 1144px) {
+    .rw-project-tiles > div {
+      flex: 0 0 33.333333%;
+      max-width: 33.333333%;
+    }
+  }
+  .rw-vp-probe {
+    position: fixed;
+    right: 0.6rem;
+    bottom: 0.6rem;
+    z-index: 1200;
+    padding: 0.25rem 0.45rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.35rem;
+    background: rgba(255, 255, 255, 0.94);
+    color: #0f172a;
+    font-size: 0.68rem;
+    line-height: 1;
+    font-weight: 600;
+  }
+</style>
 <div class="rw-main-inner">
 
   {# Header: dashboard actions #}
@@ -55,8 +117,7 @@
                           </div>
 
                           {# Optional tiny status hint (ASCII only) #}
-                          <div class="text-muted mt-1" style="font-size:0.75rem;">
-                            Status:
+                          <div class="rw-dashboard-status">
                             {% if p.workflow_mode == "DERAX_WORK" %}
                               <span class="badge bg-primary">DERAX</span>
                             {% elif p.kind == "SANDBOX" %}
@@ -132,4 +193,20 @@
   </div>
 
 </div>
+{% if request.GET.vp %}
+  <div id="rw-vp-probe" class="rw-vp-probe" aria-live="polite"></div>
+  <script>
+    (function () {
+      var node = document.getElementById("rw-vp-probe");
+      if (!node) return;
+      function renderVp() {
+        var w = window.innerWidth || 0;
+        var h = window.innerHeight || 0;
+        node.textContent = "Viewport " + w + "x" + h;
+      }
+      window.addEventListener("resize", renderVp);
+      renderVp();
+    })();
+  </script>
+{% endif %}
 {% endblock %}
