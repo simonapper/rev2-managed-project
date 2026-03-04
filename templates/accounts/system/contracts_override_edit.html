@@ -15,7 +15,9 @@
         <textarea class="form-control" id="override_text" name="override_text" rows="16">{{ override_text }}</textarea>
       </div>
       <button class="btn btn-primary" type="submit">Save</button>
-      <a class="btn btn-outline-secondary" href="{% url 'accounts:system_contracts_dashboard' %}?key={{ contract_key|urlencode }}&mode=effective">Back</a>
+      <a class="btn btn-outline-secondary" href="{% url 'accounts:system_contracts_dashboard' %}?key={{ contract_key|urlencode }}&mode=effective" title="Back" aria-label="Back">
+        <i class="bi bi-arrow-left"></i>
+      </a>
     </div>
   </form>
 </div>

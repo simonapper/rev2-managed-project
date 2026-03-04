@@ -12,7 +12,9 @@
       </div>
     </div>
     <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="{% url 'accounts:system_settings_home' %}">Back</a>
+      <a class="btn btn-outline-secondary" href="{% url 'accounts:system_settings_home' %}" title="Back" aria-label="Back">
+        <i class="bi bi-arrow-left"></i>
+      </a>
       <a class="btn btn-primary" href="{% url 'accounts:system_config_version_new' cfg.id %}">New version</a>
     </div>
   </div>

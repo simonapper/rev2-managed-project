@@ -75,8 +75,11 @@
                     Edit intent
                   </button>
                   <a class="btn btn-sm btn-outline-secondary"
-                     href="{% url 'projects:project_review_print_intent' project.id %}?view={{ intent_view_style }}" target="_blank">
-                    Print
+                     href="{% url 'projects:project_review_print_intent' project.id %}?view={{ intent_view_style }}"
+                     target="_blank"
+                     title="Print"
+                     aria-label="Print">
+                    <i class="bi bi-printer"></i>
                   </a>
                 {% endif %}
                 {% if s.marker == "EXECUTE" %}
@@ -85,8 +88,11 @@
                     Edit execute
                   </button>
                   <a class="btn btn-sm btn-outline-secondary"
-                     href="{% url 'projects:project_review_print_execute' project.id %}?view={{ intent_view_style }}" target="_blank">
-                    Print
+                     href="{% url 'projects:project_review_print_execute' project.id %}?view={{ intent_view_style }}"
+                     target="_blank"
+                     title="Print"
+                     aria-label="Print">
+                    <i class="bi bi-printer"></i>
                   </a>
                 {% endif %}
                 {% if s.marker == "EXECUTE" and s.can_reseed_execute %}
@@ -169,8 +175,11 @@
                 {% endif %}
                 {% if s.marker == "ROUTE" %}
                   <a class="btn btn-sm btn-outline-secondary"
-                     href="{% url 'projects:project_review_print_route' project.id %}?view={{ intent_view_style }}" target="_blank">
-                    Print
+                     href="{% url 'projects:project_review_print_route' project.id %}?view={{ intent_view_style }}"
+                     target="_blank"
+                     title="Print"
+                     aria-label="Print">
+                    <i class="bi bi-printer"></i>
                   </a>
                 {% endif %}
               </div>

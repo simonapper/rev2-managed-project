@@ -98,7 +98,9 @@
         <div class="d-flex align-items-center justify-content-between mb-2">
           <h5 class="card-title mb-0">Boundaries</h5>
           {% if policy_docs_help_url %}
-            <a class="btn btn-sm btn-outline-secondary" href="{{ policy_docs_help_url }}">Help</a>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ policy_docs_help_url }}" title="Help" aria-label="Help">
+              <i class="bi bi-question-circle"></i>
+            </a>
           {% endif %}
         </div>
         <div class="row g-3">
@@ -132,7 +134,9 @@
 
     <!-- Actions -->
     <div class="rw-actionbar mt-2">
-      <a href="{% url 'accounts:config_menu' %}" class="btn btn-sm btn-outline-secondary">Back</a>
+      <a href="{% url 'accounts:config_menu' %}" class="btn btn-sm btn-outline-secondary" title="Back" aria-label="Back">
+        <i class="bi bi-arrow-left"></i>
+      </a>
       <button type="submit" class="btn btn-sm btn-primary">Save</button>
     </div>
 

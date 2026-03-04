@@ -8,7 +8,9 @@
       <h5 class="mb-1">{% if contract %}Edit Phase Contract{% else %}New Phase Contract{% endif %}</h5>
       <div class="text-muted small">Admin-only editing for PPDE contracts.</div>
     </div>
-    <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:system_phase_contracts_home' %}">Back</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:system_phase_contracts_home' %}" title="Back" aria-label="Back">
+      <i class="bi bi-arrow-left"></i>
+    </a>
   </div>
 
   <form method="post">

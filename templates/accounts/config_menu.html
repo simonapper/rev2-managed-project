@@ -11,7 +11,9 @@
       <h3 class="mb-1">Settings</h3>
     </div>
 
-    <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:dashboard' %}">Back</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:dashboard' %}" title="Back" aria-label="Back">
+      <i class="bi bi-arrow-left"></i>
+    </a>
   </div>
     <!--<div class="text-secondary small mb-2">
       debug: active_chat_id={{ active_chat_id|default:"(none)" }},

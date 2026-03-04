@@ -37,7 +37,14 @@
       <h5 class="mb-1">Browse Chats</h5>
       <div class="text-secondary small">Fast list view across accessible projects</div>
     </div>
-    <a class="btn btn-sm rw-btn-xs btn-outline-secondary" href="{% url 'accounts:chat_browse_print' %}?{{ request.GET.urlencode }}" target="_blank" rel="noopener">Print</a>
+    <a class="btn btn-sm rw-btn-xs btn-outline-secondary rw-chat-icon-btn"
+       href="{% url 'accounts:chat_browse_print' %}?{{ request.GET.urlencode }}"
+       target="_blank"
+       rel="noopener"
+       title="Print"
+       aria-label="Print">
+      <i class="bi bi-printer"></i>
+    </a>
   </div>
 
   <details class="rw-drawer mb-3">
@@ -210,17 +217,21 @@
             Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
           </div>
 
-         <div class="btn-group">
+          <div class="btn-group">
           {% if page_obj.has_previous %}
-            <a class="btn btn-sm rw-btn-xs btn-outline-secondary"
-               href="?project={{ filters.project }}&status={{ filters.status }}&q={{ filters.q }}&sort={{ sort }}&dir={{ dir }}&page={{ page_obj.previous_page_number }}">
-              Prev
+            <a class="btn btn-sm rw-btn-xs btn-outline-secondary rw-chat-icon-btn"
+               href="?project={{ filters.project }}&status={{ filters.status }}&q={{ filters.q }}&sort={{ sort }}&dir={{ dir }}&page={{ page_obj.previous_page_number }}"
+               title="Previous page"
+               aria-label="Previous page">
+              <i class="bi bi-chevron-left"></i>
             </a>
           {% endif %}
           {% if page_obj.has_next %}
-            <a class="btn btn-sm rw-btn-xs btn-outline-secondary"
-               href="?project={{ filters.project }}&status={{ filters.status }}&q={{ filters.q }}&sort={{ sort }}&dir={{ dir }}&page={{ page_obj.next_page_number }}">
-              Next
+            <a class="btn btn-sm rw-btn-xs btn-outline-secondary rw-chat-icon-btn"
+               href="?project={{ filters.project }}&status={{ filters.status }}&q={{ filters.q }}&sort={{ sort }}&dir={{ dir }}&page={{ page_obj.next_page_number }}"
+               title="Next page"
+               aria-label="Next page">
+              <i class="bi bi-chevron-right"></i>
             </a>
           {% endif %}
         </div>

@@ -124,7 +124,9 @@
             <div class="text-secondary small">Soft boundaries for this chat.</div>
           </div>
           {% if policy_docs_help_url %}
-            <a class="btn btn-outline-secondary rw-btn-xs" href="{{ policy_docs_help_url }}">Help</a>
+            <a class="btn btn-outline-secondary rw-btn-xs" href="{{ policy_docs_help_url }}" title="Help" aria-label="Help">
+              <i class="bi bi-question-circle"></i>
+            </a>
           {% endif %}
         </div>
 

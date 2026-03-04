@@ -21,7 +21,9 @@
           </div>
           <div class="d-flex gap-2">
             <a class="btn btn-sm btn-outline-primary" href="{% url 'projects:work_item_export' project.id %}">Export JSON</a>
-            <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:project_config_info' project.id %}">Back</a>
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:project_config_info' project.id %}" title="Back" aria-label="Back">
+              <i class="bi bi-arrow-left"></i>
+            </a>
           </div>
         </div>
       </div>

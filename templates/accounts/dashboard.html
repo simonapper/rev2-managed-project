@@ -79,7 +79,13 @@
     </div>
 
     <div class="ms-auto">
-      <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:dashboard_print' %}" target="_blank" rel="noopener">Print</a>
+      <a class="btn btn-sm btn-outline-secondary"
+         href="{% url 'accounts:dashboard_print' %}"
+         target="_blank" rel="noopener"
+         title="Print"
+         aria-label="Print">
+        <i class="bi bi-printer"></i>
+      </a>
     </div>
   </div>
 

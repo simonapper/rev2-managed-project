@@ -216,15 +216,18 @@
                 data-bs-toggle="offcanvas"
                 data-bs-target="#rwHelp"
                 aria-controls="rwHelp"
-                aria-label="Help">
-            Help
+                aria-label="Help"
+                title="Help">
+            <i class="bi bi-question-circle"></i>
         </button>
 
         <form action="{% url 'accounts:logout' %}" method="post" class="rw-inline-form rw-logout-form">
             {% csrf_token %}
             <button type="submit"
-                    class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs">
-                Logout
+                    class="btn btn-outline-secondary rw-topbar-btn rw-btn-xs"
+                    aria-label="Logout"
+                    title="Logout">
+                <i class="bi bi-box-arrow-right"></i>
             </button>
         </form>
 

@@ -4,6 +4,28 @@
 {% block title %}Project Chats — {{ active_project.name }}{% endblock %}
 
 {% block content %}
+<style>
+  .rw-project-chat-link {
+    color: inherit;
+    text-decoration: none;
+  }
+  .rw-project-chat-link:hover {
+    text-decoration: underline;
+  }
+  .rw-project-chat-icon-btn {
+    width: 1.35rem;
+    height: 1.35rem;
+    min-width: 1.35rem;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  .rw-project-chat-icon-btn i {
+    font-size: 0.9rem;
+  }
+</style>
 <div class="container-fluid px-4 py-4 rw-browse">
 
     <div class="d-flex align-items-center justify-content-between mb-3">
@@ -13,14 +35,18 @@
         </div>
 
         <div class="d-flex gap-2">
-          <a class="btn btn-sm btn-primary"
-             href="{% url 'accounts:chat_create' %}?project={{ active_project.id }}">
-            New chat
+          <a class="btn btn-sm btn-primary rw-project-chat-icon-btn"
+             href="{% url 'accounts:chat_create' %}?project={{ active_project.id }}"
+             title="New chat"
+             aria-label="New chat">
+            <i class="bi bi-plus-lg"></i>
           </a>
 
-          <a class="btn btn-sm btn-outline-secondary"
-             href="{% url 'accounts:project_config_list' %}">
-            Back
+          <a class="btn btn-sm btn-outline-secondary rw-project-chat-icon-btn"
+             href="{% url 'accounts:project_config_list' %}"
+             title="Back"
+             aria-label="Back">
+            <i class="bi bi-arrow-left"></i>
           </a>
         </div>
 
@@ -83,7 +109,11 @@
                   <tbody>
                     {% for c in page_obj.object_list %}
                     <tr>
-                        <td class="fw-semibold">{{ c.title }}</td>
+                        <td class="fw-semibold">
+                          <a class="rw-project-chat-link" href="{% url 'accounts:chat_select' c.id %}" title="Open chat">
+                            {{ c.title }}
+                          </a>
+                        </td>
                         <td class="text-secondary">{{ c.created_by.username }}</td>
                         <td class="text-secondary small">{{ c.updated_at }}</td>
 
@@ -97,18 +127,18 @@
 
                         <td class="text-end">
                         <div class="d-inline-flex gap-1 align-items-center">
-                            <a class="btn btn-sm btn-outline-secondary"
-                                href="{% url 'accounts:chat_select' c.id %}">
-                            Open
-                            </a>
-
                             {% if active_project.kind == "SANDBOX" and c.real_msg_count == 0 %}
                             <form method="post"
                                     action="{% url 'accounts:chat_delete' c.id %}"
                                     class="d-inline m-0"
                                     onsubmit="return confirm('Delete this empty chat?');">
                                 {% csrf_token %}
-                                <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                                <button class="btn btn-sm btn-outline-danger rw-project-chat-icon-btn"
+                                        type="submit"
+                                        title="Delete chat"
+                                        aria-label="Delete chat">
+                                  <i class="bi bi-trash"></i>
+                                </button>
                             </form>
                             {% endif %}
                         </div>
@@ -127,15 +157,19 @@
 
                 <div class="btn-group">
                   {% if page_obj.has_previous %}
-                    <a class="btn btn-sm btn-outline-secondary"
-                       href="?status={{ filters.status }}&q={{ filters.q }}&sort={{ sort }}&dir={{ dir }}&page={{ page_obj.previous_page_number }}">
-                      Prev
+                    <a class="btn btn-sm btn-outline-secondary rw-project-chat-icon-btn"
+                       href="?status={{ filters.status }}&q={{ filters.q }}&sort={{ sort }}&dir={{ dir }}&page={{ page_obj.previous_page_number }}"
+                       title="Previous page"
+                       aria-label="Previous page">
+                      <i class="bi bi-chevron-left"></i>
                     </a>
                   {% endif %}
                   {% if page_obj.has_next %}
-                    <a class="btn btn-sm btn-outline-secondary"
-                       href="?status={{ filters.status }}&q={{ filters.q }}&sort={{ sort }}&dir={{ dir }}&page={{ page_obj.next_page_number }}">
-                      Next
+                    <a class="btn btn-sm btn-outline-secondary rw-project-chat-icon-btn"
+                       href="?status={{ filters.status }}&q={{ filters.q }}&sort={{ sort }}&dir={{ dir }}&page={{ page_obj.next_page_number }}"
+                       title="Next page"
+                       aria-label="Next page">
+                      <i class="bi bi-chevron-right"></i>
                     </a>
                   {% endif %}
                 </div>

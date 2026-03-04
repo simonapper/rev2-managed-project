@@ -71,8 +71,10 @@
                 <span class="badge text-bg-primary">DERAX</span>
                 <a class="btn btn-sm btn-outline-dark pc-action-btn"
                    href="{% url 'accounts:project_detail_print' project.id %}"
-                   target="_blank" rel="noopener">
-                  Print
+                   target="_blank" rel="noopener"
+                   title="Print"
+                   aria-label="Print">
+                  <i class="bi bi-printer"></i>
                 </a>
               </div>
 
@@ -100,8 +102,10 @@
                 <span class="badge text-bg-primary">DERAX template</span>
                 <a class="btn btn-sm btn-outline-dark pc-action-btn"
                    href="{% url 'accounts:project_detail_print' project.id %}"
-                   target="_blank" rel="noopener">
-                  Print
+                   target="_blank" rel="noopener"
+                   title="Print"
+                   aria-label="Print">
+                  <i class="bi bi-printer"></i>
                 </a>
               </div>
 
@@ -140,45 +144,45 @@
                     </button>
                   </div>
                 </form>
-                <a class="btn btn-sm btn-outline-dark pc-action-btn"
-                   href="{% url 'accounts:project_detail_print' project.id %}"
-                   target="_blank" rel="noopener">
-                  Print
-                </a>
-              </div>
-
-              <div class="pc-toolbar-row">
                 <a class="btn btn-sm btn-outline-primary pc-action-btn"
                    href="{% url 'accounts:project_config_edit' project.id %}">
                   Edit
                 </a>
-                {% if active_wko %}
-                  <a class="btn btn-sm btn-primary pc-action-btn"
-                     href="{% url 'projects:ppde_detail' project.id %}">
-                    Definition
+                <a class="btn btn-sm btn-outline-dark pc-action-btn"
+                   href="{% url 'accounts:project_detail_print' project.id %}"
+                   target="_blank" rel="noopener"
+                   title="Print"
+                   aria-label="Print">
+                  <i class="bi bi-printer"></i>
+                </a>
+              </div>
+
+              <div class="pc-toolbar-row">
+                {% if planning_mode == "AUTO" %}
+                  <a class="btn btn-sm btn-warning pc-action-btn" href="{% url 'projects:project_review' project.id %}">
+                    Start
                   </a>
+                {% else %}
                   <a class="btn btn-sm btn-info pc-action-btn"
-                     href="{% url 'projects:wko_preview' project.id %}">
+                     href="{% url 'projects:pde_detail' project.id %}">
                     Intent
                   </a>
-                {% else %}
-                  <a class="btn btn-sm btn-primary pc-action-btn"
-                     href="{% url 'projects:pde_detail' project.id %}">
-                    Definition
-                  </a>
-                  {% if accepted_cko %}
-                    <a class="btn btn-sm btn-info pc-action-btn"
-                       href="{% url 'projects:cko_preview' project.id %}?accepted=1">
-                      Intent
+                  {% if active_wko or accepted_cko %}
+                    <a class="btn btn-sm btn-primary pc-action-btn"
+                       href="{% url 'projects:ppde_detail' project.id %}">
+                      Definition
+                    </a>
+                    <a class="btn btn-sm btn-success pc-action-btn" href="{% url 'projects:project_review' project.id %}">
+                      Plan
                     </a>
                   {% else %}
-                    <span class="btn btn-sm btn-outline-secondary pc-action-btn disabled" aria-disabled="true">Intent</span>
+                    <span class="btn btn-sm btn-outline-secondary pc-action-btn disabled"
+                          aria-disabled="true"
+                          title="Complete and accept PDE intent first.">Definition</span>
+                    <span class="btn btn-sm btn-outline-secondary pc-action-btn disabled"
+                          aria-disabled="true"
+                          title="Complete and accept PDE intent first.">Plan</span>
                   {% endif %}
-                {% endif %}
-                {% if planning_mode == "AUTO" %}
-                  <a class="btn btn-sm btn-warning pc-action-btn" href="{% url 'projects:project_review' project.id %}">Plan</a>
-                {% else %}
-                  <a class="btn btn-sm btn-success pc-action-btn" href="{% url 'projects:ppde_detail' project.id %}">Plan</a>
                 {% endif %}
               </div>
 
@@ -204,7 +208,9 @@
           <div class="pt-2">
             <div class="d-flex align-items-center justify-content-between mb-2">
               <div class="small text-secondary">Boundary rules for project and new chats.</div>
-              <a class="btn btn-sm btn-outline-secondary" href="{{ policy_docs_help_url }}">Help</a>
+              <a class="btn btn-sm btn-outline-secondary" href="{{ policy_docs_help_url }}" title="Help" aria-label="Help">
+                <i class="bi bi-question-circle"></i>
+              </a>
             </div>
             <form method="post" class="row g-2">
               {% csrf_token %}
@@ -245,7 +251,9 @@
           <div class="pt-2">
             <div class="d-flex align-items-center justify-content-between mb-2">
               <div class="small text-secondary">Store internal policy text for retrieval.</div>
-              <a class="btn btn-sm btn-outline-secondary" href="{% url 'projects:policy_docs_help' project.id %}">Help</a>
+              <a class="btn btn-sm btn-outline-secondary" href="{% url 'projects:policy_docs_help' project.id %}" title="Help" aria-label="Help">
+                <i class="bi bi-question-circle"></i>
+              </a>
             </div>
 
             <form method="post" class="row g-2 mb-3">
