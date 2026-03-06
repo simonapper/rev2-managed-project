@@ -85,6 +85,131 @@ Turn selection is client-side; server still renders canonical HTML.-->
     gap: 0.4rem;
     margin: 0;
   }
+  .rw-chat-dashboard {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+  .rw-chat-kpis {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .rw-chat-kpi {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.45rem;
+    padding: 0.18rem 0.45rem;
+    background: #f8fafc;
+    font-size: 0.7rem;
+    color: #334155;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .rw-turn-search-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  .rw-turn-search-input {
+    width: 220px;
+    max-width: 42vw;
+  }
+  .rw-turn-search-status {
+    font-size: 0.7rem;
+    color: #64748b;
+    min-height: 1rem;
+    margin-bottom: 0.4rem;
+  }
+  .rw-turn-list {
+    flex-basis: 340px !important;
+    max-height: 50vh !important;
+  }
+  .rw-turn-detail {
+    max-height: 70vh;
+  }
+  .rw-channel-input {
+    background: #f8fafc;
+    border-color: #e5e7eb;
+  }
+  .rw-channel-answer {
+    background: #f0f9ff;
+    border-color: #bae6fd;
+  }
+  .rw-channel-output,
+  .rw-channel-reasoning,
+  .rw-channel-system {
+    background: #fafafa;
+  }
+  .rw-turn-detail .rw-message-body {
+    line-height: 1.45;
+  }
+  .rw-turn-table th:first-child,
+  .rw-turn-table td:first-child {
+    width: 44px !important;
+    min-width: 44px !important;
+    max-width: 44px !important;
+  }
+  .rw-turn-table th:nth-child(3),
+  .rw-turn-table td:nth-child(3) {
+    width: 110px !important;
+    min-width: 110px !important;
+    max-width: 110px !important;
+  }
+  .rw-turn-table th:nth-child(2),
+  .rw-turn-table td:nth-child(2) {
+    width: auto !important;
+  }
+  mark.rw-hit {
+    background: #fde68a;
+    padding: 0 1px;
+    border-radius: 2px;
+  }
+  .rw-msg-actions-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.35rem;
+    margin-bottom: 0.18rem;
+  }
+  .rw-msg-action-icons {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  .rw-msg-action-icon {
+    width: 1.3rem;
+    height: 1.3rem;
+    min-width: 1.3rem;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  .rw-msg-action-icon i {
+    font-size: 0.82rem;
+  }
+  .rw-msg-state {
+    font-size: 0.68rem;
+    color: #64748b;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+  }
+  .rw-analysis-grid {
+    display: grid;
+    grid-template-columns: 1fr 180px;
+    gap: 0.4rem;
+    align-items: end;
+  }
+  @media (max-width: 780px) {
+    .rw-analysis-grid {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>
 <div class="rw-main-inner">
   <div class="rw-workarea">
@@ -191,12 +316,39 @@ Turn selection is client-side; server still renders canonical HTML.-->
   <div class="d-flex align-items-start gap-2 mb-2">
     <div class="flex-grow-1">
       <textarea id="rw-chat-input" name="content" class="form-control" rows="2" placeholder="Type message..."></textarea>
-      <div class="small text-secondary mt-1">Tip: use <code>/image your prompt</code> or <code>image your prompt</code> to generate an image.</div>
+      <div class="small text-secondary mt-1">To generate an image, start your message with <code>image </code> or <code>/image </code> followed by your prompt.</div>
     </div>
     <div class="d-flex flex-column align-items-end gap-1" style="min-width: 160px;">
       <button type="button" class="btn btn-sm btn-outline-secondary rw-btn-same rw-btn-file" id="rw-file-btn">Select file</button>
     </div>
   </div>
+
+  <details class="rw-channel mb-2">
+    <summary class="fw-semibold">Chat Analyser</summary>
+    <div class="pt-2">
+      <div class="rw-analysis-grid">
+        <div>
+          <label class="form-label small mb-1" for="rw-analysis-turns">Turn numbers</label>
+          <input id="rw-analysis-turns" name="analysis_turns" class="form-control form-control-sm" placeholder="Examples: 1-4,6,9-12">
+        </div>
+        <div>
+          <label class="form-label small mb-1" for="rw-analysis-action">Action</label>
+          <select id="rw-analysis-action" name="analysis_action" class="form-select form-select-sm">
+            <option value="SUMMARISE">Summarise</option>
+            <option value="INCONSISTENCIES">Check inconsistencies</option>
+            <option value="DECISIONS">Extract decisions</option>
+            <option value="RISKS">Extract risks</option>
+            <option value="ACTIONS">Extract actions</option>
+          </select>
+        </div>
+      </div>
+      <div class="mt-2">
+        <label class="form-label small mb-1" for="rw-analysis-note">Additional instruction</label>
+        <input id="rw-analysis-note" name="analysis_note" class="form-control form-control-sm" placeholder="Optional: scope, output format, focus areas">
+      </div>
+      <div class="small text-secondary mt-1">If set, selected turns are collated and passed with the action to the LLM.</div>
+    </div>
+  </details>
 
   <div id="rw-paste-status" class="small text-secondary mt-2"></div>
 
@@ -310,13 +462,27 @@ Turn selection is client-side; server still renders canonical HTML.-->
         {% if not turn_items %}
           <div class="alert alert-secondary mb-3">No messages yet.</div>
         {% else %}
+          <div class="rw-chat-dashboard">
+            <div class="rw-chat-kpis">
+              <span class="rw-chat-kpi">Turns: {{ turn_items|length }}</span>
+              <span class="rw-chat-kpi">Active: {% if active_turn %}#{{ active_turn.number }}{% else %}none{% endif %}</span>
+              <span class="rw-chat-kpi">System: {% if show_system %}shown{% else %}hidden{% endif %}</span>
+            </div>
+            <div class="rw-turn-search-wrap">
+              <input id="rw-turn-search" type="text" class="form-control form-control-sm rw-turn-search-input" placeholder="Search this chat...">
+              <button id="rw-turn-search-clear" type="button" class="btn btn-sm btn-outline-secondary" title="Clear search" aria-label="Clear search">
+                <i class="bi bi-x-lg"></i>
+              </button>
+            </div>
+          </div>
+          <div id="rw-turn-search-status" class="rw-turn-search-status"></div>
           <div class="rw-turn-split">
 
             <div class="rw-turn-list">
               <table class="rw-turn-table">
                 <thead>
                   <tr>
-                    <th style="width:70px;">
+                    <th style="width:44px;">
                       <a href="?{% if fullscreen %}fullscreen=1&{% endif %}turn_sort=number&turn_dir={% if turn_sort == 'number' and turn_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_turn %}&turn={{ active_turn.turn_id }}{% endif %}{% if show_system %}&system=1{% endif %}">
                         Turn
                       </a>
@@ -326,7 +492,7 @@ Turn selection is client-side; server still renders canonical HTML.-->
                         Title
                       </a>
                     </th>
-                    <th style="width:140px;">
+                    <th style="width:110px;">
                       <a href="?{% if fullscreen %}fullscreen=1&{% endif %}turn_sort=updated&turn_dir={% if turn_sort == 'updated' and turn_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_turn %}&turn={{ active_turn.turn_id }}{% endif %}{% if show_system %}&system=1{% endif %}">
                         Updated
                       </a>
@@ -339,6 +505,7 @@ Turn selection is client-side; server still renders canonical HTML.-->
                     <tr
                       data-turn-id="{{ t.turn_id }}"
                       data-active="{{ active_turn.turn_id|default:'' }}"
+                      data-search="{{ t.title|default:''|escape }} {{ t.input.raw_text|default:''|truncatechars:4000|escape }} {{ t.answer|default:''|truncatechars:4000|escape }} {{ t.output|default:''|truncatechars:4000|escape }} {{ t.reasoning|default:''|truncatechars:4000|escape }}"
                       data-pinned="{% if t.is_pinned %}1{% else %}0{% endif %}"
                       class="{% if active_turn and t.turn_id == active_turn.turn_id %}rw-turn-row-active{% endif %}{% if t.is_rolled_up %} msg-rolled-up{% endif %}{% if t.is_pinned %} msg-pinned{% endif %}{% if t.is_ignored %} msg-ignored{% endif %}">
                       <td>
@@ -356,7 +523,7 @@ Turn selection is client-side; server still renders canonical HTML.-->
                       <td>
                         <a class="rw-turn-rowlink"
                            href="?{% if fullscreen %}fullscreen=1&{% endif %}turn={{ t.turn_id }}{% if turn_sort %}&turn_sort={{ turn_sort }}{% endif %}{% if turn_dir %}&turn_dir={{ turn_dir }}{% endif %}{% if show_system %}&system=1{% endif %}">
-                          {{ t.created_at|date:"Y-m-d H:i" }}
+                          {{ t.created_at|date:"y-m-d H:i" }}
                         </a>
                       </td>
                     </tr>
@@ -374,7 +541,7 @@ Turn selection is client-side; server still renders canonical HTML.-->
                   <textarea id="rw-active-output" class="d-none" aria-hidden="true">{{ pane.output|default:"" }}</textarea>
                   <div class="d-flex flex-column gap-2">
                     {% if not is_system_turn %}
-                      <details open class="rw-channel">
+                      <details class="rw-channel rw-channel-input">
                         <summary class="fw-semibold">INPUT</summary>
                         <div class="pt-2">
                           {% if pane.input %}
@@ -387,10 +554,77 @@ Turn selection is client-side; server still renders canonical HTML.-->
                         </div>
                       </details>
 
-                        <details open class="rw-channel">
+                        <details class="rw-channel rw-channel-answer">
                           <summary class="fw-semibold">ANSWER</summary>
                           <div class="pt-2">
                             {% if pane.answer %}
+                              {% if pane.assistant %}
+                                <div class="rw-msg-actions-row">
+                                  {% if pane.display_answer_source == "output" or pane.assistant.importance == 'PINNED' or pane.input and pane.input.importance == 'PINNED' or pane.assistant.importance == 'IGNORE' %}
+                                    <div class="rw-msg-state me-auto">
+                                      {% if pane.display_answer_source == "output" %}
+                                        <span class="badge text-bg-info">From output</span>
+                                      {% endif %}
+                                      {% if pane.assistant.importance == 'PINNED' or pane.input and pane.input.importance == 'PINNED' %}
+                                        <span class="badge text-bg-warning">Pinned</span>
+                                      {% endif %}
+                                      {% if pane.assistant.importance == 'IGNORE' %}
+                                        <span class="badge text-bg-secondary">Ignored</span>
+                                      {% endif %}
+                                    </div>
+                                  {% endif %}
+                                  <div class="rw-msg-action-icons">
+                                    {% if pane.assistant.importance == 'PINNED' %}
+                                      <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0 rw-importance-form">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
+                                        <input type="hidden" name="importance" value="NORMAL">
+                                        <button type="submit" class="btn btn-sm btn-outline-warning rw-msg-action-icon" title="Unpin" aria-label="Unpin">
+                                          <i class="bi bi-pin-angle-fill"></i>
+                                        </button>
+                                      </form>
+                                    {% elif pane.input and pane.input.importance == 'PINNED' %}
+                                      <form method="post" action="{% url 'accounts:message_set_importance' pane.input.id %}" class="m-0 rw-importance-form">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
+                                        <input type="hidden" name="importance" value="NORMAL">
+                                        <button type="submit" class="btn btn-sm btn-outline-warning rw-msg-action-icon" title="Unpin" aria-label="Unpin">
+                                          <i class="bi bi-pin-angle-fill"></i>
+                                        </button>
+                                      </form>
+                                    {% else %}
+                                      <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0 rw-importance-form">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
+                                        <input type="hidden" name="importance" value="PINNED">
+                                        <button type="submit" class="btn btn-sm btn-outline-primary rw-msg-action-icon" title="Pin" aria-label="Pin">
+                                          <i class="bi bi-pin-angle"></i>
+                                        </button>
+                                      </form>
+                                    {% endif %}
+
+                                    {% if pane.assistant.importance == 'IGNORE' %}
+                                      <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0 rw-importance-form">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
+                                        <input type="hidden" name="importance" value="NORMAL">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary rw-msg-action-icon" title="Unignore" aria-label="Unignore">
+                                          <i class="bi bi-eye-slash-fill"></i>
+                                        </button>
+                                      </form>
+                                    {% else %}
+                                      <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0 rw-importance-form">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
+                                        <input type="hidden" name="importance" value="IGNORE">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary rw-msg-action-icon" title="Ignore" aria-label="Ignore">
+                                          <i class="bi bi-eye-slash"></i>
+                                        </button>
+                                      </form>
+                                    {% endif %}
+                                  </div>
+                                </div>
+                              {% endif %}
                               <div class="rw-message{% if pane.assistant and pane.assistant.importance == 'PINNED' %} msg-pinned{% endif %}{% if pane.assistant and pane.assistant.importance == 'IGNORE' %} msg-ignored{% endif %}{% if pane.assistant and chat.pinned_cursor_message_id and pane.assistant.id <= chat.pinned_cursor_message_id %} msg-rolled-up{% endif %}">
                                 {% if pane.is_derax %}
                                   <div class="rw-message-body">
@@ -536,7 +770,7 @@ Turn selection is client-side; server still renders canonical HTML.-->
                                     {% endif %}
                                   </div>
                                 {% else %}
-                                  <div class="rw-message-body">{{ pane.answer|linebreaksbr }}</div>
+                                  <div class="rw-message-body">{{ pane.display_answer|default:pane.answer|linebreaksbr }}</div>
                                 {% endif %}
                               </div>
                               {% if pane.generated_images %}
@@ -554,53 +788,12 @@ Turn selection is client-side; server still renders canonical HTML.-->
                                   {% endfor %}
                                 </div>
                               {% endif %}
-                              {% if pane.assistant %}
-                                <div class="d-flex gap-1 mt-2">
-                                  {% if pane.assistant.importance == 'PINNED' %}
-                                    <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0">
-                                      {% csrf_token %}
-                                      <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
-                                      <input type="hidden" name="importance" value="NORMAL">
-                                      <button type="submit" class="btn btn-sm btn-outline-primary">Unpin</button>
-                                    </form>
-                                  {% elif pane.input and pane.input.importance == 'PINNED' %}
-                                    <form method="post" action="{% url 'accounts:message_set_importance' pane.input.id %}" class="m-0">
-                                      {% csrf_token %}
-                                      <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
-                                      <input type="hidden" name="importance" value="NORMAL">
-                                      <button type="submit" class="btn btn-sm btn-outline-primary">Unpin</button>
-                                    </form>
-                                  {% else %}
-                                    <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0">
-                                      {% csrf_token %}
-                                      <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
-                                      <input type="hidden" name="importance" value="PINNED">
-                                      <button type="submit" class="btn btn-sm btn-outline-primary">Pin</button>
-                                    </form>
-                                  {% endif %}
-                                  {% if pane.assistant.importance == 'IGNORE' %}
-                                    <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0">
-                                      {% csrf_token %}
-                                      <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
-                                      <input type="hidden" name="importance" value="NORMAL">
-                                      <button type="submit" class="btn btn-sm btn-outline-secondary">Unignore</button>
-                                    </form>
-                                  {% else %}
-                                    <form method="post" action="{% url 'accounts:message_set_importance' pane.assistant.id %}" class="m-0">
-                                      {% csrf_token %}
-                                      <input type="hidden" name="next" value="{{ next_url_keep_turn }}">
-                                      <input type="hidden" name="importance" value="IGNORE">
-                                      <button type="submit" class="btn btn-sm btn-outline-secondary">Ignore</button>
-                                    </form>
-                                  {% endif %}
-                                </div>
-                              {% endif %}
                             {% else %}
                               <div class="text-secondary small">No ANSWER.</div>
                             {% endif %}
                           </div>
                         </details>
-                      <details class="rw-channel">
+                      <details class="rw-channel rw-channel-output">
                         <summary class="fw-semibold">OUTPUT</summary>
                         <div class="pt-2">
                           {% if pane.output %}
@@ -613,7 +806,7 @@ Turn selection is client-side; server still renders canonical HTML.-->
                         </div>
                       </details>
 
-                      <details class="rw-channel">
+                      <details class="rw-channel rw-channel-reasoning">
                         <summary class="fw-semibold">REASONING</summary>
                         <div class="pt-2">
                           {% if pane.reasoning %}
@@ -628,7 +821,7 @@ Turn selection is client-side; server still renders canonical HTML.-->
                     {% endif %}
 
                     {% if show_system %}
-                      <details class="rw-channel">
+                      <details class="rw-channel rw-channel-system">
                         <summary class="fw-semibold">SYSTEM</summary>
 
                         <div class="pt-2">
@@ -708,6 +901,7 @@ Turn selection is client-side; server still renders canonical HTML.-->
       var curDetail = qs(".rw-turn-detail");
       if (newDetail && curDetail) {
         curDetail.innerHTML = newDetail.innerHTML;
+        document.dispatchEvent(new CustomEvent("rw:turn-detail-swapped"));
       }
     }
 
@@ -763,6 +957,211 @@ Turn selection is client-side; server still renders canonical HTML.-->
         })
         .catch(function () {});
     });
+  })();
+
+  // ------------------------------------------------------------
+  // Dashboard search (turn list filter + detail highlight)
+  // ------------------------------------------------------------
+  (function () {
+    var input = document.getElementById("rw-turn-search");
+    var clearBtn = document.getElementById("rw-turn-search-clear");
+    var status = document.getElementById("rw-turn-search-status");
+    var list = document.querySelector(".rw-turn-list");
+    if (!input || !clearBtn || !status || !list) return;
+
+    function clearHighlights(root) {
+      if (!root) return;
+      var marks = root.querySelectorAll("mark.rw-hit");
+      marks.forEach(function (m) {
+        var parent = m.parentNode;
+        if (!parent) return;
+        parent.replaceChild(document.createTextNode(m.textContent || ""), m);
+        parent.normalize();
+      });
+    }
+
+    function highlightNode(root, needle) {
+      if (!root || !needle) return;
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: function (node) {
+          if (!node || !node.nodeValue) return NodeFilter.FILTER_REJECT;
+          var parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          var tag = (parent.tagName || "").toLowerCase();
+          if (tag === "script" || tag === "style" || tag === "mark" || parent.closest("mark")) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          if (!node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+
+      var textNodes = [];
+      while (walker.nextNode()) textNodes.push(walker.currentNode);
+      textNodes.forEach(function (tn) {
+        var text = tn.nodeValue || "";
+        var lower = text.toLowerCase();
+        var idx = lower.indexOf(needle);
+        if (idx < 0) return;
+
+        var frag = document.createDocumentFragment();
+        var rest = text;
+        var lowerRest = lower;
+        while (true) {
+          var hit = lowerRest.indexOf(needle);
+          if (hit < 0) {
+            if (rest) frag.appendChild(document.createTextNode(rest));
+            break;
+          }
+          if (hit > 0) {
+            frag.appendChild(document.createTextNode(rest.slice(0, hit)));
+          }
+          var mk = document.createElement("mark");
+          mk.className = "rw-hit";
+          mk.textContent = rest.slice(hit, hit + needle.length);
+          frag.appendChild(mk);
+          rest = rest.slice(hit + needle.length);
+          lowerRest = lowerRest.slice(hit + needle.length);
+        }
+        if (tn.parentNode) tn.parentNode.replaceChild(frag, tn);
+      });
+    }
+
+    function applyFilter() {
+      var q = String(input.value || "").trim().toLowerCase();
+      var rows = list.querySelectorAll("tbody tr[data-turn-id]");
+      var total = rows.length;
+      var visible = 0;
+      rows.forEach(function (row) {
+        var hay = String(row.getAttribute("data-search") || row.textContent || "").toLowerCase();
+        var hit = !q || hay.indexOf(q) >= 0;
+        row.style.display = hit ? "" : "none";
+        if (hit) visible += 1;
+      });
+
+      status.textContent = q ? ("Matches: " + visible + " of " + total) : "";
+
+      var detail = document.querySelector(".rw-turn-detail");
+      clearHighlights(detail);
+      if (q) highlightNode(detail, q);
+    }
+
+    clearBtn.addEventListener("click", function () {
+      input.value = "";
+      applyFilter();
+      input.focus();
+    });
+    input.addEventListener("input", applyFilter);
+    document.addEventListener("rw:turn-detail-swapped", applyFilter);
+  })();
+
+  // ------------------------------------------------------------
+  // Persist drawer state per chat (open/closed)
+  // ------------------------------------------------------------
+  (function () {
+    var storageKey = "rw_chat_drawers_{{ chat.id }}";
+
+    function readState() {
+      try {
+        var raw = localStorage.getItem(storageKey) || "{}";
+        var obj = JSON.parse(raw);
+        return (obj && typeof obj === "object") ? obj : {};
+      } catch (e) {
+        return {};
+      }
+    }
+
+    function writeState(state) {
+      try { localStorage.setItem(storageKey, JSON.stringify(state || {})); } catch (e) {}
+    }
+
+    function drawerKey(detailsEl, index) {
+      var summary = detailsEl && detailsEl.querySelector("summary");
+      var title = summary ? String(summary.textContent || "").trim() : "drawer";
+      return title + "#" + String(index || 0);
+    }
+
+    function initDrawers(root) {
+      var scope = root || document;
+      var detail = scope.querySelector(".rw-turn-detail");
+      if (!detail) return;
+      var drawers = detail.querySelectorAll("details.rw-channel");
+      if (!drawers.length) return;
+
+      var state = readState();
+      drawers.forEach(function (d, idx) {
+        var key = drawerKey(d, idx);
+        if (Object.prototype.hasOwnProperty.call(state, key)) {
+          d.open = !!state[key];
+        }
+        d.addEventListener("toggle", function () {
+          var cur = readState();
+          cur[key] = !!d.open;
+          writeState(cur);
+        });
+      });
+    }
+
+    initDrawers(document);
+    document.addEventListener("rw:turn-detail-swapped", function () {
+      initDrawers(document);
+    });
+  })();
+
+  // ------------------------------------------------------------
+  // Importance actions (pin/ignore) via AJAX (no page refresh)
+  // ------------------------------------------------------------
+  (function () {
+    async function refreshTurnPanels() {
+      var resp = await fetch(window.location.href, { credentials: "same-origin" });
+      if (!resp.ok) throw new Error("Refresh failed: " + resp.status);
+      var html = await resp.text();
+      var tmp = document.createElement("div");
+      tmp.innerHTML = html;
+
+      var newList = tmp.querySelector(".rw-turn-list");
+      var curList = document.querySelector(".rw-turn-list");
+      if (newList && curList) curList.innerHTML = newList.innerHTML;
+
+      var newDetail = tmp.querySelector(".rw-turn-detail");
+      var curDetail = document.querySelector(".rw-turn-detail");
+      if (newDetail && curDetail) {
+        curDetail.innerHTML = newDetail.innerHTML;
+        document.dispatchEvent(new CustomEvent("rw:turn-detail-swapped"));
+      }
+    }
+
+    document.addEventListener("submit", function (ev) {
+      var form = ev.target;
+      if (!form || !form.classList || !form.classList.contains("rw-importance-form")) return;
+      ev.preventDefault();
+
+      var fd = new FormData(form);
+      var submitBtn = form.querySelector("button[type='submit']");
+      if (submitBtn) submitBtn.disabled = true;
+
+      fetch(form.action, {
+        method: "POST",
+        body: fd,
+        credentials: "same-origin",
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+      })
+        .then(function (resp) {
+          return resp.json().then(function (data) {
+            if (!resp.ok || !data || !data.ok) {
+              throw new Error((data && data.error) ? data.error : "Action failed.");
+            }
+            return data;
+          });
+        })
+        .then(function () {
+          return refreshTurnPanels();
+        })
+        .catch(function (err) {
+          alert("Could not update importance: " + (err && err.message ? err.message : String(err)));
+          if (submitBtn) submitBtn.disabled = false;
+        });
+    }, true);
   })();
 
   // ------------------------------------------------------------

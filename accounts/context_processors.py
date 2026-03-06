@@ -13,7 +13,8 @@ from accounts.models_avatars import Avatar
 from config.models import SystemConfigPointers
 from projects.models import Project, UserProjectPrefs
 from projects.services_project_membership import accessible_projects_qs
-from chats.models import ChatMessage, ChatRollupEvent, ChatWorkspace
+from chats.models import ChatMessage, ChatWorkspace
+from chats.services.pinning import count_active_window_turns
 from projects.services.context_resolution import resolve_effective_context
 
 def topbar_context(request) -> Dict[str, Any]:
@@ -418,27 +419,9 @@ def active_chat_bar(request) -> Dict[str, Any]:
         request.session.modified = True
         return {"rw_chat": {"active_id": None, "chat_title": "", "turn_count": 0}}
 
-    # Count user turns since last explicit PIN baseline.
-    # AUTO roll-up updates should not zero this counter.
-    pin_event = (
-        ChatRollupEvent.objects
-        .filter(chat=chat, trigger=ChatRollupEvent.Trigger.PIN, reverted_at__isnull=True)
-        .only("new_cursor_message_id")
-        .order_by("-created_at", "-id")
-        .first()
-    )
-    baseline_cursor = 0
-    try:
-        baseline_cursor = int((pin_event.new_cursor_message_id if pin_event is not None else 0) or 0)
-    except Exception:
-        baseline_cursor = 0
-
-    turn_count = (
-        ChatMessage.objects
-        .filter(chat=chat, id__gt=baseline_cursor, role=ChatMessage.Role.USER)
-        .exclude(importance=ChatMessage.Importance.IGNORE)
-        .count()
-    )
+    # Keep topbar counter aligned with chat detail semantics:
+    # completed USER+ASSISTANT turns since current pinned cursor.
+    turn_count = count_active_window_turns(chat)
 
     return {
         "rw_chat": {

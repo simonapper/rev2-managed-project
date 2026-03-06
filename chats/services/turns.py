@@ -89,6 +89,23 @@ def build_chat_turn_context(request, chat):
             return None
         return payload
 
+    def _display_answer(answer: str, output: str, *, is_derax: bool) -> tuple[str, str]:
+        a = (answer or "").strip()
+        o = (output or "").strip()
+        if is_derax:
+            return a, "answer"
+        if not o:
+            return a, "answer"
+        if not a:
+            return o, "output"
+
+        short_answer = (len(a) <= 180) and ("\n" not in a) and (a.count(".") <= 2)
+        richer_output = (len(o) >= max(240, len(a) * 2))
+        structured_output = ("\n" in o) or ("- " in o) or ("1." in o) or (len(o.split()) > 40)
+        if short_answer and richer_output and structured_output:
+            return o, "output"
+        return a, "answer"
+
 
     turns = []
     system_items = []
@@ -150,6 +167,7 @@ def build_chat_turn_context(request, chat):
                         output = rec_output
             derax_payload = _parse_derax_payload(answer) or _parse_derax_payload(m.raw_text or "")
             is_derax = isinstance(derax_payload, dict)
+            display_answer, display_answer_source = _display_answer(answer, output, is_derax=is_derax)
 
             turns.append({
                 "turn_id": f"msg-{m.id}",
@@ -160,6 +178,8 @@ def build_chat_turn_context(request, chat):
                 "input_message_id": pending_user.id if pending_user else None,
                 "assistant_message_id": m.id,
                 "answer": answer,
+                "display_answer": display_answer,
+                "display_answer_source": display_answer_source,
                 "reasoning": reasoning,
                 "output": output,
                 "created_at": pending_user.created_at if pending_user else m.created_at,
@@ -192,6 +212,8 @@ def build_chat_turn_context(request, chat):
             "input_message_id": pending_user.id,
             "assistant_message_id": None,
             "answer": "",
+            "display_answer": "",
+            "display_answer_source": "answer",
             "reasoning": "",
             "output": "",
             "created_at": pending_user.created_at,

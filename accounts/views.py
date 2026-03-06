@@ -46,6 +46,104 @@ def _safe_int(val):
         return None
 
 
+def _parse_turn_selector(raw: str, max_turn: int) -> tuple[list[int], list[str]]:
+    """
+    Parse selector syntax like: 1-4,6,9-12
+    Returns (selected_turn_numbers, invalid_tokens).
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return [], []
+    selected = set()
+    invalid = []
+    for token in [t.strip() for t in text.split(",") if t.strip()]:
+        if "-" in token:
+            parts = token.split("-", 1)
+            if len(parts) != 2:
+                invalid.append(token)
+                continue
+            a = _safe_int(parts[0].strip())
+            b = _safe_int(parts[1].strip())
+            if a is None or b is None:
+                invalid.append(token)
+                continue
+            if a > b:
+                a, b = b, a
+            if a < 1 or b < 1:
+                invalid.append(token)
+                continue
+            for n in range(a, b + 1):
+                if n <= max_turn:
+                    selected.add(n)
+        else:
+            n = _safe_int(token)
+            if n is None or n < 1:
+                invalid.append(token)
+                continue
+            if n <= max_turn:
+                selected.add(n)
+    return sorted(selected), invalid
+
+
+def _collect_turn_pairs_for_analysis(chat) -> list[dict]:
+    """
+    Build simple chronological USER->ASSISTANT turn pairs.
+    """
+    items = list(ChatMessage.objects.filter(chat=chat).order_by("sequence", "id"))
+    turns = []
+    pending_user = None
+    number = 0
+    for m in items:
+        role = str(m.role or "").upper().strip()
+        if role == "USER":
+            pending_user = m
+            continue
+        if role == "ASSISTANT":
+            if pending_user is None:
+                continue
+            number += 1
+            answer = (m.answer_text or "").strip()
+            output = (m.output_text or "").strip()
+            assistant_text = answer or output or (m.raw_text or "").strip()
+            turns.append(
+                {
+                    "number": number,
+                    "user": (pending_user.raw_text or "").strip(),
+                    "assistant": assistant_text,
+                }
+            )
+            pending_user = None
+    return turns
+
+
+def _build_analysis_prompt_block(*, action: str, selected_turns: list[dict], note: str) -> str:
+    action_map = {
+        "SUMMARISE": "Summarise the selected turns.",
+        "INCONSISTENCIES": "Check for inconsistencies or contradictions across selected turns.",
+        "DECISIONS": "Extract decisions made, with supporting turn references.",
+        "RISKS": "Extract risks, concerns, and unresolved issues.",
+        "ACTIONS": "Extract concrete next actions and owners if stated.",
+    }
+    action_label = action_map.get(action, action_map["SUMMARISE"])
+    lines = [
+        "ANALYSIS TASK",
+        "Use only the selected turns below.",
+        "Action: " + action_label,
+    ]
+    if note:
+        lines.append("Additional instruction: " + note)
+    lines.append("Return concise output with turn-number references.")
+    lines.append("")
+    lines.append("SELECTED TURNS")
+    for t in selected_turns:
+        lines.append("Turn " + str(t["number"]) + " USER:")
+        lines.append(str(t["user"] or "(empty)"))
+        lines.append("Turn " + str(t["number"]) + " ASSISTANT:")
+        lines.append(str(t["assistant"] or "(empty)"))
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
 def _apply_soft_boundary_label_fallback(answer_text: str, errors: list[str]) -> str:
     text = (answer_text or "").strip()
     lower = text.lower()
@@ -107,6 +205,82 @@ def _append_query_param(url: str, key: str, value: str) -> str:
     except Exception:
         sep = "&" if "?" in raw else "?"
         return raw + sep + key + "=" + value
+
+
+def _tokenise_wildcard_query(raw: str) -> list[str]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    # Treat * and ? as wildcard separators.
+    text = text.replace("*", " ").replace("?", " ")
+    parts = [p.strip() for p in text.split() if p.strip()]
+    # Keep order, drop duplicates.
+    out = []
+    seen = set()
+    for p in parts:
+        key = p.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
+
+
+def _apply_chat_search(qs, query_text: str):
+    q = str(query_text or "").strip()
+    if not q:
+        return qs
+
+    # Base metadata fields.
+    meta_q = (
+        Q(title__icontains=q)
+        | Q(last_output_snippet__icontains=q)
+        | Q(last_answer_snippet__icontains=q)
+        | Q(project__name__icontains=q)
+        | Q(created_by__username__icontains=q)
+    )
+
+    # Full message-content search (exclude SYSTEM role).
+    msg_q = (
+        Q(raw_text__icontains=q)
+        | Q(answer_text__icontains=q)
+        | Q(output_text__icontains=q)
+        | Q(reasoning_text__icontains=q)
+    )
+    message_hit_exists = Exists(
+        ChatMessage.objects.filter(chat_id=OuterRef("pk"))
+        .exclude(role=ChatMessage.Role.SYSTEM)
+        .filter(msg_q)
+    )
+    qs = qs.annotate(message_hit=message_hit_exists).filter(meta_q | Q(message_hit=True))
+
+    # Wildcard support:
+    # - if query contains * or ?, require every non-empty token to appear somewhere
+    #   across metadata/message fields (AND semantics).
+    if ("*" in q) or ("?" in q):
+        for idx, tok in enumerate(_tokenise_wildcard_query(q), start=1):
+            tok_meta_q = (
+                Q(title__icontains=tok)
+                | Q(last_output_snippet__icontains=tok)
+                | Q(last_answer_snippet__icontains=tok)
+                | Q(project__name__icontains=tok)
+                | Q(created_by__username__icontains=tok)
+            )
+            tok_msg_q = (
+                Q(raw_text__icontains=tok)
+                | Q(answer_text__icontains=tok)
+                | Q(output_text__icontains=tok)
+                | Q(reasoning_text__icontains=tok)
+            )
+            tok_exists = Exists(
+                ChatMessage.objects.filter(chat_id=OuterRef("pk"))
+                .exclude(role=ChatMessage.Role.SYSTEM)
+                .filter(tok_msg_q)
+            )
+            ann = f"message_hit_tok_{idx}"
+            qs = qs.annotate(**{ann: tok_exists}).filter(tok_meta_q | Q(**{ann: True}))
+
+    return qs
 
 
 def _boundary_profile_from_post(post_data) -> dict:
@@ -221,6 +395,7 @@ def _active_work_item_for_project(project):
     )
 
 ALLOWED_MODELS = [
+    ("gpt-5.4", "gpt-5.4"),
     ("gpt-5.2", "gpt-5.2"),
     ("gpt-5.1", "gpt-5.1"),
     ("gpt-5-mini", "gpt-5-mini"),
@@ -1043,6 +1218,9 @@ def chat_import(request):
 def chat_message_create(request):
     chat_id = request.POST.get("chat_id")
     content = (request.POST.get("content") or "").strip()
+    analysis_turns_raw = (request.POST.get("analysis_turns") or "").strip()
+    analysis_action = (request.POST.get("analysis_action") or "SUMMARISE").strip().upper()
+    analysis_note = (request.POST.get("analysis_note") or "").strip()
     answer_mode = (request.POST.get("answer_mode") or "quick").strip().lower()
     if answer_mode not in {"quick", "full"}:
         answer_mode = "quick"
@@ -1071,7 +1249,8 @@ def chat_message_create(request):
         )) else reverse("accounts:dashboard")
         return redirect(_next_with_status(target, "bad_chat"))
 
-    if not content:
+    has_analysis_request = bool(analysis_turns_raw or analysis_note)
+    if not content and not has_analysis_request:
         messages.error(request, "Message cannot be empty.")
         target = next_url if (next_url and url_has_allowed_host_and_scheme(
             url=next_url,
@@ -1106,11 +1285,50 @@ def chat_message_create(request):
     request.session["rw_active_project_id"] = chat.project_id
     request.session.modified = True
 
+    model_content = content
+    if has_analysis_request:
+        turns_for_analysis = _collect_turn_pairs_for_analysis(chat)
+        max_turn = len(turns_for_analysis)
+        selected_numbers, invalid_tokens = _parse_turn_selector(analysis_turns_raw, max_turn=max_turn)
+        if invalid_tokens:
+            messages.error(request, "Invalid turn selector token(s): " + ", ".join(invalid_tokens))
+            target = next_url if (next_url and url_has_allowed_host_and_scheme(
+                url=next_url,
+                allowed_hosts={request.get_host()},
+                require_https=request.is_secure(),
+            )) else reverse("accounts:chat_detail", args=[chat.id])
+            return redirect(_next_with_status(target, "turn_selector"))
+        if not selected_numbers:
+            messages.error(request, "No valid turns selected for analysis.")
+            target = next_url if (next_url and url_has_allowed_host_and_scheme(
+                url=next_url,
+                allowed_hosts={request.get_host()},
+                require_https=request.is_secure(),
+            )) else reverse("accounts:chat_detail", args=[chat.id])
+            return redirect(_next_with_status(target, "turn_selector"))
+
+        selected_lookup = set(selected_numbers)
+        selected_turns = [t for t in turns_for_analysis if t.get("number") in selected_lookup]
+        analysis_block = _build_analysis_prompt_block(
+            action=analysis_action,
+            selected_turns=selected_turns,
+            note=analysis_note,
+        )
+        model_content = (content + "\n\n" + analysis_block).strip() if content else analysis_block
+
+    user_capture_text = content
+    if has_analysis_request:
+        sel_txt = analysis_turns_raw or ",".join(str(n) for n in selected_numbers)
+        prefix = "[Analysis turns: " + sel_txt + " | action: " + (analysis_action or "SUMMARISE") + "]"
+        if analysis_note:
+            prefix += " [note: " + analysis_note + "]"
+        user_capture_text = ((content + "\n\n" + prefix).strip() if content else prefix)
+
     user_msg = ChatMessage.objects.create(
         chat=chat,
         role=ChatMessage.Role.USER,
-        raw_text=content,
-        answer_text=content,
+        raw_text=user_capture_text,
+        answer_text=user_capture_text,
         segment_meta={"confidence": "N/A", "parser_version": "user_v1"},
     )
 
@@ -1157,13 +1375,13 @@ def chat_message_create(request):
             except Exception:
                 csv_text = ""
             if csv_text:
-                content = content + "\n\n[ATTACHMENT: " + att.original_name + "]\n" + csv_text
+                model_content = model_content + "\n\n[ATTACHMENT: " + att.original_name + "]\n" + csv_text
             else:
-                content = content + "\n\n[ATTACHMENT: " + att.original_name + " (unreadable)]"
+                model_content = model_content + "\n\n[ATTACHMENT: " + att.original_name + " (unreadable)]"
         elif att:
-            content = content + "\n\n[ATTACHMENT: " + att.original_name + " (unsupported type)]"
+            model_content = model_content + "\n\n[ATTACHMENT: " + att.original_name + " (unsupported type)]"
         else:
-            content = content + "\n\n[ATTACHMENT: none]"
+            model_content = model_content + "\n\n[ATTACHMENT: none]"
 
     binding = ProjectTopicChat.objects.filter(chat=chat).first()
     if binding:
@@ -1175,20 +1393,20 @@ def chat_message_create(request):
         )
         seed_text = (seed_msg.raw_text or "").strip() if seed_msg else ""
         if seed_text.startswith("Topic chat:"):
-            content = "Seed context:\n" + seed_text + "\n\nUser message:\n" + content
+            model_content = "Seed context:\n" + seed_text + "\n\nUser message:\n" + model_content
 
     boundary = resolve_boundary_profile(project, chat)
     boundary_active = is_boundary_profile_active(boundary)
     boundary_excerpts = []
     if boundary_active:
         allow_internal_docs = bool((boundary.get("authority_set") or {}).get("allow_internal_docs"))
-        policy_mode = looks_policy_related(content)
+        policy_mode = looks_policy_related(model_content)
         if binding:
             topic_key = str(getattr(binding, "topic_key", "") or "").upper()
             if "POLICY" in topic_key or "PKO" in topic_key:
                 policy_mode = True
         if allow_internal_docs and policy_mode:
-            boundary_excerpts = policy_retrieve(project, content, max_chars=700)
+            boundary_excerpts = policy_retrieve(project, model_content, max_chars=700)
 
     pinned_block = build_pinned_system_block(chat)
     active_work_item = _active_work_item_for_project(project)
@@ -1201,7 +1419,7 @@ def chat_message_create(request):
             chat=chat,
             project=project,
             work_item=active_work_item,
-            user_text=content,
+            user_text=model_content,
             effective_context=resolved,
             boundary_excerpts=boundary_excerpts,
             is_cde=True,
@@ -1244,7 +1462,7 @@ def chat_message_create(request):
     )
 
     image_prompt = ""
-    content_stripped = (content or "").strip()
+    content_stripped = (model_content or "").strip()
     lower_content = content_stripped.lower()
     if lower_content.startswith("/image "):
         image_prompt = content_stripped[7:].strip()
@@ -1308,7 +1526,7 @@ def chat_message_create(request):
 
     try:
         panes = generate_panes(
-            content,
+            model_content,
             image_parts=image_parts,
             system_blocks=system_blocks,
             history_messages=history_messages,
@@ -1639,6 +1857,8 @@ def message_set_importance(request, message_id: int):
     project = chat.project
 
     if not accessible_projects_qs(request.user).filter(id=project.id).exists():
+        if (request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest":
+            return JsonResponse({"ok": False, "error": "No permission for this project."}, status=403)
         messages.error(request, "No permission for this project.")
         return redirect("accounts:chat_browse")
 
@@ -1649,6 +1869,8 @@ def message_set_importance(request, message_id: int):
         ChatMessage.Importance.IGNORE,
     }
     if target not in allowed:
+        if (request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest":
+            return JsonResponse({"ok": False, "error": "Invalid importance value."}, status=400)
         messages.error(request, "Invalid importance value.")
         return redirect(reverse("accounts:chat_detail", args=[chat.id]))
 
@@ -1661,6 +1883,16 @@ def message_set_importance(request, message_id: int):
             upto_message_id=msg.id,
             user=request.user,
             trigger=ChatRollupEvent.Trigger.PIN,
+        )
+
+    if (request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest":
+        return JsonResponse(
+            {
+                "ok": True,
+                "message_id": msg.id,
+                "importance": msg.importance,
+                "chat_id": chat.id,
+            }
         )
 
     next_url = (request.POST.get("next") or "").strip()
@@ -2338,12 +2570,7 @@ def chat_browse(request):
     q = (request.GET.get("q") or "").strip()
 
     if q:
-        qs = qs.filter(
-            Q(title__icontains=q)
-            | Q(last_output_snippet__icontains=q)
-            | Q(project__name__icontains=q)
-            | Q(created_by__username__icontains=q)
-        )
+        qs = _apply_chat_search(qs, q)
 
     sort = request.GET.get("sort", "updated")
     direction = request.GET.get("dir", "desc")
@@ -2469,12 +2696,7 @@ def chat_browse_print(request):
     q = (request.GET.get("q") or "").strip()
 
     if q:
-        qs = qs.filter(
-            Q(title__icontains=q)
-            | Q(last_output_snippet__icontains=q)
-            | Q(project__name__icontains=q)
-            | Q(created_by__username__icontains=q)
-        )
+        qs = _apply_chat_search(qs, q)
 
     sort = request.GET.get("sort", "updated")
     direction = request.GET.get("dir", "desc")
