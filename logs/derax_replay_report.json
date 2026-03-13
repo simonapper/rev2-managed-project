@@ -1,0 +1,35 @@
+{
+  "corpus_file": "chats\\tests\\fixtures\\derax_regression_corpus.json",
+  "total": 4,
+  "matched": 4,
+  "mismatches": 0,
+  "rows": [
+    {
+      "id": "embedded_raw_json_explore",
+      "expect_ok": true,
+      "actual_ok": true,
+      "errors": []
+    },
+    {
+      "id": "embedded_fenced_json_explore",
+      "expect_ok": true,
+      "actual_ok": true,
+      "errors": []
+    },
+    {
+      "id": "legacy_explore_shape",
+      "expect_ok": true,
+      "actual_ok": true,
+      "errors": []
+    },
+    {
+      "id": "type_mismatch_no_crash",
+      "expect_ok": false,
+      "actual_ok": false,
+      "errors": [
+        "validation must be object",
+        "Missing or empty: meta.phase"
+      ]
+    }
+  ]
+}

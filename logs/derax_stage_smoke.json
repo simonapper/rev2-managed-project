@@ -1,0 +1,174 @@
+{
+  "project_id": 12,
+  "user_id": 3,
+  "providers": [
+    "openai",
+    "anthropic",
+    "deepseek"
+  ],
+  "timeout_seconds": 600,
+  "overall_ok": false,
+  "results": {
+    "openai": [
+      {
+        "phase": "DEFINE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "DEFINE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "DEFINE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "REFINE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "REFINE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "REFINE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "APPROVE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "APPROVE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "APPROVE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXECUTE",
+        "ok": false,
+        "detail": "HTTP 500 | {\"ok\": false, \"error\": \"EXECUTE LLM turn failed: dictionary update sequence element #0 has length 3; 2 is required\"}"
+      }
+    ],
+    "anthropic": [
+      {
+        "phase": "DEFINE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "DEFINE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "DEFINE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE",
+        "ok": false,
+        "detail": "HTTP 500 | {\"ok\": false, \"error\": \"EXPLORE LLM turn failed: DERAX EXPLORE response invalid JSON schema: missing top-level key: canonical_summary; missing top-level key: artefacts; missing top-level key: validation; Missing or empty: intent.destination; Missing or empty: explore.adjacent_ideas; Missing or empty: explore.risks; Missing or empty: explore.tradeoffs; Missing or empty: explore.reframes\"}"
+      }
+    ],
+    "deepseek": [
+      {
+        "phase": "DEFINE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "DEFINE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "DEFINE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "REFINE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "REFINE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "REFINE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "APPROVE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "APPROVE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "APPROVE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXECUTE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXECUTE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      }
+    ]
+  }
+}

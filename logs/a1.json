@@ -1,0 +1,49 @@
+{
+  "project_id": 12,
+  "user_id": 3,
+  "providers": [
+    "anthropic"
+  ],
+  "timeout_seconds": 600,
+  "fail_fast": true,
+  "overall_ok": false,
+  "results": {
+    "anthropic": [
+      {
+        "phase": "DEFINE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "DEFINE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "DEFINE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "REFINE",
+        "ok": false,
+        "detail": "HTTP 500 | {\"ok\": false, \"error\": \"REFINE LLM turn failed: DERAX REFINE response invalid JSON schema: missing top-level key: canonical_summary; missing top-level key: artefacts; missing top-level key: validation; Missing or empty: intent.destination; Missing or empty: intent.success_criteria; Missing or empty: intent.constraints; Missing or empty: intent.non_goals; Missing or empty: explore.risks; Missing or empty: explore.tradeoffs\"}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "project_id": 12,
+  "user_id": 3,
+  "providers": [
+    "openai"
+  ],
+  "timeout_seconds": 600,
+  "fail_fast": true,
+  "overall_ok": true,
+  "results": {
+    "openai": [
+      {
+        "phase": "DEFINE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "DEFINE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "DEFINE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXPLORE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "REFINE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "REFINE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "REFINE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "APPROVE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "APPROVE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "APPROVE_LOCK",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXECUTE",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "phase": "EXECUTE_SCHEMA",
+        "ok": true,
+        "detail": ""
+      }
+    ]
+  }
+}

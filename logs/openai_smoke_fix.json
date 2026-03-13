@@ -1,0 +1,19 @@
+{
+  "project_id": 12,
+  "user_id": 3,
+  "providers": [
+    "openai"
+  ],
+  "timeout_seconds": 600,
+  "fail_fast": true,
+  "overall_ok": false,
+  "results": {
+    "openai": [
+      {
+        "phase": "DEFINE",
+        "ok": false,
+        "detail": "HTTP 500 | {\"ok\": false, \"error\": \"DEFINE LLM turn failed: Connection error.\"}"
+      }
+    ]
+  }
+}

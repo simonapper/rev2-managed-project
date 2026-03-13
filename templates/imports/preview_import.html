@@ -1,0 +1,135 @@
+﻿{# -*- coding: utf-8 -*- #}
+{# templates/imports/preview_import.html #}
+{% extends "base.html" %}
+
+{% block title %}Preview Import — Reasoning Workbench{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+  <h5 class="mb-2">Preview ChatGPT Import</h5>
+    <div class="text-secondary mb-3 rw-import-subtitle">
+      Upload a ChatGPT export JSON, preview and import into a project.
+    </div>
+  <form method="post" enctype="multipart/form-data" class="card p-2 mb-3 rw-import-card">
+    {% csrf_token %}
+
+    <!-- File upload -->
+    <div class="mb-3">
+      <label class="form-label">Select ChatGPT JSON File</label>
+      <input type="file" name="chatgpt_file" class="form-control" accept=".json,application/json">
+      {% if uploaded_file_name %}
+        <div class="text-success small mt-1">Currently uploaded: {{ uploaded_file_name }}</div>
+      {% endif %}
+    </div>
+
+    <!-- Project selection -->
+    <div class="mb-3">
+      <label class="form-label">Select Project</label>
+      <select name="project_id" class="form-select" required>
+        <option value="" disabled {% if not selected_project_id %}selected{% endif %}>Choose a project…</option>
+        {% for p in projects %}
+          <option value="{{ p.id }}" {% if selected_project_id == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+      </select>
+      {% if not projects %}
+        <div class="text-danger small mt-1">No accessible projects found.</div>
+      {% endif %}
+    </div>
+
+    <!-- User selection -->
+    <div class="mb-3">
+      <label class="form-label">Select User</label>
+      <select name="user" class="form-select" required>
+        <option value="" disabled {% if not selected_user_id %}selected{% endif %}>Choose a user…</option>
+        {% for u in users %}
+          <option value="{{ u.id }}" {% if selected_user_id == u.id|stringformat:"s" %}selected{% endif %}>{{ u.username }}</option>
+        {% endfor %}
+      </select>
+      {% if not users %}
+        <div class="text-danger small mt-1">No active users found.</div>
+      {% endif %}
+    </div>
+
+    <div class="d-flex gap-2">
+      <button type="submit"
+              name="action"
+              value="preview"
+              class="btn btn-outline-primary btn-sm rw-btn-xs">
+        Preview
+      </button>
+
+      <button type="submit"
+              formaction="{% url 'imports:import_chatgpt_action' %}"
+              formmethod="post"
+              class="btn btn-outline-success btn-sm rw-btn-xs">
+        Import
+      </button>
+    </div>
+  </form>
+
+  {% if preview_title or preview_turns %}
+  <div class="card p-3 rw-import-preview">
+    {% if preview_title %}
+      <h6 class="mb-2">Preview: {{ preview_title }}</h6>
+    {% endif %}
+
+    {% if preview_turns %}
+      <div class="list-group mb-0">
+        {% for t in preview_turns %}
+          <div class="list-group-item">
+            <div class="small text-secondary mb-1">
+              Turn {{ t.turn_index|default:forloop.counter }}
+            </div>
+
+            {% if t.user_input %}
+              <div>
+                <strong>User:</strong>
+                {{ t.user_input|truncatechars:200 }}
+              </div>
+            {% endif %}
+
+            {% for r in t.responses %}
+              <div class="mt-2">
+                <div class="small text-secondary">
+                  {{ r.assistant_type|default:"uncategorised"|capfirst }}
+                </div>
+
+                {% if r.response_reasoning %}
+                  <details class="mt-1">
+                    <summary class="text-secondary small">Show</summary>
+                    <div class="text-secondary" style="white-space:pre-wrap;">
+                      {{ r.response_reasoning|truncatechars:400 }}
+                    </div>
+                  </details>
+                {% endif %}
+
+                {% if r.response_answer %}
+                  <div class="mt-1" style="white-space:pre-wrap;">
+                    {{ r.response_answer|truncatechars:300 }}
+                  </div>
+                {% endif %}
+
+                {% if r.response_commentary %}
+                  <div class="text-secondary" style="white-space:pre-wrap;">
+                    {{ r.response_commentary|truncatechars:200 }}
+                  </div>
+                {% endif %}
+
+                {% if r.response_uncategorised %}
+                  <div style="white-space:pre-wrap;">
+                    {{ r.response_uncategorised|truncatechars:200 }}
+                  </div>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="text-secondary">No turns found to preview.</div>
+    {% endif %}
+  </div>
+{% endif %}
+
+</div>
+{% endblock %}
