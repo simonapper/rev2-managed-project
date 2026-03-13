@@ -1498,7 +1498,8 @@ def project_config_info(request, project_id: int):
         )
         messages.success(request, "Project file uploaded.")
         edit_url = reverse("projects:project_document_collabora_edit", args=[active_project.id, row.id])
-        return redirect(f"{edit_url}?next={request.get_full_path()}")
+        files_back = reverse("accounts:project_config_info", args=[active_project.id]) + "?open=project-files#project-files"
+        return redirect(f"{edit_url}?next={files_back}")
 
     if request.method == "POST" and (request.POST.get("action") or "") == "project_doc_create_blank":
         kind = (request.POST.get("project_doc_kind") or "").strip().lower()
@@ -1536,7 +1537,8 @@ def project_config_info(request, project_id: int):
         row.save()
         messages.success(request, "Blank file created.")
         edit_url = reverse("projects:project_document_collabora_edit", args=[active_project.id, row.id])
-        return redirect(f"{edit_url}?next={request.get_full_path()}")
+        files_back = reverse("accounts:project_config_info", args=[active_project.id]) + "?open=project-files#project-files"
+        return redirect(f"{edit_url}?next={files_back}")
 
     if request.method == "POST" and (request.POST.get("action") or "") == "project_doc_archive":
         if not can_archive_project_docs:

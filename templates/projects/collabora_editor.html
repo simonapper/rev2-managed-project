@@ -11,7 +11,7 @@
           <div class="fw-semibold">{{ doc.title|default:doc.original_name }}</div>
           <div class="small text-muted">{{ doc.original_name }}</div>
         </div>
-        <a class="btn btn-sm btn-outline-secondary" href="{{ back_url }}">Back to project</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ back_url }}">{% if "open=project-files" in back_url %}Back to files{% else %}Back to project{% endif %}</a>
       </div>
     </div>
     <div class="card shadow-sm">
@@ -27,4 +27,3 @@
   </div>
 </div>
 {% endblock %}
-

@@ -10,7 +10,9 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from django.conf import settings
 from django.core.files.base import ContentFile
+from dotenv import dotenv_values
 
 from uploads.models import GeneratedImage
 
@@ -21,6 +23,15 @@ _DATA_URL_RE = re.compile(
 )
 _FILE_ID_RE = re.compile(r"\b(file-[A-Za-z0-9_-]{6,})\b")
 _B64_JSON_RE = re.compile(r'"b64_json"\s*:\s*"([A-Za-z0-9+/=\s]+)"', re.IGNORECASE)
+
+
+def _get_openai_api_key() -> str:
+    env_path = settings.BASE_DIR / ".env"
+    file_values = dotenv_values(env_path)
+    api_key = str(file_values.get("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is missing from .env")
+    return api_key
 
 
 def _ext_for_mime(mime_type: str) -> str:
@@ -76,7 +87,7 @@ def download_provider_file_to_bytes(provider_file_id: str) -> bytes:
 
     from openai import OpenAI
 
-    client = OpenAI()
+    client = OpenAI(api_key=_get_openai_api_key())
     blob = client.files.content(file_id)
     if hasattr(blob, "read"):
         return bytes(blob.read() or b"")

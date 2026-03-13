@@ -315,7 +315,10 @@
 
         <hr class="my-3" />
 
-        <details class="rw-drawer">
+        <details
+          class="rw-drawer"
+          id="project-files"
+          {% if request.GET.open == "project-files" %}open{% endif %}>
           <summary class="fw-semibold">Project files</summary>
           <div class="pt-2">
             <div class="d-flex align-items-center justify-content-between mb-2">
@@ -377,7 +380,9 @@
                         <td class="small">{{ d.original_name }}</td>
                         <td class="small">{{ d.updated_at|date:"Y-m-d H:i" }}</td>
                         <td class="text-end">
-                          <a class="btn btn-sm btn-outline-primary" href="{% url 'projects:project_document_collabora_edit' project.id d.id %}?next={{ request.get_full_path|urlencode }}">Edit</a>
+                          {% with files_back=request.path|add:'?open=project-files#project-files' %}
+                            <a class="btn btn-sm btn-outline-primary" href="{% url 'projects:project_document_collabora_edit' project.id d.id %}?next={{ files_back|urlencode }}">Edit</a>
+                          {% endwith %}
                           <a class="btn btn-sm btn-outline-secondary" href="{% url 'projects:project_document_download' project.id d.id %}">Download</a>
                           {% if can_archive_project_docs %}
                             <form method="post" class="d-inline">

@@ -13,6 +13,7 @@ import anthropic
 from typing import Any, Callable, Dict, List, Optional
 
 from django.conf import settings
+from dotenv import dotenv_values
 
 from chats.services.contracts.pipeline import ContractContext, build_system_blocks
 from chats.services.derax.compile import compile_derax_chat_run_to_cko_artefact
@@ -75,12 +76,21 @@ def _resolve_provider(*, provider: Optional[str] = None, user: Any = None) -> st
     return "openai"
 
 
+def _get_openai_api_key() -> str:
+    env_path = settings.BASE_DIR / ".env"
+    file_values = dotenv_values(env_path)
+    api_key = str(file_values.get("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is missing from .env")
+    return api_key
+
+
 def _get_openai_client():
     global _OPENAI_CLIENT
     if _OPENAI_CLIENT is None:
         from openai import OpenAI
 
-        _OPENAI_CLIENT = OpenAI()
+        _OPENAI_CLIENT = OpenAI(api_key=_get_openai_api_key())
     return _OPENAI_CLIENT
 
 
