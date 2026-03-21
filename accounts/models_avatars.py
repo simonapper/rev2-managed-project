@@ -77,6 +77,7 @@ class UserProfile(models.Model):
             ("openai", "OpenAI"),
             ("anthropic", "Anthropic"),
             ("deepseek", "DeepSeek"),
+            ("gemini", "Gemini"),
             ("copilot", "Copilot"),
         ],
         default="openai",
@@ -95,6 +96,11 @@ class UserProfile(models.Model):
         max_length=80,
         blank=True,
         default="deepseek-chat",
+    )
+    gemini_model_default = models.CharField(
+        max_length=80,
+        blank=True,
+        default="gemini-2.5-flash",
     )
 
     # -------- Legacy avatar fields (unchanged) --------

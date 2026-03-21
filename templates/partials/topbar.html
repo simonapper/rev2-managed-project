@@ -186,12 +186,29 @@
 
         {# BOTTOM ROW: Active Model #}
         <div class="rw-status">
-          <div class="rw-status-label">Model</div>
-          <div class="rw-status-value">
+          <div class="rw-status-label">LLM</div>
+          <div class="rw-status-value" style="overflow: visible;">
             {% if rw_llm_model %}
-              <span class="badge text-bg-light border">{{ rw_llm_model }}</span>
+              <div class="position-relative d-inline-block">
+                <button id="rw-topbar-llm-model"
+                        class="badge text-bg-light border"
+                        type="button"
+                        aria-expanded="false"
+                        title="Provider: {{ rw_llm_provider|default:'openai'|upper }}">
+                  {{ rw_llm_model }}
+                </button>
+                <div id="rw-topbar-llm-menu"
+                     class="dropdown-menu dropdown-menu-end"
+                     style="display:none; position:absolute; right:0; top:100%; margin-top:.25rem;"
+                     aria-label="LLM provider">
+                  <button class="dropdown-item rw-topbar-llm-option" type="button" data-provider="openai">OpenAI</button>
+                  <button class="dropdown-item rw-topbar-llm-option" type="button" data-provider="anthropic">Anthropic</button>
+                  <button class="dropdown-item rw-topbar-llm-option" type="button" data-provider="deepseek">DeepSeek</button>
+                  <button class="dropdown-item rw-topbar-llm-option" type="button" data-provider="gemini">Gemini</button>
+                </div>
+              </div>
             {% else %}
-              —
+              <span id="rw-topbar-llm-model">—</span>
             {% endif %}
           </div>
         </div>
@@ -262,6 +279,87 @@
   forms.forEach(function (form) {
     form.addEventListener("submit", function () {
       refreshLogoutCsrf(form);
+    });
+  });
+})();
+</script>
+
+<script>
+(function () {
+  var trigger = document.getElementById("rw-topbar-llm-model");
+  var menu = document.getElementById("rw-topbar-llm-menu");
+  var options = document.querySelectorAll(".rw-topbar-llm-option");
+  if (!trigger || !menu || !options.length) return;
+
+  function getCsrfToken() {
+    var parts = ("; " + document.cookie).split("; csrftoken=");
+    if (parts.length < 2) return "";
+    return parts.pop().split(";").shift();
+  }
+
+  var endpoint = "{% url 'accounts:topbar_llm_update' %}";
+  var originalText = trigger.textContent;
+  var originalTitle = trigger.getAttribute("title") || "";
+
+  function closeMenu() {
+    menu.style.display = "none";
+    trigger.setAttribute("aria-expanded", "false");
+  }
+
+  function openMenu() {
+    menu.style.display = "block";
+    trigger.setAttribute("aria-expanded", "true");
+  }
+
+  trigger.addEventListener("click", function (ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (menu.style.display === "block") {
+      closeMenu();
+    } else {
+      openMenu();
+    }
+  });
+
+  document.addEventListener("click", function (ev) {
+    if (!menu.contains(ev.target) && ev.target !== trigger) {
+      closeMenu();
+    }
+  });
+
+  options.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var provider = btn.getAttribute("data-provider") || "";
+      if (!provider) return;
+
+      trigger.disabled = true;
+      closeMenu();
+      fetch(endpoint, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": getCsrfToken()
+        },
+        body: JSON.stringify({provider: provider})
+      })
+      .then(function (resp) { return resp.json(); })
+      .then(function (data) {
+        if (!data || !data.ok) {
+          throw new Error((data && data.error) ? data.error : "LLM update failed.");
+        }
+        trigger.textContent = data.model || originalText;
+        trigger.setAttribute("title", "Provider: " + String(data.provider || provider).toUpperCase());
+        originalText = trigger.textContent;
+        originalTitle = trigger.getAttribute("title") || "";
+      })
+      .catch(function () {
+        trigger.textContent = originalText;
+        trigger.setAttribute("title", originalTitle);
+      })
+      .finally(function () {
+        trigger.disabled = false;
+      });
     });
   });
 })();

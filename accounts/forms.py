@@ -43,6 +43,7 @@ class UserProfileDefaultsForm(forms.ModelForm):
             ("openai", "OpenAI"),
             ("anthropic", "Anthropic"),
             ("deepseek", "DeepSeek"),
+            ("gemini", "Gemini"),
         ]
 
     class Meta:

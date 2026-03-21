@@ -138,4 +138,5 @@ urlpatterns = [
 
     # Session overrides
     path("session-overrides/", views.session_overrides_update, name="session_overrides_update"),
+    path("topbar/llm/", views.topbar_llm_update, name="topbar_llm_update"),
 ]

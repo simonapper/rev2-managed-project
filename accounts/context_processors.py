@@ -33,6 +33,13 @@ def topbar_context(request) -> Dict[str, Any]:
             or (getattr(pointers, "anthropic_model_default", "") or "").strip()
             or "claude-sonnet-4-5-20250929"
         )
+    elif provider == "gemini":
+        model_name = (
+            (getattr(profile, "gemini_model_default", "") or "").strip()
+            or (getattr(pointers, "gemini_model_default", "") or "").strip()
+            or os.getenv("GEMINI_MODEL", "").strip()
+            or "gemini-2.5-flash"
+        )
     elif provider == "deepseek":
         model_name = (
             (getattr(profile, "deepseek_model_default", "") or "").strip()
@@ -46,6 +53,7 @@ def topbar_context(request) -> Dict[str, Any]:
             or "gpt-5.1"
         )
     ctx["rw_llm_model"] = model_name
+    ctx["rw_llm_provider"] = provider
     ctx["rw_topbar_controls"] = {"enabled": False}
 
     # ------------------------------------------------------------

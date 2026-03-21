@@ -23,9 +23,12 @@ from django import forms
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model
+from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import SetPasswordForm
 from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import PermissionDenied
+from django.core.management import call_command
 from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import UploadedFile
@@ -313,6 +316,8 @@ def _active_provider_and_model_for_user(user) -> tuple[str, str]:
     provider = (getattr(profile, "llm_provider", "") or "openai").strip().lower()
     if provider == "anthropic":
         model = (getattr(profile, "anthropic_model_default", "") or "").strip() or "claude-sonnet-4-5"
+    elif provider == "gemini":
+        model = (getattr(profile, "gemini_model_default", "") or "").strip() or "gemini-2.5-flash"
     elif provider == "deepseek":
         model = (getattr(profile, "deepseek_model_default", "") or "").strip() or "deepseek-chat"
     else:
@@ -417,6 +422,14 @@ ALLOWED_DEEPSEEK_MODELS = [
     ("deepseek-reasoner", "deepseek-reasoner"),
 ]
 
+ALLOWED_GEMINI_MODELS = [
+    ("gemini-3.1-pro-preview", "gemini-3.1-pro-preview"),
+    ("gemini-3.1-flash-lite-preview", "gemini-3.1-flash-lite-preview"),
+    ("gemini-3-flash-preview", "gemini-3-flash-preview"),
+    ("gemini-2.5-pro", "gemini-2.5-pro"),
+    ("gemini-2.5-flash", "gemini-2.5-flash"),
+]
+
 
 class SystemConfigForm(forms.ModelForm):
     openai_model_default = forms.ChoiceField(
@@ -427,10 +440,49 @@ class SystemConfigForm(forms.ModelForm):
         choices=ALLOWED_ANTHROPIC_MODELS,
         widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
     )
+    gemini_model_default = forms.ChoiceField(
+        choices=ALLOWED_GEMINI_MODELS,
+        widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
+    )
 
     class Meta:
         model = SystemConfigPointers
-        fields = ("openai_model_default", "anthropic_model_default")
+        fields = ("openai_model_default", "anthropic_model_default", "gemini_model_default")
+
+
+class FactoryResetForm(forms.Form):
+    password = forms.CharField(
+        label="Admin password",
+        widget=forms.PasswordInput(attrs={"class": "form-control", "autocomplete": "current-password"}),
+        strip=False,
+    )
+
+
+def _perform_factory_reset(*, user, raw_password: str) -> None:
+    UserModel = get_user_model()
+    user_id = int(user.id)
+    username = str(user.username)
+    email = str(user.email)
+    first_name = str(user.first_name or "")
+    last_name = str(user.last_name or "")
+    is_active = bool(user.is_active)
+    is_staff = bool(user.is_staff)
+    is_superuser = bool(user.is_superuser)
+
+    call_command("flush", interactive=False, verbosity=0)
+
+    reset_user = UserModel(
+        username=username,
+        email=email,
+    )
+    reset_user.id = user_id
+    reset_user.first_name = first_name
+    reset_user.last_name = last_name
+    reset_user.is_active = is_active
+    reset_user.is_staff = is_staff
+    reset_user.is_superuser = is_superuser
+    reset_user.set_password(raw_password)
+    reset_user.save(force_insert=True)
 
 
 # ------------------------------------------------------------
@@ -439,16 +491,34 @@ class SystemConfigForm(forms.ModelForm):
 
 @login_required
 def admin_hub(request):
+    if not request.user.is_superuser:
+        raise PermissionDenied("Superuser access required.")
+
     pointers, _ = SystemConfigPointers.objects.get_or_create(id=1)
+    reset_form = FactoryResetForm()
 
     if request.method == "POST":
-        form = SystemConfigForm(request.POST, instance=pointers)
-        if form.is_valid():
-            obj = form.save(commit=False)
-            obj.updated_by = request.user
-            obj.save()
-            messages.success(request, "Default LLM model updated.")
-            return redirect("accounts:admin_hub")
+        action = str(request.POST.get("action") or "save_models").strip()
+        if action == "factory_reset":
+            reset_form = FactoryResetForm(request.POST)
+            form = SystemConfigForm(instance=pointers)
+            if reset_form.is_valid():
+                password = str(reset_form.cleaned_data["password"])
+                if not request.user.check_password(password):
+                    reset_form.add_error("password", "Password did not match the current admin account.")
+                else:
+                    _perform_factory_reset(user=request.user, raw_password=password)
+                    logout(request)
+                    messages.success(request, "Factory reset completed. Sign in again.")
+                    return redirect("accounts:login")
+        else:
+            form = SystemConfigForm(request.POST, instance=pointers)
+            if form.is_valid():
+                obj = form.save(commit=False)
+                obj.updated_by = request.user
+                obj.save()
+                messages.success(request, "Default LLM model updated.")
+                return redirect("accounts:admin_hub")
     else:
         form = SystemConfigForm(instance=pointers)
 
@@ -458,6 +528,7 @@ def admin_hub(request):
         {
             "form": form,
             "pointers": pointers,
+            "reset_form": reset_form,
         },
     )
 
@@ -2911,10 +2982,11 @@ def config_menu(request):
 
     if request.method == "POST":
         provider = (request.POST.get("llm_provider") or "").strip().lower()
-        allowed = {"openai", "anthropic", "deepseek"}
+        allowed = {"openai", "anthropic", "deepseek", "gemini"}
         allowed_openai_models = {k for k, _ in ALLOWED_MODELS}
         allowed_anthropic_models = {k for k, _ in ALLOWED_ANTHROPIC_MODELS}
         allowed_deepseek_models = {k for k, _ in ALLOWED_DEEPSEEK_MODELS}
+        allowed_gemini_models = {k for k, _ in ALLOWED_GEMINI_MODELS}
 
         if provider not in allowed:
             messages.error(request, "Invalid LLM provider.")
@@ -2942,6 +3014,13 @@ def config_menu(request):
                     return redirect("accounts:config_menu")
                 profile.deepseek_model_default = deepseek_model
                 update_fields.append("deepseek_model_default")
+            elif provider == "gemini":
+                gemini_model = (request.POST.get("gemini_model_default") or "").strip()
+                if gemini_model not in allowed_gemini_models:
+                    messages.error(request, "Invalid Gemini model.")
+                    return redirect("accounts:config_menu")
+                profile.gemini_model_default = gemini_model
+                update_fields.append("gemini_model_default")
             profile.save(update_fields=update_fields)
             messages.success(request, "LLM settings updated.")
         return redirect("accounts:config_menu")
@@ -2959,10 +3038,42 @@ def config_menu(request):
                 profile.anthropic_model_default or "claude-sonnet-4-5-20250929"
             ),
             "deepseek_model_default": (profile.deepseek_model_default or "deepseek-chat"),
+            "gemini_model_default": (profile.gemini_model_default or "gemini-2.5-flash"),
             "openai_model_choices": ALLOWED_MODELS,
             "anthropic_model_choices": ALLOWED_ANTHROPIC_MODELS,
             "deepseek_model_choices": ALLOWED_DEEPSEEK_MODELS,
+            "gemini_model_choices": ALLOWED_GEMINI_MODELS,
         },
+    )
+
+
+@login_required
+@require_POST
+def topbar_llm_update(request):
+    profile = getattr(request.user, "profile", None)
+    if profile is None:
+        return JsonResponse({"ok": False, "error": "User profile not found."}, status=404)
+
+    try:
+        payload = json.loads((request.body or b"{}").decode("utf-8"))
+    except Exception:
+        payload = request.POST
+
+    provider = str(payload.get("provider") or "").strip().lower()
+    if provider not in {"openai", "anthropic", "deepseek", "gemini"}:
+        return JsonResponse({"ok": False, "error": "Invalid LLM provider."}, status=400)
+
+    if str(profile.llm_provider or "").strip().lower() != provider:
+        profile.llm_provider = provider
+        profile.save(update_fields=["llm_provider"])
+
+    active_provider, active_model = _active_provider_and_model_for_user(request.user)
+    return JsonResponse(
+        {
+            "ok": True,
+            "provider": active_provider,
+            "model": active_model,
+        }
     )
 
 

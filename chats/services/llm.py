@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import urllib.request
+import urllib.parse
 import anthropic
 from typing import Any, Callable, Dict, List, Optional
 
@@ -26,7 +27,7 @@ from config.models import SystemConfigPointers
 _OPENAI_CLIENT = None
 _ANTHROPIC_CLIENT = None
 _DEEPSEEK_CLIENT = None
-_ALLOWED_PROVIDERS = {"openai", "anthropic", "deepseek", "copilot"}
+_ALLOWED_PROVIDERS = {"openai", "anthropic", "deepseek", "gemini", "copilot"}
 _PANE_KEYS = ("answer", "key_info", "visuals", "reasoning", "output")
 _COPILOT_SPEC_OK: Optional[bool] = None
 _LOGGER = logging.getLogger(__name__)
@@ -186,6 +187,125 @@ def _get_deepseek_client():
         api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
         _DEEPSEEK_CLIENT = DeepSeekClient(api_key=api_key)
     return _DEEPSEEK_CLIENT
+
+
+def _get_gemini_api_key() -> str:
+    env_path = settings.BASE_DIR / ".env"
+    file_values = dotenv_values(env_path)
+    api_key = str(file_values.get("GEMINI_API_KEY") or "").strip()
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY is missing from .env")
+    return api_key
+
+
+def _get_default_gemini_model_key(*, user: Any = None) -> str:
+    profile = getattr(user, "profile", None) if user is not None else None
+    user_value = (getattr(profile, "gemini_model_default", "") or "").strip()
+    if user_value:
+        return user_value
+    p = SystemConfigPointers.objects.first()
+    config_value = getattr(p, "gemini_model_default", "") if p is not None else ""
+    env_value = os.getenv("GEMINI_MODEL", "")
+    return (config_value or env_value or "gemini-2.5-flash").strip()
+
+
+def _data_url_to_gemini_image_part(data_url: str) -> Optional[Dict[str, Any]]:
+    prefix = "data:"
+    marker = ";base64,"
+    if not data_url.startswith(prefix) or marker not in data_url:
+        return None
+    media_type, b64 = data_url[len(prefix) :].split(marker, 1)
+    media_type = media_type.strip().lower()
+    b64 = b64.strip()
+    if not media_type or not b64:
+        return None
+    return {
+        "inline_data": {
+            "mime_type": media_type,
+            "data": b64,
+        }
+    }
+
+
+def _resolve_gemini_text(payload: Dict[str, Any]) -> str:
+    candidates = payload.get("candidates") or []
+    for candidate in candidates:
+        content = candidate.get("content") or {}
+        parts = content.get("parts") or []
+        texts: List[str] = []
+        for part in parts:
+            text = str((part or {}).get("text") or "").strip()
+            if text:
+                texts.append(text)
+        if texts:
+            return "\n".join(texts).strip()
+    return ""
+
+
+def _gemini_generate_content(
+    *,
+    model: str,
+    system_blocks: List[str],
+    history_messages: List[Dict[str, Any]],
+    user_text: str,
+    image_parts: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    contents: List[Dict[str, Any]] = []
+    for msg in history_messages:
+        if not msg:
+            continue
+        role = msg.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        text = _content_to_text(msg.get("content"))
+        if not text:
+            continue
+        contents.append(
+            {
+                "role": "model" if role == "assistant" else "user",
+                "parts": [{"text": text}],
+            }
+        )
+
+    user_parts: List[Dict[str, Any]] = []
+    if str(user_text or "").strip():
+        user_parts.append({"text": user_text})
+    for part in image_parts:
+        image_url = str(part.get("image_url") or "")
+        image_part = _data_url_to_gemini_image_part(image_url)
+        if image_part:
+            user_parts.append(image_part)
+    if user_parts or not contents:
+        contents.append({"role": "user", "parts": user_parts or [{"text": ""}]})
+
+    payload: Dict[str, Any] = {
+        "contents": contents,
+        "generationConfig": {
+            "temperature": 0.2,
+        },
+    }
+    system_text = "\n\n".join([b for b in system_blocks if b]).strip()
+    if system_text:
+        payload["system_instruction"] = {"parts": [{"text": system_text}]}
+
+    endpoint = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        + urllib.parse.quote(model, safe="")
+        + ":generateContent?key="
+        + urllib.parse.quote(_get_gemini_api_key(), safe="")
+    )
+    req = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        raw = resp.read().decode("utf-8")
+    data = json.loads(raw or "{}")
+    if not isinstance(data, dict):
+        raise ValueError("Gemini API returned unexpected payload")
+    return data
 
 
 def _get_copilot_agent():
@@ -598,6 +718,16 @@ def _call_llm_raw_text(
         )
         return _resolve_deepseek_text(response).strip()
 
+    if selected_provider == "gemini":
+        response = _gemini_generate_content(
+            model=(force_model or _get_default_gemini_model_key(user=user)).strip(),
+            system_blocks=system_blocks,
+            history_messages=history_messages,
+            user_text=user_text,
+            image_parts=image_parts,
+        )
+        return _resolve_gemini_text(response).strip()
+
     input_msgs: List[Dict[str, Any]] = []
     for block in system_blocks:
         if block:
@@ -792,6 +922,38 @@ def generate_panes(
             panes["answer"] = raw_text or "[deepseek] empty pane payload"
         return panes
 
+    if selected_provider == "gemini":
+        gemini_system_blocks = list(system_blocks)
+        if system_contract:
+            gemini_system_blocks = [
+                system_contract,
+                *gemini_system_blocks,
+                "Return strict JSON only. No markdown. No prose outside JSON.",
+            ]
+        response = _gemini_generate_content(
+            model=(force_model or _get_default_gemini_model_key(user=user)).strip(),
+            system_blocks=gemini_system_blocks,
+            history_messages=history_messages,
+            user_text=user_text,
+            image_parts=image_parts,
+        )
+        raw_text = _resolve_gemini_text(response).strip()
+        payload = _extract_json_dict_from_text(raw_text)
+        if payload is None:
+            if not raw_text:
+                raw_text = "[gemini] empty text response"
+            return {
+                "answer": raw_text,
+                "key_info": "",
+                "visuals": "",
+                "reasoning": "",
+                "output": "",
+            }
+        panes = _normalise_panes_payload(payload)
+        if _all_panes_empty(panes):
+            panes["answer"] = raw_text or "[gemini] empty pane payload"
+        return panes
+
     input_msgs: List[Dict[str, Any]] = []
     if system_contract:
         input_msgs.append({"role": "system", "content": system_contract})
@@ -930,6 +1092,16 @@ def generate_handshake(
         )
         return _resolve_deepseek_text(response).strip()
 
+    if selected_provider == "gemini":
+        response = _gemini_generate_content(
+            model=_get_default_gemini_model_key(user=user),
+            system_blocks=blocks,
+            history_messages=[],
+            user_text="Bootstrap handshake. Respond now.",
+            image_parts=[],
+        )
+        return _resolve_gemini_text(response).strip()
+
     client = _get_openai_client()
     response = client.responses.create(
         model=_get_default_model_key(user=user),
@@ -1013,6 +1185,16 @@ def generate_text(
             messages=[{"role": "user", "content": prompt}],
         )
         return _resolve_deepseek_text(response).strip()
+
+    if selected_provider == "gemini":
+        response = _gemini_generate_content(
+            model=_get_default_gemini_model_key(user=user),
+            system_blocks=system_blocks,
+            history_messages=messages,
+            user_text="",
+            image_parts=[],
+        )
+        return _resolve_gemini_text(response).strip()
 
     client = _get_openai_client()
     response = client.responses.create(
