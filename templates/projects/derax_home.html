@@ -705,11 +705,12 @@
                 <div class="list-group-item px-0 py-1" data-file-doc-id="{{ row.doc.id }}" data-file-name="{{ row.display_name|lower }}" data-file-updated="{{ row.doc.updated_at|date:'U' }}" data-file-size="{{ row.doc.size_bytes|default:0 }}">
                   <div class="d-flex justify-content-between align-items-center gap-2">
                     <div class="small text-truncate" style="min-width: 0;" title="{{ row.display_name }}">
-                      {{ row.display_name }}
+                      <a class="text-decoration-none js-file-open" href="{% url 'projects:project_document_collabora_edit' project.id row.doc.id %}?next={% url 'projects:derax_project_home' project.id %}">
+                        {{ row.display_name }}
+                      </a>
                       <span class="text-muted">({{ row.doc.updated_at|date:"Y-m-d H:i" }})</span>
                     </div>
                     <div class="d-flex gap-1 flex-shrink-0">
-                      <a class="btn btn-sm btn-outline-secondary px-2 py-0 js-file-open" title="Open" aria-label="Open" href="{% url 'projects:project_document_collabora_edit' project.id row.doc.id %}?next={% url 'projects:derax_project_home' project.id %}">&#128194;</a>
                       <a class="btn btn-sm btn-outline-secondary px-2 py-0 js-file-download" title="Download" aria-label="Download" href="{% url 'projects:project_document_download' project.id row.doc.id %}">&#8681;</a>
                       {% if can_archive_project_docs %}
                       <form method="post" class="d-inline js-file-action-form" data-file-action="project_doc_archive">
@@ -1122,21 +1123,6 @@
     });
   }
 
-  if (latestBox) {
-    latestBox.addEventListener("blur", function () {
-      var text = (latestBox.value || "").trim();
-      postAction(
-        { action: "autosave_end_in_mind", end_in_mind: text },
-        function () {
-          if (saveStatus) saveStatus.textContent = "Autosaved";
-        },
-        function (err) {
-          if (saveStatus) saveStatus.textContent = err;
-        }
-      );
-    });
-  }
-
   if (refineInput) {
     refineInput.addEventListener("blur", function () {
       if (refineSubmitting) return;
@@ -1169,7 +1155,6 @@
         function (data) {
           var latest = (data.latest_define_assistant_text || "").trim();
           if (latestBox) latestBox.value = latest;
-          if (defineInput) defineInput.value = "";
           if (defineStatus) defineStatus.textContent = "Response received.";
           if (defineButton) defineButton.disabled = false;
           window.location.reload();

@@ -34,6 +34,7 @@ staticfiles/
 .DS_Store
 Thumbs.db
 .env
+start_venv.ps1
 
 .vs/
 * . t a r 

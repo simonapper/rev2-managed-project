@@ -38,6 +38,61 @@ class DeraxModeTests(TestCase):
         self.assertIsNotNone(work_item)
         self.assertEqual(work_item.active_phase, WorkItem.PHASE_DEFINE)
 
+    def test_explore_phase_input_text_uses_end_in_mind_line_from_readable_response(self):
+        project = Project.objects.create(
+            name="DERAX Explore Input Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse("projects:derax_project_home", args=[project.id]))
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        self.assertIsNotNone(work_item)
+        work_item.active_phase = WorkItem.PHASE_EXPLORE
+        work_item.intent_raw = (
+            "Phase: EXPLORE\n"
+            "End in mind: Destination text\n"
+            "Adjacent ideas:\n"
+            "- Placeholder\n"
+        )
+        work_item.save(update_fields=["active_phase", "intent_raw", "updated_at"])
+
+        response = self.client.get(reverse("projects:derax_project_home", args=[project.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["phase_input_text"], "Destination text")
+
+    def test_phase_input_text_prefers_latest_user_text_for_define_and_explore(self):
+        project = Project.objects.create(
+            name="DERAX Phase Input User Text Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        self.client.get(reverse("projects:derax_project_home", args=[project.id]))
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        self.assertIsNotNone(work_item)
+
+        work_item.active_phase = WorkItem.PHASE_DEFINE
+        work_item.intent_raw = "Fallback destination"
+        work_item.derax_define_history = [
+            {"role": "user", "text": "Define prompt text", "timestamp": "2026-04-01T10:00:00Z"},
+            {"role": "assistant", "text": "{\"meta\":{\"phase\":\"DEFINE\"},\"intent\":{\"destination\":\"Fallback destination\",\"success_criteria\":[],\"constraints\":[],\"non_goals\":[],\"assumptions\":[],\"open_questions\":[]},\"explore\":{\"adjacent_ideas\":[],\"risks\":[],\"tradeoffs\":[],\"reframes\":[]},\"parked_for_later\":{\"items\":[]},\"artefacts\":{\"proposed\":[],\"generated\":[],\"requirements\":{},\"intake\":{}},\"validation\":{\"schema_ok\":\"\",\"errors\":[]}}", "timestamp": "2026-04-01T10:00:01Z"},
+        ]
+        work_item.save(update_fields=["active_phase", "intent_raw", "derax_define_history", "updated_at"])
+
+        response = self.client.get(reverse("projects:derax_project_home", args=[project.id]))
+        self.assertEqual(response.context["phase_input_text"], "Define prompt text")
+
+        work_item.active_phase = WorkItem.PHASE_EXPLORE
+        work_item.derax_explore_history = [
+            {"role": "user", "text": "Explore prompt text", "timestamp": "2026-04-01T10:01:00Z"},
+            {"role": "assistant", "text": "{\"meta\":{\"phase\":\"EXPLORE\"},\"intent\":{\"destination\":\"Fallback destination\",\"success_criteria\":[],\"constraints\":[],\"non_goals\":[],\"assumptions\":[],\"open_questions\":[]},\"explore\":{\"adjacent_ideas\":[\"A\"],\"risks\":[\"B\"],\"tradeoffs\":[\"C\"],\"reframes\":[\"D\"]},\"parked_for_later\":{\"items\":[]},\"artefacts\":{\"proposed\":[],\"generated\":[],\"requirements\":{},\"intake\":{}},\"validation\":{\"schema_ok\":\"\",\"errors\":[]}}", "timestamp": "2026-04-01T10:01:01Z"},
+        ]
+        work_item.save(update_fields=["active_phase", "derax_explore_history", "updated_at"])
+
+        response = self.client.get(reverse("projects:derax_project_home", args=[project.id]))
+        self.assertEqual(response.context["phase_input_text"], "Explore prompt text")
+
     def test_project_home_redirects_to_derax_when_workflow_mode_derax(self):
         project = Project.objects.create(
             name="DERAX Redirect Project",
@@ -204,6 +259,127 @@ class DeraxModeTests(TestCase):
         self.assertTrue(payload.get("ok"))
         self.assertIn("history_html", payload)
         self.assertEqual(payload.get("latest_define_assistant_text"), "Focused define response")
+
+    @patch(
+        "projects.views_derax.generate_text",
+        return_value=json.dumps(
+            {
+                "meta": {
+                    "tko_id": "tko_test",
+                    "derax_version": "1.0",
+                    "phase": "DEFINE",
+                    "timestamp": "2026-02-24T00:00:00Z",
+                    "source_chat_id": "",
+                    "source_turn_id": "",
+                },
+                "canonical_summary": "Event planning cadence",
+                "intent": {
+                    "destination": "Define a KPI-led event planning cadence.",
+                    "success_criteria": [],
+                    "constraints": [],
+                    "non_goals": [],
+                    "assumptions": [],
+                    "open_questions": ["Which event types matter most?"],
+                },
+                "explore": {
+                    "adjacent_ideas": ["Monthly, quarterly, annual horizons"],
+                    "risks": [],
+                    "tradeoffs": [],
+                    "reframes": [],
+                },
+                "parked_for_later": {"items": []},
+                "artefacts": {
+                    "proposed": [],
+                    "generated": [],
+                    "requirements": {},
+                    "intake": {},
+                },
+                "validation": {"schema_ok": True, "errors": []},
+            }
+        ),
+    )
+    def test_define_turn_recovers_parseable_payload_that_breaks_define_policy(self, _mock_generate_text):
+        project = Project.objects.create(
+            name="DERAX Define Recovery Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+
+        response = self.client.post(
+            url,
+            {
+                "action": "define_llm_turn",
+                "define_user_input": "Set up event cadence KPIs.",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        self.assertIsNotNone(work_item)
+        history = list(work_item.derax_define_history or [])
+        self.assertEqual(len(history), 2)
+        payload = json.loads(str(history[1].get("text") or "{}"))
+        self.assertEqual(payload.get("meta", {}).get("phase"), "DEFINE")
+        self.assertEqual((payload.get("explore") or {}).get("adjacent_ideas"), [])
+        self.assertEqual((payload.get("artefacts") or {}).get("proposed"), [])
+        parked_items = list((payload.get("parked_for_later") or {}).get("items") or [])
+        self.assertGreaterEqual(len(parked_items), 1)
+        parked_titles = [str(dict(row or {}).get("title") or "") for row in parked_items if isinstance(row, dict)]
+        self.assertTrue(any("parked" in title.lower() for title in parked_titles))
+
+    @patch(
+        "projects.views_derax.generate_text",
+        side_effect=[
+            "Not JSON at all",
+            json.dumps(
+                {
+                    "meta": {"phase": "DEFINE"},
+                    "intent": {
+                        "destination": "",
+                        "success_criteria": [],
+                        "constraints": [],
+                        "non_goals": [],
+                        "assumptions": [],
+                        "open_questions": [],
+                    },
+                    "explore": {"adjacent_ideas": [], "risks": [], "tradeoffs": [], "reframes": []},
+                    "parked_for_later": {"items": []},
+                    "artefacts": {"proposed": [], "generated": [], "requirements": {}, "intake": {}},
+                    "validation": {"schema_ok": "", "errors": []},
+                }
+            ),
+        ],
+    )
+    def test_define_turn_uses_local_fallback_when_destination_missing(self, mock_generate_text):
+        project = Project.objects.create(
+            name="DERAX Define Local Fallback Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        user_text = (
+            "Define a closed-loop KPI, objectives, strategies, and tactics framework spanning monthly, quarterly, "
+            "and annual horizons. The company is adding retail sales to online only. This is a cash drain."
+        )
+
+        response = self.client.post(
+            url,
+            {
+                "action": "define_llm_turn",
+                "phase_user_input": user_text,
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(mock_generate_text.call_count, 2)
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        history = list(work_item.derax_define_history or [])
+        payload = json.loads(str(history[-1].get("text") or "{}"))
+        self.assertTrue((payload.get("intent") or {}).get("destination"))
+        self.assertEqual((payload.get("meta") or {}).get("phase"), "DEFINE")
+        self.assertTrue((payload.get("intent") or {}).get("open_questions"))
 
     def test_derax_home_end_in_mind_autosave_ajax(self):
         project = Project.objects.create(
@@ -469,6 +645,376 @@ class DeraxModeTests(TestCase):
         self.assertEqual(len(history), 2)
         self.assertEqual(history[0].get("role"), "user")
         self.assertEqual(history[1].get("role"), "assistant")
+
+    @patch(
+        "projects.views_derax.generate_text",
+        return_value=json.dumps(
+            {
+                "meta": {
+                    "tko_id": "tko_test",
+                    "derax_version": "1.0",
+                    "phase": "EXPLORE",
+                    "timestamp": "2026-02-24T00:00:00Z",
+                    "source_chat_id": "",
+                    "source_turn_id": "",
+                },
+                "canonical_summary": "",
+                "intent": {
+                    "destination": "",
+                    "success_criteria": [],
+                    "constraints": [],
+                    "non_goals": [],
+                    "assumptions": [],
+                    "open_questions": [],
+                },
+                "explore": {
+                    "adjacent_ideas": [],
+                    "risks": [],
+                    "tradeoffs": [],
+                    "reframes": [],
+                },
+                "parked_for_later": {"items": []},
+                "artefacts": {
+                    "proposed": [],
+                    "generated": [],
+                    "requirements": {},
+                    "intake": {},
+                },
+                "validation": {"schema_ok": "", "errors": []},
+            }
+        ),
+    )
+    def test_explore_turn_backfills_empty_payload_from_define_destination(self, _mock_generate_text):
+        project = Project.objects.create(
+            name="DERAX Explore Recovery Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        self.client.post(url, {"action": "save_end_in_mind", "end_in_mind": "Destination text"})
+        self.client.post(url, {"action": "lock_define_and_explore"})
+
+        response = self.client.post(
+            url,
+            {"action": "explore_llm_turn", "phase_user_input": "Pressure test this destination."},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        history = list(work_item.derax_explore_history or [])
+        payload = json.loads(str(history[-1].get("text") or "{}"))
+        self.assertEqual((payload.get("intent") or {}).get("destination"), "Destination text")
+        self.assertTrue((payload.get("explore") or {}).get("tradeoffs"))
+        self.assertTrue((payload.get("explore") or {}).get("reframes"))
+
+    @patch(
+        "projects.views_derax.generate_text",
+        side_effect=[
+            json.dumps(
+                {
+                    "meta": {
+                        "tko_id": "tko_test",
+                        "derax_version": "1.0",
+                        "phase": "EXPLORE",
+                        "timestamp": "2026-02-24T00:00:00Z",
+                        "source_chat_id": "",
+                        "source_turn_id": "",
+                    },
+                    "canonical_summary": "",
+                    "intent": {
+                        "destination": "",
+                        "success_criteria": [],
+                        "constraints": [],
+                        "non_goals": [],
+                        "assumptions": [],
+                        "open_questions": [],
+                    },
+                    "explore": {
+                        "adjacent_ideas": [],
+                        "risks": [],
+                        "tradeoffs": [],
+                        "reframes": [],
+                    },
+                    "parked_for_later": {"items": []},
+                    "artefacts": {
+                        "proposed": [],
+                        "generated": [],
+                        "requirements": {},
+                        "intake": {},
+                    },
+                    "validation": {"schema_ok": "", "errors": []},
+                }
+            ),
+            json.dumps(
+                {
+                    "meta": {
+                        "tko_id": "tko_test",
+                        "derax_version": "1.0",
+                        "phase": "EXPLORE",
+                        "timestamp": "2026-02-24T00:00:01Z",
+                        "source_chat_id": "",
+                        "source_turn_id": "",
+                    },
+                    "canonical_summary": "",
+                    "intent": {
+                        "destination": "Destination text",
+                        "success_criteria": [],
+                        "constraints": [],
+                        "non_goals": [],
+                        "assumptions": [],
+                        "open_questions": [],
+                    },
+                    "explore": {
+                        "adjacent_ideas": ["Add a rolling assumptions review."],
+                        "risks": ["Teams may optimise only for near-term metrics."],
+                        "tradeoffs": ["More review cadence means more coordination time."],
+                        "reframes": ["Treat the system as a learning loop, not a fixed scorecard."],
+                    },
+                    "parked_for_later": {"items": []},
+                    "artefacts": {
+                        "proposed": [],
+                        "generated": [],
+                        "requirements": {},
+                        "intake": {},
+                    },
+                    "validation": {"schema_ok": "", "errors": []},
+                }
+            ),
+        ],
+    )
+    def test_explore_turn_retries_when_only_placeholder_content_is_recovered(self, mock_generate_text):
+        project = Project.objects.create(
+            name="DERAX Explore Retry Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        self.client.post(url, {"action": "save_end_in_mind", "end_in_mind": "Destination text"})
+        self.client.post(url, {"action": "lock_define_and_explore"})
+
+        response = self.client.post(
+            url,
+            {"action": "explore_llm_turn", "phase_user_input": "Pressure test this destination."},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_generate_text.call_count, 2)
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        history = list(work_item.derax_explore_history or [])
+        payload = json.loads(str(history[-1].get("text") or "{}"))
+        self.assertEqual((payload.get("explore") or {}).get("adjacent_ideas"), ["Add a rolling assumptions review."])
+        self.assertEqual((payload.get("explore") or {}).get("reframes"), ["Treat the system as a learning loop, not a fixed scorecard."])
+
+    @patch(
+        "projects.views_derax.generate_text",
+        side_effect=[
+            json.dumps(
+                {
+                    "meta": {
+                        "tko_id": "tko_test",
+                        "derax_version": "1.0",
+                        "phase": "EXPLORE",
+                        "timestamp": "2026-02-24T00:00:00Z",
+                        "source_chat_id": "",
+                        "source_turn_id": "",
+                    },
+                    "canonical_summary": "",
+                    "intent": {
+                        "destination": "",
+                        "success_criteria": [],
+                        "constraints": [],
+                        "non_goals": [],
+                        "assumptions": [],
+                        "open_questions": [],
+                    },
+                    "explore": {
+                        "adjacent_ideas": [],
+                        "risks": [],
+                        "tradeoffs": [],
+                        "reframes": [],
+                    },
+                    "parked_for_later": {"items": []},
+                    "artefacts": {
+                        "proposed": [],
+                        "generated": [],
+                        "requirements": {},
+                        "intake": {},
+                    },
+                    "validation": {"schema_ok": "", "errors": []},
+                }
+            ),
+            json.dumps(
+                {
+                    "meta": {
+                        "tko_id": "tko_test",
+                        "derax_version": "1.0",
+                        "phase": "EXPLORE",
+                        "timestamp": "2026-02-24T00:00:01Z",
+                        "source_chat_id": "",
+                        "source_turn_id": "",
+                    },
+                    "canonical_summary": "",
+                    "intent": {
+                        "destination": "",
+                        "success_criteria": [],
+                        "constraints": [],
+                        "non_goals": [],
+                        "assumptions": [],
+                        "open_questions": [],
+                    },
+                    "explore": {
+                        "adjacent_ideas": [],
+                        "risks": [],
+                        "tradeoffs": [],
+                        "reframes": [],
+                    },
+                    "parked_for_later": {"items": []},
+                    "artefacts": {
+                        "proposed": [],
+                        "generated": [],
+                        "requirements": {},
+                        "intake": {},
+                    },
+                    "validation": {"schema_ok": "", "errors": []},
+                }
+            ),
+        ],
+    )
+    def test_explore_turn_uses_local_backfill_when_retry_stays_placeholder_only(self, mock_generate_text):
+        project = Project.objects.create(
+            name="DERAX Explore Local Backfill Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        destination = (
+            "Define a closed-loop KPI, objectives, strategies, and tactics framework spanning monthly, "
+            "quarterly, and annual horizons that uses each monthly review to capture actuals, diagnose variances, "
+            "recalibrate forward targets, and commit to next-month tactics."
+        )
+        self.client.post(url, {"action": "save_end_in_mind", "end_in_mind": destination})
+        self.client.post(url, {"action": "lock_define_and_explore"})
+
+        response = self.client.post(
+            url,
+            {"action": "explore_llm_turn", "phase_user_input": "Pressure test the KPI review cadence and target resets."},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_generate_text.call_count, 2)
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        history = list(work_item.derax_explore_history or [])
+        payload = json.loads(str(history[-1].get("text") or "{}"))
+        self.assertEqual((payload.get("intent") or {}).get("destination"), destination)
+        self.assertNotIn("not yet surfaced", " ".join((payload.get("explore") or {}).get("adjacent_ideas") or []).lower())
+        self.assertTrue(any("review" in item.lower() or "horizon" in item.lower() for item in ((payload.get("explore") or {}).get("adjacent_ideas") or [])))
+        self.assertTrue(any("target" in item.lower() or "kpi" in item.lower() for item in ((payload.get("explore") or {}).get("risks") or [])))
+
+    @patch(
+        "projects.views_derax.generate_text",
+        side_effect=[
+            json.dumps(
+                {
+                    "meta": {"phase": "EXPLORE"},
+                    "intent": {"destination": "", "success_criteria": [], "constraints": [], "non_goals": [], "assumptions": [], "open_questions": []},
+                    "explore": {"adjacent_ideas": [], "risks": [], "tradeoffs": [], "reframes": []},
+                    "parked_for_later": {"items": []},
+                    "artefacts": {"proposed": [], "generated": [], "requirements": {}, "intake": {}},
+                    "validation": {"schema_ok": "", "errors": []},
+                }
+            ),
+            json.dumps(
+                {
+                    "meta": {"phase": "EXPLORE"},
+                    "intent": {"destination": "Destination text", "success_criteria": [], "constraints": [], "non_goals": [], "assumptions": [], "open_questions": []},
+                    "explore": {
+                        "adjacent_ideas": ["Adjacent angle not yet surfaced"],
+                        "risks": ["Risk not yet surfaced"],
+                        "tradeoffs": ["Trade-off not yet surfaced"],
+                        "reframes": ["Reframe not yet surfaced"],
+                    },
+                    "parked_for_later": {"items": []},
+                    "artefacts": {"proposed": [], "generated": [], "requirements": {}, "intake": {}},
+                    "validation": {"schema_ok": "", "errors": []},
+                }
+            ),
+        ],
+    )
+    def test_explore_turn_local_backfill_handles_placeholder_variants(self, mock_generate_text):
+        project = Project.objects.create(
+            name="DERAX Explore Placeholder Variant Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        self.client.post(url, {"action": "save_end_in_mind", "end_in_mind": "Destination text"})
+        self.client.post(url, {"action": "lock_define_and_explore"})
+
+        response = self.client.post(
+            url,
+            {"action": "explore_llm_turn", "phase_user_input": "Pressure test the KPI review cadence and target resets."},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_generate_text.call_count, 2)
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        payload = json.loads(str(list(work_item.derax_explore_history or [])[-1].get("text") or "{}"))
+        self.assertFalse(any("not yet surfaced" in item.lower() for item in ((payload.get("explore") or {}).get("adjacent_ideas") or [])))
+
+    @patch(
+        "projects.views_derax.generate_text",
+        side_effect=[
+            "Not JSON at all",
+            json.dumps(
+                {
+                    "meta": {"phase": "EXPLORE"},
+                    "intent": {
+                        "destination": "Destination text",
+                        "success_criteria": [],
+                        "constraints": [],
+                        "non_goals": [],
+                        "assumptions": [],
+                        "open_questions": [],
+                    },
+                    "explore": {
+                        "adjacent_ideas": ["Adjacent angle not yet surfaced."],
+                        "risks": ["Risk not yet surfaced."],
+                        "tradeoffs": ["Trade-off not yet surfaced."],
+                        "reframes": ["Reframe not yet surfaced."],
+                    },
+                    "parked_for_later": {"items": []},
+                    "artefacts": {"proposed": [], "generated": [], "requirements": {}, "intake": {}},
+                    "validation": {"schema_ok": "", "errors": []},
+                }
+            ),
+        ],
+    )
+    def test_explore_turn_finalises_placeholder_payload_after_correction(self, mock_generate_text):
+        project = Project.objects.create(
+            name="DERAX Explore Correction Finalise Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        self.client.post(url, {"action": "save_end_in_mind", "end_in_mind": "Destination text"})
+        self.client.post(url, {"action": "lock_define_and_explore"})
+
+        response = self.client.post(
+            url,
+            {"action": "explore_llm_turn", "phase_user_input": "Pressure test the KPI review cadence and target resets."},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_generate_text.call_count, 2)
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        payload = json.loads(str(list(work_item.derax_explore_history or [])[-1].get("text") or "{}"))
+        self.assertFalse(any("not yet surfaced" in item.lower() for item in ((payload.get("explore") or {}).get("adjacent_ideas") or [])))
+        self.assertTrue((payload.get("explore") or {}).get("risks"))
 
     def test_lock_explore_and_move_to_refine(self):
         project = Project.objects.create(

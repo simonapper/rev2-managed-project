@@ -99,6 +99,18 @@ def _latest_explore_input_text(work_item: WorkItem) -> str:
     return _extract_end_in_mind(_latest_explore_assistant_text(work_item))
 
 
+def _latest_phase_user_text(entries: list[dict]) -> str:
+    for row in reversed(list(entries or [])):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("role") or "").strip().lower() != "user":
+            continue
+        text = str(row.get("text") or "").strip()
+        if text:
+            return text
+    return ""
+
+
 def _extract_end_in_mind(text: str) -> str:
     raw = str(text or "").strip()
     if not raw:
@@ -116,6 +128,13 @@ def _extract_end_in_mind(text: str) -> str:
                 return eim
     except Exception:
         pass
+    for line in raw.splitlines():
+        current = str(line or "").strip()
+        lower = current.lower()
+        if lower.startswith("end in mind:"):
+            return current.split(":", 1)[1].strip()
+        if lower.startswith("destination:"):
+            return current.split(":", 1)[1].strip()
     return raw
 
 
@@ -554,8 +573,200 @@ def _coerce_phase_payload_any(payload: dict, *, phase: str) -> dict:
     return out
 
 
+def _soft_fill_explore_payload(payload: dict) -> dict:
+    out = _as_dict(payload)
+    intent = _as_dict(out.get("intent"))
+    explore = _as_dict(out.get("explore"))
+    if not str(intent.get("destination") or "").strip():
+        return out
+    defaults = {
+        "adjacent_ideas": "Adjacent angle not yet surfaced.",
+        "risks": "Risk not yet surfaced.",
+        "tradeoffs": "Trade-off not yet surfaced.",
+        "reframes": "Reframe not yet surfaced.",
+    }
+    for key, fallback in defaults.items():
+        values = _as_list_of_str(explore.get(key))
+        if not values:
+            explore[key] = [fallback]
+    out["explore"] = explore
+    return out
+
+
+def _explore_placeholder_defaults() -> dict[str, str]:
+    return {
+        "adjacent_ideas": "Adjacent angle not yet surfaced.",
+        "risks": "Risk not yet surfaced.",
+        "tradeoffs": "Trade-off not yet surfaced.",
+        "reframes": "Reframe not yet surfaced.",
+    }
+
+
+def _is_placeholder_only_explore_payload(payload: dict) -> bool:
+    out = _as_dict(payload)
+    explore = _as_dict(out.get("explore"))
+    for key in _explore_placeholder_defaults().keys():
+        values = _as_list_of_str(explore.get(key))
+        if not values:
+            return False
+        lowered = [str(v or "").strip().lower() for v in values if str(v or "").strip()]
+        if not lowered:
+            return False
+        if not all(
+            ("not yet surfaced" in value)
+            or ("placeholder" in value)
+            or ("not provided" in value)
+            or ("not supplied" in value)
+            for value in lowered
+        ):
+            return False
+    return True
+
+
+def _explore_retry_prompt() -> str:
+    return (
+        "Retry EXPLORE. Return JSON only. "
+        "Do not leave any explore list blank. "
+        "Do not use placeholder text such as 'not yet surfaced'. "
+        "Give one concrete item each for adjacent_ideas, risks, tradeoffs, and reframes. "
+        "Keep the current destination unchanged unless the user explicitly changed it."
+    )
+
+
+def _normalise_phrase_seed(text: str) -> list[str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    parts = re.split(r"[;,]| and | that | which | using ", raw)
+    out = []
+    for part in parts:
+        item = str(part or "").strip(" .:-")
+        if len(item) < 8:
+            continue
+        if item.lower() not in [v.lower() for v in out]:
+            out.append(item)
+    return out
+
+
+def _first_define_destination(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    for marker in [". ", "\n", "? ", "! "]:
+        if marker in raw:
+            head = raw.split(marker, 1)[0].strip()
+            if head:
+                return head[:240]
+    return raw[:240]
+
+
+def _local_define_payload(user_input: str) -> dict:
+    raw = str(user_input or "").strip()
+    payload = empty_payload(WorkItem.PHASE_DEFINE)
+    payload["meta"]["phase"] = WorkItem.PHASE_DEFINE
+    payload["intent"]["destination"] = _first_define_destination(raw)
+
+    lower = raw.lower()
+    open_questions = []
+    parked_items = []
+
+    def _add_question(text: str) -> None:
+        line = str(text or "").strip()
+        if line and line not in open_questions and len(open_questions) < 3:
+            open_questions.append(line)
+
+    def _add_parked(title: str, detail: str = "") -> None:
+        if len(parked_items) >= 3:
+            return
+        title_text = str(title or "").strip()[:120]
+        detail_text = str(detail or "").strip()[:240]
+        if title_text or detail_text:
+            parked_items.append({"title": title_text, "detail": detail_text})
+
+    _add_question("What is the six-month sales level needed to offset the retail cash draw?")
+    if "purchase order" in lower or "future delivery" in lower:
+        _add_question("Which retail demand signals count as committed forecast versus pipeline?")
+    if "pricing" in lower or "dozen" in lower or "pallet" in lower or "container" in lower:
+        _add_question("Which pricing ladder and volume tiers are in scope for the first pass?")
+
+    if "cash" in lower or "six months" in lower:
+        _add_parked("Cash control detail", "Six-month cash coverage, pricing, and forecast mechanics.")
+    if "retail" in lower or "vp sales" in lower:
+        _add_parked("Retail channel build", "Retail relationship development and new sales leadership ramp.")
+    if "concentrates" in lower or "product range" in lower or "dispensers" in lower:
+        _add_parked("Range expansion", "Product extension from dispensers only to dispensers plus concentrates.")
+
+    payload["intent"]["open_questions"] = open_questions[:3]
+    payload["parked_for_later"]["items"] = parked_items[:3]
+    return payload
+
+
+def _local_explore_payload(*, user_input: str, destination: str) -> dict:
+    dest = str(destination or "").strip()
+    prompt = str(user_input or "").strip()
+    seed_text = " ".join([dest, prompt]).strip()
+    lower = seed_text.lower()
+    fragments = _normalise_phrase_seed(seed_text)
+
+    adjacent = []
+    risks = []
+    tradeoffs = []
+    reframes = []
+
+    if any(token in lower for token in ["monthly", "quarterly", "annual"]):
+        adjacent.append("Separate monthly operating review from quarterly and annual strategic reset.")
+        tradeoffs.append("More review horizons improve alignment but add coordination overhead.")
+    if any(token in lower for token in ["kpi", "metric", "actuals", "variances", "targets"]):
+        adjacent.append("Distinguish lead indicators from lag indicators before locking review cadence.")
+        risks.append("Teams may optimise reported KPIs rather than the underlying outcome.")
+    if any(token in lower for token in ["closed-loop", "recalibrate", "modify", "living system"]):
+        reframes.append("Treat this as a management learning loop rather than a fixed scorecard.")
+        risks.append("Frequent target resets may weaken comparability across periods.")
+    if any(token in lower for token in ["strategy", "strategies", "tactic", "tactics"]):
+        tradeoffs.append("A tighter link between strategy and tactics increases clarity but can reduce local flexibility.")
+        adjacent.append("Add a rule for when variance triggers strategic review versus tactical adjustment.")
+    if any(token in lower for token in ["event horizon", "horizon", "month", "quarter", "year"]):
+        reframes.append("Model the system as nested horizons with different decision rights at each level.")
+
+    for frag in fragments[:2]:
+        if "review" in frag.lower() and len(adjacent) < 3:
+            adjacent.append(f"Clarify what each review cycle decides: {frag}.")
+        if "target" in frag.lower() and len(risks) < 3:
+            risks.append(f"Target changes may become noisy if '{frag}' is reset too often.")
+
+    if not adjacent:
+        adjacent.append("Surface one adjacent operating model that could support the same destination.")
+    if not risks:
+        risks.append("The framework may become too complex to run consistently month to month.")
+    if not tradeoffs:
+        tradeoffs.append("Greater responsiveness may reduce stability and comparability over time.")
+    if not reframes:
+        reframes.append("Frame this as a decision cadence, not only a KPI taxonomy.")
+
+    payload = empty_payload(WorkItem.PHASE_EXPLORE)
+    payload["meta"]["phase"] = WorkItem.PHASE_EXPLORE
+    payload["intent"]["destination"] = dest
+    payload["explore"]["adjacent_ideas"] = adjacent[:3]
+    payload["explore"]["risks"] = risks[:3]
+    payload["explore"]["tradeoffs"] = tradeoffs[:3]
+    payload["explore"]["reframes"] = reframes[:3]
+    return payload
+
+
+def _finalise_explore_payload(*, payload: dict, user_input: str, fallback_destination: str) -> dict:
+    out = _as_dict(payload)
+    if _is_placeholder_only_explore_payload(out):
+        return _local_explore_payload(
+            user_input=user_input,
+            destination=str(_as_dict(_as_dict(out).get("intent")).get("destination") or fallback_destination or "").strip(),
+        )
+    return out
+
+
 def _phase_payload_recovered(payload: dict, *, phase: str) -> tuple[bool, dict, str]:
     coerced = _coerce_phase_payload_any(payload, phase=phase)
+    if str(phase or "").strip().upper() == WorkItem.PHASE_EXPLORE:
+        coerced = _soft_fill_explore_payload(coerced)
     ok_schema, schema_errors = validate_structural(coerced)
     ok_phase, phase_errors = check_required_nonempty(coerced, phase=phase)
     if ok_schema and ok_phase:
@@ -599,6 +810,21 @@ def _backfill_refine_from_explore(*, refine_payload: dict, explore_payload: dict
     out["intent"] = intent
     out["explore"] = explore
     return out
+
+
+def _backfill_explore_from_define(*, explore_payload: dict, define_payload: dict, fallback_destination: str = "") -> dict:
+    out = _as_dict(explore_payload)
+    define_src = _as_dict(define_payload)
+    intent = _as_dict(out.get("intent"))
+    define_intent = _as_dict(define_src.get("intent"))
+    destination = str(intent.get("destination") or "").strip()
+    if not destination:
+        destination = str(define_intent.get("destination") or "").strip()
+    if not destination:
+        destination = str(fallback_destination or "").strip()
+    intent["destination"] = destination
+    out["intent"] = intent
+    return _soft_fill_explore_payload(out)
 
 
 def _backfill_approve_from_refine(*, approve_payload: dict, refine_payload: dict) -> dict:
@@ -856,12 +1082,70 @@ def _sanitise_define_payload(payload: dict) -> dict:
     out = _as_dict(payload)
     out.setdefault("meta", {})
     out["meta"]["phase"] = WorkItem.PHASE_DEFINE
-    out.setdefault("explore", {})
+    intent = _as_dict(out.get("intent"))
+    explore_in = _as_dict(out.get("explore"))
+    artefacts_in = _as_dict(out.get("artefacts"))
+    parked = _as_dict(out.get("parked_for_later"))
+    parked_items = []
+    for row in list(parked.get("items") or []):
+        row_dict = _as_dict(row)
+        title = str(row_dict.get("title") or "").strip()
+        detail = str(row_dict.get("detail") or "").strip()
+        if title or detail:
+            parked_items.append({"title": title[:120], "detail": detail[:240]})
+
+    def _append_parked(title: str, detail: str = "") -> None:
+        if len(parked_items) >= 3:
+            return
+        title_text = str(title or "").strip()[:120]
+        detail_text = str(detail or "").strip()[:240]
+        if not title_text and not detail_text:
+            return
+        parked_items.append({"title": title_text, "detail": detail_text})
+
+    success_criteria = _as_list_of_str(intent.get("success_criteria"))
+    if success_criteria:
+        _append_parked("Success criteria parked for later", "; ".join(success_criteria[:3]))
+
+    for key, label in (
+        ("adjacent_ideas", "Explore adjacent ideas parked"),
+        ("risks", "Explore risks parked"),
+        ("tradeoffs", "Explore tradeoffs parked"),
+        ("reframes", "Explore reframes parked"),
+    ):
+        values = _as_list_of_str(explore_in.get(key))
+        if values:
+            _append_parked(label, "; ".join(values[:3]))
+
+    proposed = list(artefacts_in.get("proposed") or [])
+    if proposed:
+        titles = []
+        for row in proposed[:3]:
+            row_dict = _as_dict(row)
+            title = str(row_dict.get("title") or row_dict.get("kind") or "").strip()
+            if title:
+                titles.append(title)
+        _append_parked("Artefact ideas parked for later", "; ".join(titles[:3]))
+
+    intent["success_criteria"] = []
+    out["intent"] = intent
     out["explore"] = {
         "adjacent_ideas": [],
         "risks": [],
         "tradeoffs": [],
         "reframes": [],
+    }
+    out["parked_for_later"] = {"items": parked_items[:3]}
+    out["artefacts"] = {
+        "proposed": [],
+        "generated": [],
+        "requirements": {},
+        "intake": {},
+    }
+    out.setdefault("validation", {})
+    out["validation"] = {
+        "schema_ok": str(_as_dict(out.get("validation")).get("schema_ok") or ""),
+        "errors": _as_list_of_str(_as_dict(out.get("validation")).get("errors")),
     }
     return out
 
@@ -2202,6 +2486,18 @@ def derax_project_home(request, project_id: int):
                 )
                 ok, payload_or_error = validate_derax_response(str(llm_text or ""))
                 if not ok:
+                    parsed_payload = _payload_candidate_from_text(str(llm_text or ""))
+                    if isinstance(parsed_payload, dict):
+                        recovered_ok, recovered_payload, recovered_error = _phase_payload_recovered(
+                            parsed_payload,
+                            phase=WorkItem.PHASE_DEFINE,
+                        )
+                        if recovered_ok:
+                            ok = True
+                            payload_or_error = recovered_payload
+                        else:
+                            payload_or_error = recovered_error or payload_or_error
+                if not ok:
                     correction = derax_json_correction_prompt(str(payload_or_error or ""), phase=WorkItem.PHASE_DEFINE)
                     llm_text = generate_text(
                         system_blocks=[],
@@ -2213,8 +2509,21 @@ def derax_project_home(request, project_id: int):
                         contract_ctx=contract_ctx,
                     )
                     ok, payload_or_error = validate_derax_response(str(llm_text or ""))
+                    if not ok:
+                        parsed_payload = _payload_candidate_from_text(str(llm_text or ""))
+                        if isinstance(parsed_payload, dict):
+                            recovered_ok, recovered_payload, recovered_error = _phase_payload_recovered(
+                                parsed_payload,
+                                phase=WorkItem.PHASE_DEFINE,
+                            )
+                            if recovered_ok:
+                                ok = True
+                                payload_or_error = recovered_payload
+                            else:
+                                payload_or_error = recovered_error or payload_or_error
                 if not ok:
-                    raise ValueError("DERAX DEFINE response invalid JSON schema: " + str(payload_or_error or ""))
+                    payload_or_error = _local_define_payload(user_input)
+                    ok = True
             except Exception as exc:
                 if _is_ajax(request):
                     return JsonResponse({"ok": False, "error": f"DEFINE LLM turn failed: {exc}"}, status=500)
@@ -2328,11 +2637,67 @@ def derax_project_home(request, project_id: int):
                             parsed_payload,
                             phase=WorkItem.PHASE_EXPLORE,
                         )
+                        if (not recovered_ok) and isinstance(recovered_payload, dict):
+                            define_seed = _latest_payload_for_phase(work_item, WorkItem.PHASE_DEFINE)
+                            merged_payload = _backfill_explore_from_define(
+                                explore_payload=recovered_payload,
+                                define_payload=define_seed,
+                                fallback_destination=str(work_item.intent_raw or "").strip(),
+                            )
+                            merged_ok, merged_payload2, merged_error = _phase_payload_recovered(
+                                merged_payload,
+                                phase=WorkItem.PHASE_EXPLORE,
+                            )
+                            if merged_ok:
+                                recovered_ok = True
+                                recovered_payload = merged_payload2
+                            else:
+                                recovered_error = merged_error or recovered_error
                         if recovered_ok:
                             ok = True
                             payload_or_error = recovered_payload
                         else:
                             payload_or_error = recovered_error or payload_or_error
+                if ok and _is_placeholder_only_explore_payload(_as_dict(payload_or_error)):
+                    correction = _explore_retry_prompt()
+                    llm_text = generate_text(
+                        system_blocks=[],
+                        messages=messages_list + [
+                            {"role": "assistant", "content": str(llm_text or "")},
+                            {"role": "user", "content": correction},
+                        ],
+                        user=request.user,
+                        contract_ctx=contract_ctx,
+                    )
+                    ok, payload_or_error = validate_derax_response(str(llm_text or ""))
+                    if not ok:
+                        parsed_payload = _payload_candidate_from_text(str(llm_text or ""))
+                        if isinstance(parsed_payload, dict):
+                            recovered_ok, recovered_payload, recovered_error = _phase_payload_recovered(
+                                parsed_payload,
+                                phase=WorkItem.PHASE_EXPLORE,
+                            )
+                            if (not recovered_ok) and isinstance(recovered_payload, dict):
+                                define_seed = _latest_payload_for_phase(work_item, WorkItem.PHASE_DEFINE)
+                                merged_payload = _backfill_explore_from_define(
+                                    explore_payload=recovered_payload,
+                                    define_payload=define_seed,
+                                    fallback_destination=str(work_item.intent_raw or "").strip(),
+                                )
+                                merged_ok, merged_payload2, merged_error = _phase_payload_recovered(
+                                    merged_payload,
+                                    phase=WorkItem.PHASE_EXPLORE,
+                                )
+                                if merged_ok:
+                                    recovered_ok = True
+                                    recovered_payload = merged_payload2
+                                else:
+                                    recovered_error = merged_error or recovered_error
+                            if recovered_ok:
+                                ok = True
+                                payload_or_error = recovered_payload
+                            else:
+                                payload_or_error = recovered_error or payload_or_error
                 if not ok:
                     correction = derax_json_correction_prompt(str(payload_or_error or ""), phase=WorkItem.PHASE_EXPLORE)
                     llm_text = generate_text(
@@ -2352,11 +2717,33 @@ def derax_project_home(request, project_id: int):
                                 parsed_payload,
                                 phase=WorkItem.PHASE_EXPLORE,
                             )
+                            if (not recovered_ok) and isinstance(recovered_payload, dict):
+                                define_seed = _latest_payload_for_phase(work_item, WorkItem.PHASE_DEFINE)
+                                merged_payload = _backfill_explore_from_define(
+                                    explore_payload=recovered_payload,
+                                    define_payload=define_seed,
+                                    fallback_destination=str(work_item.intent_raw or "").strip(),
+                                )
+                                merged_ok, merged_payload2, merged_error = _phase_payload_recovered(
+                                    merged_payload,
+                                    phase=WorkItem.PHASE_EXPLORE,
+                                )
+                                if merged_ok:
+                                    recovered_ok = True
+                                    recovered_payload = merged_payload2
+                                else:
+                                    recovered_error = merged_error or recovered_error
                             if recovered_ok:
                                 ok = True
                                 payload_or_error = recovered_payload
                             else:
                                 payload_or_error = recovered_error or payload_or_error
+                if ok:
+                    payload_or_error = _finalise_explore_payload(
+                        payload=_as_dict(payload_or_error),
+                        user_input=user_input,
+                        fallback_destination=str(work_item.intent_raw or "").strip(),
+                    )
                 if not ok:
                     raise ValueError("DERAX EXPLORE response invalid JSON schema: " + str(payload_or_error or ""))
             except Exception as exc:
@@ -3438,12 +3825,20 @@ def derax_project_home(request, project_id: int):
     explore_vm = _explore_view_model(explore_latest_payload)
     refine_vm = _refine_view_model(refine_latest_payload)
     explore_latest_text = _readable_derax_text(_latest_explore_assistant_text(work_item))
-    phase_input_text = str(work_item.intent_raw or "").strip()
+    phase_input_text = ""
+    if is_define:
+        phase_input_text = _latest_phase_user_text(list(work_item.derax_define_history or []))
+    elif is_explore:
+        phase_input_text = _latest_phase_user_text(list(work_item.derax_explore_history or []))
+    phase_input_text = str(phase_input_text or "").strip()
+    if not phase_input_text:
+        phase_input_text = _extract_end_in_mind(str(work_item.intent_raw or "").strip())
     define_locked_seed_text = _latest_seed_by_reason(work_item, "DEFINE_LOCKED")
     if is_explore and not phase_input_text:
         phase_input_text = define_locked_seed_text
     explore_locked_seed_text = _latest_seed_by_reason(work_item, "EXPLORE_LOCKED")
-    refine_input_text = str(work_item.intent_raw or "").strip()
+    refine_input_text = _latest_phase_user_text(_merged_derax_audit_history(work_item))
+    refine_input_text = str(refine_input_text or "").strip() or str(work_item.intent_raw or "").strip()
     if is_refine:
         if (
             explore_latest_text
