@@ -37,7 +37,7 @@ class DeraxGenerateTests(SimpleTestCase):
             chat_id=1,
             turn_id="t1",
             provider="openai",
-            force_model="gpt-5.1",
+            force_model="gpt-5.5",
             persist=False,
             compile_after=False,
             llm_raw_text_fn=stub_llm_raw_text,
@@ -49,9 +49,18 @@ class DeraxGenerateTests(SimpleTestCase):
 
 
 class DeraxExecuteArtefactGenerationTests(SimpleTestCase):
+    @patch(
+        "chats.services.derax.generate.execute_export_capabilities",
+        return_value={"docx": False, "xlsx": False, "pptx": False},
+    )
     @patch("chats.services.derax.generate._persist_execute_artefact")
     @patch("chats.services.derax.generate._get_project")
-    def test_generate_artefacts_creates_generated_entries_with_stub_store(self, mock_get_project, mock_persist):
+    def test_generate_artefacts_creates_generated_entries_with_stub_store(
+        self,
+        mock_get_project,
+        mock_persist,
+        _mock_caps,
+    ):
         payload = empty_payload("EXECUTE")
         payload["meta"]["phase"] = "EXECUTE"
         payload["intent"]["destination"] = "Run a focused session."
@@ -94,9 +103,18 @@ class DeraxExecuteArtefactGenerationTests(SimpleTestCase):
                 user_id=7,
             )
 
+    @patch(
+        "chats.services.derax.generate.execute_export_capabilities",
+        return_value={"docx": False, "xlsx": False, "pptx": False},
+    )
     @patch("chats.services.derax.generate._persist_execute_artefact")
     @patch("chats.services.derax.generate._get_project")
-    def test_generate_normalises_string_proposals(self, mock_get_project, mock_persist):
+    def test_generate_normalises_string_proposals(
+        self,
+        mock_get_project,
+        mock_persist,
+        _mock_caps,
+    ):
         payload = empty_payload("EXECUTE")
         payload["meta"]["phase"] = "EXECUTE"
         payload["intent"]["destination"] = "Run a focused session."

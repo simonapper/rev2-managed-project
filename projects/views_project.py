@@ -62,6 +62,7 @@ _IMPORT_RATE_LIMIT_WINDOW_SECONDS = 60
 _IMPORT_RATE_LIMIT_MAX = 6
 
 _SECURITY_LOG = logging.getLogger("workbench.security")
+_WOPI_LOG = logging.getLogger("workbench.wopi")
 _ALLOWED_COLLABORA_EXTS = {
     "odt", "ods", "odp", "odg",
     "doc", "docx", "xls", "xlsx", "ppt", "pptx",
@@ -102,30 +103,63 @@ def _build_wopi_token(*, doc_id: int, user_id: int) -> str:
 def _resolve_wopi_access(request, *, doc_id: int):
     token = (request.GET.get("access_token") or request.POST.get("access_token") or "").strip()
     if not token:
+        _WOPI_LOG.warning("auth_failed reason=missing_token doc_id=%s method=%s", doc_id, request.method)
         return None, None
     try:
         raw = _wopi_signer().unsign(token, max_age=_collabora_token_ttl_seconds())
-    except (BadSignature, SignatureExpired):
+    except SignatureExpired:
+        _WOPI_LOG.warning("auth_failed reason=token_expired doc_id=%s method=%s", doc_id, request.method)
+        return None, None
+    except BadSignature:
+        _WOPI_LOG.warning("auth_failed reason=bad_signature doc_id=%s method=%s", doc_id, request.method)
         return None, None
     parts = raw.split(":", 1)
     if len(parts) != 2:
+        _WOPI_LOG.warning("auth_failed reason=bad_payload doc_id=%s method=%s raw=%s", doc_id, request.method, raw)
         return None, None
     try:
         token_doc_id = int(parts[0])
         token_user_id = int(parts[1])
     except Exception:
+        _WOPI_LOG.warning("auth_failed reason=bad_payload_ids doc_id=%s method=%s raw=%s", doc_id, request.method, raw)
         return None, None
     if token_doc_id != int(doc_id):
+        _WOPI_LOG.warning(
+            "auth_failed reason=doc_mismatch doc_id=%s token_doc_id=%s method=%s user_id=%s",
+            doc_id,
+            token_doc_id,
+            request.method,
+            token_user_id,
+        )
         return None, None
     User = get_user_model()
     user = User.objects.filter(id=token_user_id, is_active=True).first()
     if not user:
+        _WOPI_LOG.warning(
+            "auth_failed reason=user_missing doc_id=%s method=%s user_id=%s",
+            doc_id,
+            request.method,
+            token_user_id,
+        )
         return None, None
     doc = ProjectDocument.objects.select_related("project").filter(id=doc_id, is_archived=False).first()
     if not doc:
+        _WOPI_LOG.warning(
+            "auth_failed reason=doc_missing doc_id=%s method=%s user_id=%s",
+            doc_id,
+            request.method,
+            token_user_id,
+        )
         return None, None
     allowed = accessible_projects_qs(user).filter(id=doc.project_id).exists()
     if not allowed:
+        _WOPI_LOG.warning(
+            "auth_failed reason=access_denied doc_id=%s project_id=%s method=%s user_id=%s",
+            doc_id,
+            doc.project_id,
+            request.method,
+            token_user_id,
+        )
         return None, None
     return doc, user
 

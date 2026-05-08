@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from chats.services import llm
+from config.models import SystemConfigPointers
 
 
 class LLMProviderTests(TestCase):
@@ -86,6 +87,15 @@ class LLMProviderTests(TestCase):
 
         call_kwargs = mock_client.responses.create.call_args.kwargs
         self.assertEqual(call_kwargs["model"], "gpt-5-mini")
+
+    def test_openai_default_model_falls_back_to_gpt_5_5(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u5", email="u5@example.com", password="pw")
+        user.profile.openai_model_default = ""
+        user.profile.save(update_fields=["openai_model_default"])
+        SystemConfigPointers.objects.all().delete()
+
+        self.assertEqual(llm._get_default_model_key(user=user), "gpt-5.5")
 
     def test_anthropic_panes_parses_fenced_json_and_structured_fields(self):
         fenced_json = """```json

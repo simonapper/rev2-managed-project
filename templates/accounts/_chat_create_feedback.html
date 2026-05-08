@@ -1,0 +1,60 @@
+{% if cde_feedback %}
+  <div class="alert alert-warning rw-compact-card">
+    <div class="d-flex align-items-center justify-content-between">
+      <div><strong>CDE needs revision</strong></div>
+      <button type="button" class="btn btn-outline-secondary rw-btn-xs" id="btnToggleSystem">
+        Show system
+      </button>
+    </div>
+
+    <div class="mt-2">
+      <div><strong>Field:</strong> {{ cde_feedback.field_key }}</div>
+      <div><strong>Verdict:</strong> {{ cde_feedback.verdict }}</div>
+    </div>
+
+    {% if cde_feedback.issues %}
+      <div class="mt-2"><strong>Issues</strong></div>
+      <ul class="mb-2">
+        {% for it in cde_feedback.issues %}
+          <li>{{ it }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if cde_feedback.questions %}
+      <div class="mt-2"><strong>Questions</strong></div>
+      <ul class="mb-2">
+        {% for q in cde_feedback.questions %}
+          <li>{{ q }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if cde_feedback.suggested_revision %}
+      <div class="mt-2"><strong>Suggested revision</strong></div>
+      <div class="rw-cde-suggestion">{{ cde_feedback.suggested_revision }}</div>
+    {% endif %}
+
+    <div class="mt-2" id="systemPanel" style="display:none;">
+      <div class="small text-secondary mb-1"><strong>LLM payload (debug)</strong></div>
+
+      <div class="card">
+        <div class="card-body rw-system-body">
+          <div class="small text-secondary"><strong>SYSTEM blocks</strong></div>
+          {% if cde_feedback.debug_system_blocks %}
+            <ol class="mb-3">
+              {% for b in cde_feedback.debug_system_blocks %}
+                <li><div style="white-space: pre-wrap;">{{ b }}</div></li>
+              {% endfor %}
+            </ol>
+          {% else %}
+            <div class="text-secondary small">(No debug system blocks available.)</div>
+          {% endif %}
+
+          <div class="small text-secondary"><strong>User text</strong></div>
+          <div style="white-space: pre-wrap;">{{ cde_feedback.debug_user_text }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endif %}

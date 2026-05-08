@@ -37,6 +37,7 @@ from django.core.paginator import Paginator
 from django.db.models import Count, Exists, OuterRef, Q, Case, When, Value, IntegerField
 from django.db.models.functions import Coalesce
 from django.http import FileResponse, Http404, JsonResponse, HttpResponse
+from django.template.loader import render_to_string
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -315,7 +316,7 @@ def _active_provider_and_model_for_user(user) -> tuple[str, str]:
     profile = getattr(user, "profile", None)
     provider = (getattr(profile, "llm_provider", "") or "openai").strip().lower()
     if provider == "anthropic":
-        model = (getattr(profile, "anthropic_model_default", "") or "").strip() or "claude-sonnet-4-5"
+        model = (getattr(profile, "anthropic_model_default", "") or "").strip() or "claude-opus-4-7"
     elif provider == "gemini":
         model = (getattr(profile, "gemini_model_default", "") or "").strip() or "gemini-2.5-flash"
     elif provider == "deepseek":
@@ -400,20 +401,21 @@ def _active_work_item_for_project(project):
     )
 
 ALLOWED_MODELS = [
+    ("gpt-5.5", "gpt-5.5"),
     ("gpt-5.4", "gpt-5.4"),
     ("gpt-5.2", "gpt-5.2"),
-    ("gpt-5.1", "gpt-5.1"),
     ("gpt-5-mini", "gpt-5-mini"),
     ("gpt-5-nano", "gpt-5-nano"),
     # ("gpt-4.1", "gpt-4.1"),
     # ("gpt-4.1-mini", "gpt-4.1-mini"),
     # ("gpt-4.1-nano", "gpt-4.1-nano"),
 ]
+LEGACY_OPENAI_DEFAULT_MODELS = {"gpt-5.1", "gpt-5.2", "gpt-5.4"}
 
 ALLOWED_ANTHROPIC_MODELS = [
+    ("claude-opus-4-7", "claude-opus-4-7"),
     ("claude-opus-4-6", "claude-opus-4-6"),
     ("claude-sonnet-4-5", "claude-sonnet-4-5"),
-    ("claude-opus-4-5", "claude-opus-4-5"),
     ("claude-haiku-4-5", "claude-haiku-4-5"),
 ]
 
@@ -726,6 +728,28 @@ def chat_list(request):
 def chat_create(request):
     user = request.user
     projects = accessible_projects_qs(user).order_by("name")
+    is_ajax = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or str(request.POST.get("ajax") or request.GET.get("ajax") or "").strip() == "1"
+    )
+
+    def _feedback_html(*, cde_feedback, selected_project_id, title, cde_mode, cde_inputs, boundary_profile):
+        return render_to_string(
+            "accounts/_chat_create_feedback.html",
+            {
+                "cde_feedback": cde_feedback,
+                "selected_project_id": selected_project_id,
+                "sticky_title": title,
+                "sticky_cde_mode": cde_mode,
+                "sticky_chat_goal": cde_inputs.get("chat.goal", ""),
+                "sticky_chat_success": cde_inputs.get("chat.success", ""),
+                "sticky_chat_constraints": cde_inputs.get("chat.constraints", ""),
+                "sticky_chat_non_goals": cde_inputs.get("chat.non_goals", ""),
+                "boundary_defaults": boundary_profile,
+                "policy_docs_help_url": reverse("projects:policy_docs_help", args=[selected_project_id]) if selected_project_id else "",
+            },
+            request=request,
+        )
 
     if request.method == "POST":
         title = (request.POST.get("title") or "").strip()
@@ -733,6 +757,8 @@ def chat_create(request):
 
         project = projects.filter(id=project_id).first()
         if not project or not title:
+            if is_ajax:
+                return JsonResponse({"ok": False, "error": "Title and project are required."}, status=400)
             messages.error(request, "Title and project are required.")
             return redirect("accounts:chat_create")
 
@@ -751,6 +777,14 @@ def chat_create(request):
 
         if not is_sandbox and not is_derax_template:
             if project.defined_cko_id is None:
+                if is_ajax:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": "Project is not defined. Complete PDE first.",
+                        },
+                        status=400,
+                    )
                 messages.error(request, "Project is not defined. Complete PDE first.")
                 return redirect("accounts:chat_create")
 
@@ -759,6 +793,15 @@ def chat_create(request):
                 or ProjectPlanningStage.objects.filter(project=project).exists()
             )
             if not ppde_started:
+                if is_ajax:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": "Start PPDE before creating chats.",
+                            "redirect_url": reverse("projects:ppde_detail", args=[project.id]),
+                        },
+                        status=400,
+                    )
                 messages.error(request, "Start PPDE before creating chats.")
                 return redirect("projects:ppde_detail", project_id=project.id)
 
@@ -791,6 +834,23 @@ def chat_create(request):
             )
 
             if not bool(cde_result.get("ok")):
+                if is_ajax:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": "CDE needs revision.",
+                            "cde_feedback": cde_result.get("first_blocker") or {},
+                            "feedback_html": _feedback_html(
+                                cde_feedback=cde_result.get("first_blocker"),
+                                selected_project_id=project.id,
+                                title=title,
+                                cde_mode=cde_mode,
+                                cde_inputs=cde_inputs,
+                                boundary_profile=boundary_profile,
+                            ),
+                        },
+                        status=400,
+                    )
                 return render(
                     request,
                     "accounts/chat_create.html",
@@ -847,6 +907,14 @@ def chat_create(request):
         request.session["rw_active_chat_id"] = chat.id
         request.session.modified = True
 
+        if is_ajax:
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "chat_id": chat.id,
+                    "redirect_url": reverse("accounts:chat_detail", args=[chat.id]),
+                }
+            )
         return redirect(reverse("accounts:chat_detail", args=[chat.id]))
 
     selected_project_id = request.GET.get("project")
@@ -1287,6 +1355,10 @@ def chat_import(request):
 @require_POST
 @login_required
 def chat_message_create(request):
+    is_ajax = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or str(request.POST.get("ajax") or "").strip() == "1"
+    )
     chat_id = request.POST.get("chat_id")
     content = (request.POST.get("content") or "").strip()
     analysis_turns_raw = (request.POST.get("analysis_turns") or "").strip()
@@ -1300,6 +1372,25 @@ def chat_message_create(request):
     def _next_with_status(base_url: str, code: str) -> str:
         return _append_query_param(base_url, "rw_err", code)
 
+    def _json_error(message: str, *, code: str, status: int = 400, redirect_base: str | None = None):
+        if not is_ajax:
+            return None
+        base = redirect_base or reverse("accounts:dashboard")
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": message,
+                "error_code": code,
+                "redirect_url": _next_with_status(base, code),
+            },
+            status=status,
+        )
+
+    def _success_response(target_url: str):
+        if is_ajax:
+            return JsonResponse({"ok": True, "redirect_url": target_url})
+        return redirect(target_url)
+
     if not chat_id:
         messages.error(request, "No chat selected.")
         target = next_url if (next_url and url_has_allowed_host_and_scheme(
@@ -1307,6 +1398,9 @@ def chat_message_create(request):
             allowed_hosts={request.get_host()},
             require_https=request.is_secure(),
         )) else reverse("accounts:dashboard")
+        ajax_response = _json_error("No chat selected.", code="no_chat", redirect_base=target)
+        if ajax_response is not None:
+            return ajax_response
         return redirect(_next_with_status(target, "no_chat"))
 
     try:
@@ -1318,6 +1412,9 @@ def chat_message_create(request):
             allowed_hosts={request.get_host()},
             require_https=request.is_secure(),
         )) else reverse("accounts:dashboard")
+        ajax_response = _json_error("Invalid chat.", code="bad_chat", redirect_base=target)
+        if ajax_response is not None:
+            return ajax_response
         return redirect(_next_with_status(target, "bad_chat"))
 
     has_analysis_request = bool(analysis_turns_raw or analysis_note)
@@ -1328,6 +1425,9 @@ def chat_message_create(request):
             allowed_hosts={request.get_host()},
             require_https=request.is_secure(),
         )) else reverse("accounts:chat_detail", args=[cid])
+        ajax_response = _json_error("Message cannot be empty.", code="empty", redirect_base=target)
+        if ajax_response is not None:
+            return ajax_response
         return redirect(_next_with_status(target, "empty"))
 
     chat = get_object_or_404(
@@ -1368,6 +1468,13 @@ def chat_message_create(request):
                 allowed_hosts={request.get_host()},
                 require_https=request.is_secure(),
             )) else reverse("accounts:chat_detail", args=[chat.id])
+            ajax_response = _json_error(
+                "Invalid turn selector token(s): " + ", ".join(invalid_tokens),
+                code="turn_selector",
+                redirect_base=target,
+            )
+            if ajax_response is not None:
+                return ajax_response
             return redirect(_next_with_status(target, "turn_selector"))
         if not selected_numbers:
             messages.error(request, "No valid turns selected for analysis.")
@@ -1376,6 +1483,13 @@ def chat_message_create(request):
                 allowed_hosts={request.get_host()},
                 require_https=request.is_secure(),
             )) else reverse("accounts:chat_detail", args=[chat.id])
+            ajax_response = _json_error(
+                "No valid turns selected for analysis.",
+                code="turn_selector",
+                redirect_base=target,
+            )
+            if ajax_response is not None:
+                return ajax_response
             return redirect(_next_with_status(target, "turn_selector"))
 
         selected_lookup = set(selected_numbers)
@@ -1414,6 +1528,20 @@ def chat_message_create(request):
             size_bytes=getattr(f, "size", 0) or 0,
         )
 
+    included_attachment_ids = []
+    for raw_id in request.POST.getlist("include_attachment_ids"):
+        try:
+            included_attachment_ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            pass
+    included_attachments = list(
+        ChatAttachment.objects.filter(
+            chat=chat,
+            uploaded_by=user,
+            id__in=included_attachment_ids,
+        ).order_by("created_at", "id")
+    )
+
     chat_overrides = (
         request.session.get("rw_chat_overrides", {}).get(str(chat.id), {})
         or (getattr(chat, "chat_overrides", {}) or {})
@@ -1428,7 +1556,13 @@ def chat_message_create(request):
     )
     include_last_image = (request.POST.get("include_last_image") == "1")
     image_parts = []
-    if include_last_image:
+    included_image_attachments = [
+        att for att in included_attachments
+        if (att.content_type or "").lower().startswith("image/")
+    ]
+    if included_image_attachments:
+        image_parts = build_image_parts_from_attachments(included_image_attachments)
+    elif include_last_image:
         img_atts = (
             ChatAttachment.objects.filter(chat=chat, content_type__startswith="image/")
             .order_by("-id")[:1]
@@ -1436,8 +1570,17 @@ def chat_message_create(request):
         image_parts = build_image_parts_from_attachments(reversed(list(img_atts)))
 
     include_last_file = (request.POST.get("include_last_file") == "1")
-    if include_last_file:
-        att = ChatAttachment.objects.filter(chat=chat).order_by("-created_at").first()
+    included_file_attachment = next(
+        (
+            att for att in included_attachments
+            if not (att.content_type or "").lower().startswith("image/")
+        ),
+        None,
+    )
+    if included_file_attachment or include_last_file:
+        att = included_file_attachment
+        if att is None:
+            att = ChatAttachment.objects.filter(chat=chat).order_by("-created_at").first()
         if att and (att.content_type or "").lower() in ("text/csv", "application/csv"):
             try:
                 with att.file.open("rb") as fh:
@@ -1554,8 +1697,15 @@ def chat_message_create(request):
                 allowed_hosts={request.get_host()},
                 require_https=request.is_secure(),
             ):
+                ajax_response = _json_error("Image generation failed: " + str(e), code="img", redirect_base=next_url)
+                if ajax_response is not None:
+                    return ajax_response
                 return redirect(_next_with_status(next_url, "img"))
-            return redirect(_next_with_status(reverse("accounts:chat_detail", args=[chat.id]), "img"))
+            target = reverse("accounts:chat_detail", args=[chat.id])
+            ajax_response = _json_error("Image generation failed: " + str(e), code="img", redirect_base=target)
+            if ajax_response is not None:
+                return ajax_response
+            return redirect(_next_with_status(target, "img"))
 
         assistant_answer = "Generated image."
         out_msg = ChatMessage.objects.create(
@@ -1587,13 +1737,14 @@ def chat_message_create(request):
         out_msg.segment_meta = meta
         out_msg.save(update_fields=["segment_meta"])
 
+        target = reverse("accounts:chat_detail", args=[chat.id])
         if next_url and url_has_allowed_host_and_scheme(
             url=next_url,
             allowed_hosts={request.get_host()},
             require_https=request.is_secure(),
         ):
-            return redirect(next_url)
-        return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+            target = next_url
+        return _success_response(target)
 
     try:
         panes = generate_panes(
@@ -1612,8 +1763,15 @@ def chat_message_create(request):
             allowed_hosts={request.get_host()},
             require_https=request.is_secure(),
         ):
+            ajax_response = _json_error("LLM call failed: " + str(e), code="llm", redirect_base=next_url)
+            if ajax_response is not None:
+                return ajax_response
             return redirect(_next_with_status(next_url, "llm"))
-        return redirect(_next_with_status(reverse("accounts:chat_detail", args=[chat.id]), "llm"))
+        target = reverse("accounts:chat_detail", args=[chat.id])
+        ajax_response = _json_error("LLM call failed: " + str(e), code="llm", redirect_base=target)
+        if ajax_response is not None:
+            return ajax_response
+        return redirect(_next_with_status(target, "llm"))
 
     assistant_answer = (panes.get("answer") or "")
     if boundary_active:
@@ -1651,8 +1809,23 @@ def chat_message_create(request):
                         allowed_hosts={request.get_host()},
                         require_https=request.is_secure(),
                     ):
+                        ajax_response = _json_error(
+                            "Boundary check failed: " + "; ".join(label_errors),
+                            code="boundary",
+                            redirect_base=next_url,
+                        )
+                        if ajax_response is not None:
+                            return ajax_response
                         return redirect(_next_with_status(next_url, "boundary"))
-                    return redirect(_next_with_status(reverse("accounts:chat_detail", args=[chat.id]), "boundary"))
+                    target = reverse("accounts:chat_detail", args=[chat.id])
+                    ajax_response = _json_error(
+                        "Boundary check failed: " + "; ".join(label_errors),
+                        code="boundary",
+                        redirect_base=target,
+                    )
+                    if ajax_response is not None:
+                        return ajax_response
+                    return redirect(_next_with_status(target, "boundary"))
 
     phase_ok, phase_missing = validate_phase_output(work_item=active_work_item, text=assistant_answer)
     if not phase_ok:
@@ -1689,8 +1862,23 @@ def chat_message_create(request):
                 allowed_hosts={request.get_host()},
                 require_https=request.is_secure(),
             ):
+                ajax_response = _json_error(
+                    "Phase output check failed: missing sections: " + ", ".join(phase_missing),
+                    code="phase",
+                    redirect_base=next_url,
+                )
+                if ajax_response is not None:
+                    return ajax_response
                 return redirect(_next_with_status(next_url, "phase"))
-            return redirect(_next_with_status(reverse("accounts:chat_detail", args=[chat.id]), "phase"))
+            target = reverse("accounts:chat_detail", args=[chat.id])
+            ajax_response = _json_error(
+                "Phase output check failed: missing sections: " + ", ".join(phase_missing),
+                code="phase",
+                redirect_base=target,
+            )
+            if ajax_response is not None:
+                return ajax_response
+            return redirect(_next_with_status(target, "phase"))
 
     provider_name, model_name = _active_provider_and_model_for_user(request.user)
     assistant_reasoning = (panes.get("reasoning") or "")
@@ -1745,19 +1933,24 @@ def chat_message_create(request):
     if should_auto_rollup(chat, user=request.user):
         rollup_segment(chat, user=request.user, trigger=ChatRollupEvent.Trigger.AUTO)
 
+    target = reverse("accounts:chat_detail", args=[chat.id])
     if next_url and url_has_allowed_host_and_scheme(
         url=next_url,
         allowed_hosts={request.get_host()},
         require_https=request.is_secure(),
     ):
-        return redirect(next_url)
+        target = next_url
 
-    return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+    return _success_response(target)
 
 
 @require_POST
 @login_required
 def derax_toggle(request, chat_id: int):
+    is_ajax = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or str(request.POST.get("ajax") or "").strip() == "1"
+    )
     chat = get_object_or_404(
         ChatWorkspace.objects.select_related("project"),
         pk=chat_id,
@@ -1769,18 +1962,31 @@ def derax_toggle(request, chat_id: int):
         chat.derax_enabled = enabled
         chat.save(update_fields=["derax_enabled", "updated_at"])
     next_url = (request.POST.get("next") or "").strip()
+    target = reverse("accounts:chat_detail", args=[chat.id])
     if next_url and url_has_allowed_host_and_scheme(
         url=next_url,
         allowed_hosts={request.get_host()},
         require_https=request.is_secure(),
     ):
-        return redirect(next_url)
-    return redirect(reverse("accounts:chat_detail", args=[chat.id]))
+        target = next_url
+    if is_ajax:
+        return JsonResponse(
+            {
+                "ok": True,
+                "enabled": bool(chat.derax_enabled),
+                "redirect_url": target,
+            }
+        )
+    return redirect(target)
 
 
 @require_POST
 @login_required
 def derax_run(request, chat_id: int):
+    is_ajax = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or str(request.POST.get("ajax") or "").strip() == "1"
+    )
     chat = get_object_or_404(
         ChatWorkspace.objects.select_related("project"),
         pk=chat_id,
@@ -1788,8 +1994,7 @@ def derax_run(request, chat_id: int):
     )
     next_url = (request.POST.get("next") or "").strip()
     content = str(request.POST.get("content") or "").strip()
-    if not content:
-        messages.error(request, "Message cannot be empty.")
+    def _target_url() -> str:
         target = reverse("accounts:chat_detail", args=[chat.id])
         if next_url and url_has_allowed_host_and_scheme(
             url=next_url,
@@ -1797,16 +2002,18 @@ def derax_run(request, chat_id: int):
             require_https=request.is_secure(),
         ):
             target = next_url
+        return target
+    if not content:
+        messages.error(request, "Message cannot be empty.")
+        target = _target_url()
+        if is_ajax:
+            return JsonResponse({"ok": False, "error": "Message cannot be empty.", "redirect_url": target}, status=400)
         return redirect(target)
     if not bool(chat.derax_enabled):
         messages.error(request, "DERAX mode is off for this chat.")
-        target = reverse("accounts:chat_detail", args=[chat.id])
-        if next_url and url_has_allowed_host_and_scheme(
-            url=next_url,
-            allowed_hosts={request.get_host()},
-            require_https=request.is_secure(),
-        ):
-            target = next_url
+        target = _target_url()
+        if is_ajax:
+            return JsonResponse({"ok": False, "error": "DERAX mode is off for this chat.", "redirect_url": target}, status=400)
         return redirect(target)
 
     phase = str(request.POST.get("derax_phase") or "DEFINE").strip().upper()
@@ -1831,13 +2038,9 @@ def derax_run(request, chat_id: int):
         )
     except ValueError as exc:
         messages.error(request, "DERAX failed: " + str(exc))
-        target = reverse("accounts:chat_detail", args=[chat.id])
-        if next_url and url_has_allowed_host_and_scheme(
-            url=next_url,
-            allowed_hosts={request.get_host()},
-            require_https=request.is_secure(),
-        ):
-            target = next_url
+        target = _target_url()
+        if is_ajax:
+            return JsonResponse({"ok": False, "error": "DERAX failed: " + str(exc), "redirect_url": target}, status=400)
         return redirect(target)
 
     payload = dict(result.get("payload") or {})
@@ -1871,13 +2074,9 @@ def derax_run(request, chat_id: int):
     request.session["derax_last_phase"] = phase
     request.session.modified = True
     messages.success(request, "DERAX run saved.")
-    target = reverse("accounts:chat_detail", args=[chat.id])
-    if next_url and url_has_allowed_host_and_scheme(
-        url=next_url,
-        allowed_hosts={request.get_host()},
-        require_https=request.is_secure(),
-    ):
-        target = next_url
+    target = _target_url()
+    if is_ajax:
+        return JsonResponse({"ok": True, "redirect_url": target})
     return redirect(target)
 
 
@@ -3033,9 +3232,9 @@ def config_menu(request):
             "active_chat_id": active_chat_id,
             "can_override_chat": bool(active_chat_id),
             "llm_provider": (profile.llm_provider or "openai"),
-            "openai_model_default": (profile.openai_model_default or "gpt-5.1"),
+            "openai_model_default": (profile.openai_model_default or "gpt-5.5"),
             "anthropic_model_default": (
-                profile.anthropic_model_default or "claude-sonnet-4-5-20250929"
+                profile.anthropic_model_default or "claude-opus-4-7"
             ),
             "deepseek_model_default": (profile.deepseek_model_default or "deepseek-chat"),
             "gemini_model_default": (profile.gemini_model_default or "gemini-2.5-flash"),
@@ -3063,9 +3262,19 @@ def topbar_llm_update(request):
     if provider not in {"openai", "anthropic", "deepseek", "gemini"}:
         return JsonResponse({"ok": False, "error": "Invalid LLM provider."}, status=400)
 
+    update_fields = []
     if str(profile.llm_provider or "").strip().lower() != provider:
         profile.llm_provider = provider
-        profile.save(update_fields=["llm_provider"])
+        update_fields.append("llm_provider")
+
+    if provider == "openai":
+        current_openai_model = str(getattr(profile, "openai_model_default", "") or "").strip()
+        if current_openai_model in LEGACY_OPENAI_DEFAULT_MODELS:
+            profile.openai_model_default = "gpt-5.5"
+            update_fields.append("openai_model_default")
+
+    if update_fields:
+        profile.save(update_fields=update_fields)
 
     active_provider, active_model = _active_provider_and_model_for_user(request.user)
     return JsonResponse(

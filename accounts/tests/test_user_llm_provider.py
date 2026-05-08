@@ -76,7 +76,7 @@ class UserLLMProviderSettingTests(TestCase):
     def test_config_menu_updates_provider_and_model_versions(self):
         User = get_user_model()
         user = User.objects.create_user(username="u3", email="u3@example.com", password="pw")
-        user.profile.openai_model_default = "gpt-5.1"
+        user.profile.openai_model_default = "gpt-5.5"
         user.profile.anthropic_model_default = "claude-sonnet-4-5"
         user.profile.save(update_fields=["openai_model_default", "anthropic_model_default"])
 
@@ -85,20 +85,20 @@ class UserLLMProviderSettingTests(TestCase):
             reverse("accounts:config_menu"),
             data={
                 "llm_provider": "anthropic",
-                "anthropic_model_default": "claude-opus-4-5",
+                "anthropic_model_default": "claude-opus-4-7",
             },
         )
 
         self.assertEqual(response.status_code, 302)
         user.profile.refresh_from_db()
         self.assertEqual(user.profile.llm_provider, "anthropic")
-        self.assertEqual(user.profile.openai_model_default, "gpt-5.1")
-        self.assertEqual(user.profile.anthropic_model_default, "claude-opus-4-5")
+        self.assertEqual(user.profile.openai_model_default, "gpt-5.5")
+        self.assertEqual(user.profile.anthropic_model_default, "claude-opus-4-7")
 
     def test_config_menu_updates_openai_model_only_when_openai_selected(self):
         User = get_user_model()
         user = User.objects.create_user(username="u4", email="u4@example.com", password="pw")
-        user.profile.openai_model_default = "gpt-5.1"
+        user.profile.openai_model_default = "gpt-5.5"
         user.profile.anthropic_model_default = "claude-sonnet-4-5"
         user.profile.save(update_fields=["openai_model_default", "anthropic_model_default"])
 
@@ -120,7 +120,7 @@ class UserLLMProviderSettingTests(TestCase):
     def test_config_menu_updates_deepseek_model_only_when_deepseek_selected(self):
         User = get_user_model()
         user = User.objects.create_user(username="u6", email="u6@example.com", password="pw")
-        user.profile.openai_model_default = "gpt-5.1"
+        user.profile.openai_model_default = "gpt-5.5"
         user.profile.deepseek_model_default = "deepseek-chat"
         user.profile.save(update_fields=["openai_model_default", "deepseek_model_default"])
 
@@ -136,5 +136,88 @@ class UserLLMProviderSettingTests(TestCase):
         self.assertEqual(response.status_code, 302)
         user.profile.refresh_from_db()
         self.assertEqual(user.profile.llm_provider, "deepseek")
-        self.assertEqual(user.profile.openai_model_default, "gpt-5.1")
+        self.assertEqual(user.profile.openai_model_default, "gpt-5.5")
         self.assertEqual(user.profile.deepseek_model_default, "deepseek-reasoner")
+
+    def test_topbar_uses_opus_4_7_as_anthropic_fallback(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u7", email="u7@example.com", password="pw")
+        user.profile.llm_provider = "anthropic"
+        user.profile.anthropic_model_default = ""
+        user.profile.save(update_fields=["llm_provider", "anthropic_model_default"])
+
+        self.client.force_login(user)
+        response = self.client.post(
+            reverse("accounts:topbar_llm_update"),
+            data={"provider": "anthropic"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "provider": "anthropic",
+                "model": "claude-opus-4-7",
+            },
+        )
+
+    def test_config_menu_defaults_openai_to_gpt_5_5_when_profile_blank(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u8", email="u8@example.com", password="pw")
+        user.profile.openai_model_default = ""
+        user.profile.save(update_fields=["openai_model_default"])
+
+        self.client.force_login(user)
+        response = self.client.get(reverse("accounts:config_menu"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["openai_model_default"], "gpt-5.5")
+
+    def test_topbar_uses_gpt_5_5_as_openai_fallback(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u9", email="u9@example.com", password="pw")
+        user.profile.llm_provider = "openai"
+        user.profile.openai_model_default = ""
+        user.profile.save(update_fields=["llm_provider", "openai_model_default"])
+
+        self.client.force_login(user)
+        response = self.client.post(
+            reverse("accounts:topbar_llm_update"),
+            data={"provider": "openai"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "provider": "openai",
+                "model": "gpt-5.5",
+            },
+        )
+
+    def test_topbar_switch_to_openai_promotes_legacy_default_to_gpt_5_5(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u10", email="u10@example.com", password="pw")
+        user.profile.llm_provider = "anthropic"
+        user.profile.openai_model_default = "gpt-5.4"
+        user.profile.save(update_fields=["llm_provider", "openai_model_default"])
+
+        self.client.force_login(user)
+        response = self.client.post(
+            reverse("accounts:topbar_llm_update"),
+            data={"provider": "openai"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        user.profile.refresh_from_db()
+        self.assertEqual(user.profile.openai_model_default, "gpt-5.5")
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "provider": "openai",
+                "model": "gpt-5.5",
+            },
+        )

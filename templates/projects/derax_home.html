@@ -19,6 +19,47 @@
       font-weight: 600;
       padding: 0.28rem 0.4rem;
     }
+    .derax-rewrite-history .table {
+      margin-bottom: 0;
+      background: #fff;
+    }
+    .derax-rewrite-history th {
+      background: #f8f9fa;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .derax-rewrite-history td,
+    .derax-rewrite-history th {
+      font-size: 0.85rem;
+      vertical-align: top;
+    }
+    .derax-doc {
+      background: #fff;
+      border: 1px solid #dee2e6;
+      border-radius: 0.375rem;
+      padding: 0.9rem 1rem;
+      line-height: 1.55;
+    }
+    .derax-doc h3,
+    .derax-doc h4,
+    .derax-doc h5 {
+      margin-top: 0.95rem;
+      margin-bottom: 0.45rem;
+      font-weight: 700;
+    }
+    .derax-doc h3:first-child,
+    .derax-doc h4:first-child,
+    .derax-doc h5:first-child {
+      margin-top: 0;
+    }
+    .derax-doc p,
+    .derax-doc ul,
+    .derax-doc ol {
+      margin-bottom: 0.6rem;
+    }
+    .derax-doc hr {
+      margin: 0.85rem 0;
+    }
   </style>
   <div class="d-flex justify-content-between align-items-start mb-3">
     <div>
@@ -96,6 +137,21 @@
           <form method="post" class="d-none" id="stage-export-form">
             {% csrf_token %}
             <input type="hidden" name="action" value="export_latest_derax_draft">
+          </form>
+          <form method="post" class="d-none" id="stage-rewrite-clarify-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="rewrite_stage_output">
+            <input type="hidden" name="rewrite_mode" value="CLARIFY">
+          </form>
+          <form method="post" class="d-none" id="stage-rewrite-shorten-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="rewrite_stage_output">
+            <input type="hidden" name="rewrite_mode" value="SHORTEN">
+          </form>
+          <form method="post" class="d-none" id="stage-rewrite-table-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="rewrite_stage_output">
+            <input type="hidden" name="rewrite_mode" value="TABLE">
           </form>
 
           {% if not is_refine_phase %}
@@ -231,7 +287,26 @@
         {% else %}
         <label class="form-label small mb-1" for="id_refined_intent">Latest EXECUTE response</label>
         {% endif %}
-        <textarea id="id_refined_intent" class="form-control mb-2" rows="6">{{ latest_phase_response }}</textarea>
+        <div id="latest-phase-rendered" class="mb-2">
+          {% include "projects/_derax_rendered_doc.html" with html=latest_phase_response_html %}
+        </div>
+        <details class="rw-channel mb-2">
+          <summary class="small fw-semibold">Raw text</summary>
+          <div class="pt-2">
+            <textarea id="id_refined_intent" class="form-control" rows="6">{{ latest_phase_response }}</textarea>
+          </div>
+        </details>
+        {% if is_define_phase or is_explore_phase or is_approve_phase or is_execute_phase %}
+        <div class="d-flex gap-1 align-items-center flex-wrap mt-2 mb-2">
+          <button type="submit" form="stage-rewrite-clarify-form" id="btn-stage-rewrite-clarify" class="btn btn-sm btn-outline-secondary">Clarify</button>
+          <button type="submit" form="stage-rewrite-shorten-form" id="btn-stage-rewrite-shorten" class="btn btn-sm btn-outline-secondary">Shorten</button>
+          <button type="submit" form="stage-rewrite-table-form" id="btn-stage-rewrite-table" class="btn btn-sm btn-outline-secondary">Table view</button>
+          <span id="stage-rewrite-status" class="small text-muted ms-2"></span>
+        </div>
+        {% endif %}
+        <div id="stage-rewrite-history-container">
+          {% include "projects/_derax_presentation_history.html" with stage_rewrite_history=stage_rewrite_history active_phase_upper=active_phase_upper %}
+        </div>
         {% if is_define_phase or is_explore_phase or is_approve_phase or is_execute_phase %}
         <div class="d-flex gap-1 align-items-center flex-wrap mt-2 mb-2">
           <button type="submit" form="stage-export-form" class="btn btn-sm btn-outline-secondary">Export</button>
@@ -352,7 +427,7 @@
         <details class="rw-channel border rounded p-2 mb-2 mt-2" open>
           <summary class="small fw-semibold mb-1">{{ active_phase_upper }} turn history (newest first)</summary>
           {% if phase_history %}
-            <div style="max-height: 320px; overflow-y: auto;">
+            <div id="active-phase-history" style="max-height: 320px; overflow-y: auto;">
               {% include "projects/_derax_define_history.html" with define_history=phase_history newest_first=False %}
             </div>
           {% else %}
@@ -1031,6 +1106,13 @@
   var refineLockSeedText = document.getElementById("id_lock_refine_text");
   var defineLockForm = document.getElementById("stage-lock-define-form");
   var defineLockInput = document.getElementById("id_lock_define_text");
+  var rewriteClarifyButton = document.getElementById("btn-stage-rewrite-clarify");
+  var rewriteShortenButton = document.getElementById("btn-stage-rewrite-shorten");
+  var rewriteTableButton = document.getElementById("btn-stage-rewrite-table");
+  var rewriteStatus = document.getElementById("stage-rewrite-status");
+  var rewriteHistoryContainer = document.getElementById("stage-rewrite-history-container");
+  var latestPhaseRendered = document.getElementById("latest-phase-rendered");
+  var activePhaseHistory = document.getElementById("active-phase-history");
   var exportRefineForm = document.querySelector("form input[name='action'][value='export_refine_input_draft']");
   var refineSubmitting = false;
   var contractPhaseSelect = document.getElementById("id_contract_phase");
@@ -1088,6 +1170,70 @@
       .catch(function (err) {
         onErr((err && err.message) || "Request failed");
       });
+  }
+
+  function setRewriteButtonsDisabled(disabled) {
+    [rewriteClarifyButton, rewriteShortenButton, rewriteTableButton].forEach(function (btn) {
+      if (btn) btn.disabled = !!disabled;
+    });
+  }
+
+  function triggerRewrite(mode) {
+    setRewriteButtonsDisabled(true);
+    if (rewriteStatus) rewriteStatus.textContent = "Preparing...";
+    postAction(
+      { action: "rewrite_stage_output", rewrite_mode: mode },
+      function (data) {
+        if (rewriteHistoryContainer && typeof data.presentation_history_html === "string") {
+          rewriteHistoryContainer.innerHTML = data.presentation_history_html;
+          applyStoredDrawerStates();
+          bindPromoteButtons();
+        }
+        if (rewriteStatus) rewriteStatus.textContent = (data.rewrite_mode || mode) + " ready.";
+        setRewriteButtonsDisabled(false);
+      },
+      function (err) {
+        if (rewriteStatus) rewriteStatus.textContent = err;
+        setRewriteButtonsDisabled(false);
+      }
+    );
+  }
+
+  function bindPromoteButtons() {
+    var buttons = document.querySelectorAll(".js-promote-stage-rewrite");
+    buttons.forEach(function (btn) {
+      if (btn.getAttribute("data-promote-bound") === "1") return;
+      btn.setAttribute("data-promote-bound", "1");
+      btn.addEventListener("click", function (event) {
+        event.preventDefault();
+        var logIndex = String(btn.getAttribute("data-log-index") || "").trim();
+        if (!logIndex) return;
+        setRewriteButtonsDisabled(true);
+        if (rewriteStatus) rewriteStatus.textContent = "Promoting...";
+        postAction(
+          { action: "promote_stage_rewrite", log_index: logIndex },
+          function (data) {
+            if (latestBox && typeof data.latest_phase_response === "string") {
+              latestBox.value = data.latest_phase_response;
+            }
+            if (latestPhaseRendered && typeof data.latest_phase_response_html === "string") {
+              latestPhaseRendered.innerHTML = data.latest_phase_response_html;
+            }
+            if (activePhaseHistory && typeof data.define_history_html === "string") {
+              activePhaseHistory.innerHTML = data.define_history_html;
+            }
+            if (rewriteStatus) rewriteStatus.textContent = "Canonical updated.";
+            setRewriteButtonsDisabled(false);
+            applyStoredDrawerStates();
+            bindPromoteButtons();
+          },
+          function (err) {
+            if (rewriteStatus) rewriteStatus.textContent = err;
+            setRewriteButtonsDisabled(false);
+          }
+        );
+      });
+    });
   }
 
   function setContractEditing(on) {
@@ -1166,6 +1312,29 @@
       );
     });
   }
+
+  if (rewriteClarifyButton) {
+    rewriteClarifyButton.addEventListener("click", function (event) {
+      event.preventDefault();
+      triggerRewrite("CLARIFY");
+    });
+  }
+
+  if (rewriteShortenButton) {
+    rewriteShortenButton.addEventListener("click", function (event) {
+      event.preventDefault();
+      triggerRewrite("SHORTEN");
+    });
+  }
+
+  if (rewriteTableButton) {
+    rewriteTableButton.addEventListener("click", function (event) {
+      event.preventDefault();
+      triggerRewrite("TABLE");
+    });
+  }
+
+  bindPromoteButtons();
 
   if (executeGenerateForm && executeGenerateButton) {
     executeGenerateForm.addEventListener("submit", function (event) {

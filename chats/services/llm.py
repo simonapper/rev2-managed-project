@@ -551,7 +551,7 @@ def _get_default_model_key(*, user: Any = None) -> str:
     if user_value:
         return user_value
     p = SystemConfigPointers.objects.first()
-    return (getattr(p, "openai_model_default", "") or "gpt-5.1").strip()
+    return (getattr(p, "openai_model_default", "") or "gpt-5.5").strip()
 
 
 def _get_default_anthropic_model_key(*, user: Any = None) -> str:

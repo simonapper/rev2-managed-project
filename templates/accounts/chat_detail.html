@@ -873,6 +873,9 @@ Turn selection is client-side; server still renders canonical HTML.-->
 </div>
 
 <script>
+  window.RW_PASTE_UPLOAD_URL = "{% url 'accounts:chat_attachment_upload' chat.id %}";
+  window.RW_ATTACHMENT_DELETE_URL_TEMPLATE = "{% url 'accounts:chat_attachment_delete' 0 %}";
+
   // ------------------------------------------------------------
   // Turn navigation without full page reload (fetch + swap right pane)
   // - This removes the page refresh/flicker when clicking turns.
@@ -1365,6 +1368,9 @@ Turn selection is client-side; server still renders canonical HTML.-->
         deleteAttachment(att.id)
           .then(function (data) {
             if (data && data.ok) {
+              document
+                .querySelectorAll('input[name="include_attachment_ids"][value="' + String(att.id) + '"]')
+                .forEach(function (el) { el.remove(); });
               row.remove();
             } else {
               btn.disabled = false;
@@ -1380,6 +1386,17 @@ Turn selection is client-side; server still renders canonical HTML.-->
       row.appendChild(label);
       row.appendChild(btn);
       box.appendChild(row);
+
+      var input = document.getElementById("rw-chat-input");
+      var form = input ? input.closest("form") : null;
+      if (form && att && att.id) {
+        var hidden = document.createElement("input");
+        hidden.type = "hidden";
+        hidden.name = "include_attachment_ids";
+        hidden.value = String(att.id);
+        hidden.setAttribute("data-attachment-id", String(att.id));
+        form.appendChild(hidden);
+      }
     }
 
     var input = document.getElementById("rw-chat-input");

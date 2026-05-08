@@ -85,7 +85,7 @@ class UserProfile(models.Model):
     openai_model_default = models.CharField(
         max_length=80,
         blank=True,
-        default="gpt-5.1",
+        default="gpt-5.5",
     )
     anthropic_model_default = models.CharField(
         max_length=80,

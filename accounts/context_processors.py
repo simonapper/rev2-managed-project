@@ -31,7 +31,7 @@ def topbar_context(request) -> Dict[str, Any]:
         model_name = (
             (getattr(profile, "anthropic_model_default", "") or "").strip()
             or (getattr(pointers, "anthropic_model_default", "") or "").strip()
-            or "claude-sonnet-4-5-20250929"
+            or "claude-opus-4-7"
         )
     elif provider == "gemini":
         model_name = (
@@ -50,7 +50,7 @@ def topbar_context(request) -> Dict[str, Any]:
         model_name = (
             (getattr(profile, "openai_model_default", "") or "").strip()
             or (getattr(pointers, "openai_model_default", "") or "").strip()
-            or "gpt-5.1"
+            or "gpt-5.5"
         )
     ctx["rw_llm_model"] = model_name
     ctx["rw_llm_provider"] = provider

@@ -1,0 +1,39 @@
+{% if stage_rewrite_history %}
+<details class="rw-channel mt-2 derax-rewrite-history" open>
+  <summary class="fw-semibold">Presentation history</summary>
+  <div class="pt-2">
+    {% for row in stage_rewrite_history %}
+    <details class="rw-channel mb-2" {% if forloop.first %}open{% endif %}>
+      <summary class="small">
+        <strong>{{ row.mode|title }}</strong>
+        <span class="text-muted">{{ row.timestamp }}</span>
+      </summary>
+      <div class="pt-2">
+        <form method="post" class="d-flex gap-1 align-items-center flex-wrap mb-2">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="export_stage_rewrite">
+          <input type="hidden" name="log_index" value="{{ row.log_index }}">
+          <input type="hidden" name="export_format" value="docx">
+          <button type="submit" class="btn btn-sm btn-outline-secondary">Export DOCX</button>
+          {% if active_phase_upper == "DEFINE" %}
+          <button type="submit"
+                  class="btn btn-sm btn-outline-success js-promote-stage-rewrite"
+                  data-log-index="{{ row.log_index }}">
+            Promote to canonical
+          </button>
+          {% endif %}
+          {% if row.mode == "TABLE" %}
+          <button type="submit"
+                  class="btn btn-sm btn-outline-secondary"
+                  onclick="this.form.querySelector('input[name=export_format]').value='xlsx';">
+            Export XLSX
+          </button>
+          {% endif %}
+        </form>
+        {{ row.html }}
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}

@@ -269,8 +269,8 @@ class SystemConfigPointers(models.Model):
     openai_model_default = models.CharField(
         max_length=80,
         blank=True,
-        default="gpt-5.1",
-        help_text="Default OpenAI model key, e.g. gpt-5.1, gpt-4.1-mini, o4-mini",
+        default="gpt-5.5",
+        help_text="Default OpenAI model key, e.g. gpt-5.5, gpt-4.1-mini, o4-mini",
     )
     anthropic_model_default = models.CharField(
         max_length=80,

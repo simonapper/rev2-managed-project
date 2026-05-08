@@ -83,7 +83,7 @@ class Command(BaseCommand):
             "--models",
             type=str,
             default="",
-            help="Optional provider:model map. Example: openai:gpt-5.1,anthropic:claude-sonnet-4-5-20250929",
+            help="Optional provider:model map. Example: openai:gpt-5.5,anthropic:claude-sonnet-4-5-20250929",
         )
         parser.add_argument(
             "--timeout-seconds",

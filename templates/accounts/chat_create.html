@@ -11,71 +11,13 @@
     </div>
   </div>
 
-  {# Controlled-mode feedback from LLM validator #}
-  {% if cde_feedback %}
-    <div class="alert alert-warning rw-compact-card">
-      <div class="d-flex align-items-center justify-content-between">
-        <div><strong>CDE needs revision</strong></div>
-        <button type="button" class="btn btn-outline-secondary rw-btn-xs" id="btnToggleSystem">
-          Show system
-        </button>
-      </div>
+  <div id="chatCreateFeedback">
+    {% include "accounts/_chat_create_feedback.html" %}
+  </div>
 
-      <div class="mt-2">
-        <div><strong>Field:</strong> {{ cde_feedback.field_key }}</div>
-        <div><strong>Verdict:</strong> {{ cde_feedback.verdict }}</div>
-      </div>
+  <div id="chatCreateError" class="alert alert-danger rw-compact-card" style="display:none;"></div>
 
-      {% if cde_feedback.issues %}
-        <div class="mt-2"><strong>Issues</strong></div>
-        <ul class="mb-2">
-          {% for it in cde_feedback.issues %}
-            <li>{{ it }}</li>
-          {% endfor %}
-        </ul>
-      {% endif %}
-
-      {% if cde_feedback.questions %}
-        <div class="mt-2"><strong>Questions</strong></div>
-        <ul class="mb-2">
-          {% for q in cde_feedback.questions %}
-            <li>{{ q }}</li>
-          {% endfor %}
-        </ul>
-      {% endif %}
-
-      {% if cde_feedback.suggested_revision %}
-        <div class="mt-2"><strong>Suggested revision</strong></div>
-        <div class="rw-cde-suggestion">{{ cde_feedback.suggested_revision }}</div>
-      {% endif %}
-
-      {# Show system payload used for the failing validator call #}
-      <div class="mt-2" id="systemPanel" style="display:none;">
-        <div class="small text-secondary mb-1"><strong>LLM payload (debug)</strong></div>
-
-        <div class="card">
-          <div class="card-body rw-system-body">
-            <div class="small text-secondary"><strong>SYSTEM blocks</strong></div>
-            {% if cde_feedback.debug_system_blocks %}
-              <ol class="mb-3">
-                {% for b in cde_feedback.debug_system_blocks %}
-                  <li><div style="white-space: pre-wrap;">{{ b }}</div></li>
-                {% endfor %}
-              </ol>
-            {% else %}
-              <div class="text-secondary small">(No debug system blocks available.)</div>
-            {% endif %}
-
-            <div class="small text-secondary"><strong>User text</strong></div>
-            <div style="white-space: pre-wrap;">{{ cde_feedback.debug_user_text }}</div>
-          </div>
-        </div>
-      </div>
-
-    </div>
-  {% endif %}
-
-  <form method="post" action="">
+  <form method="post" action="" id="chatCreateForm">
     {% csrf_token %}
     <!-- Hidden AI-native CDE payload (filled by JS Draft step) -->
     <input type="hidden" name="cde_json" id="id_cde_json" value="">
@@ -285,9 +227,26 @@
   // ------------------------------------------------------------
   // Helpers
   // ------------------------------------------------------------
+  var form = document.getElementById("chatCreateForm");
+  var submitBtn = form ? form.querySelector("button[type='submit']") : null;
+  var feedbackHost = document.getElementById("chatCreateFeedback");
+  var createError = document.getElementById("chatCreateError");
+
   function getCookie(name) {
     var v = document.cookie.match("(^|;)\\s*" + name + "\\s*=\\s*([^;]+)");
     return v ? v.pop() : "";
+  }
+
+  function showCreateError(msg) {
+    if (!createError) return;
+    createError.textContent = msg;
+    createError.style.display = "block";
+  }
+
+  function clearCreateError() {
+    if (!createError) return;
+    createError.textContent = "";
+    createError.style.display = "none";
   }
 
   function showError(msg) {
@@ -305,15 +264,17 @@
   // ------------------------------------------------------------
   // System debug toggle
   // ------------------------------------------------------------
-  var btnSys = document.getElementById("btnToggleSystem");
-  var sysPanel = document.getElementById("systemPanel");
-  if (btnSys && sysPanel) {
+  function bindFeedbackToggles() {
+    var btnSys = document.getElementById("btnToggleSystem");
+    var sysPanel = document.getElementById("systemPanel");
+    if (!btnSys || !sysPanel) return;
     btnSys.addEventListener("click", function() {
       var show = (sysPanel.style.display === "none");
       sysPanel.style.display = show ? "block" : "none";
       btnSys.textContent = show ? "Hide system" : "Show system";
     });
   }
+  bindFeedbackToggles();
 
   // ------------------------------------------------------------
   // Suggest goals wiring
@@ -451,6 +412,62 @@
       .finally(function() {
         btnDraft.disabled = false;
         btnDraft.textContent = "Draft CDE";
+      });
+    });
+  }
+
+  // ------------------------------------------------------------
+  // AJAX submit wiring
+  // ------------------------------------------------------------
+  if (form) {
+    form.addEventListener("submit", function(ev) {
+      ev.preventDefault();
+      clearCreateError();
+      if (feedbackHost) feedbackHost.innerHTML = "";
+
+      var body = new FormData(form);
+      body.append("ajax", "1");
+
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Creating...";
+      }
+
+      fetch(form.getAttribute("action") || window.location.href, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "X-CSRFToken": getCookie("csrftoken"), "X-Requested-With": "XMLHttpRequest" },
+        body: body
+      })
+      .then(function(resp) {
+        return resp.json().then(function(data) {
+          return { status: resp.status, data: data || {} };
+        });
+      })
+      .then(function(result) {
+        var data = result.data || {};
+        if (data.ok && data.redirect_url) {
+          window.location.href = data.redirect_url;
+          return;
+        }
+        if (data.feedback_html && feedbackHost) {
+          feedbackHost.innerHTML = data.feedback_html;
+          bindFeedbackToggles();
+        }
+        if (data.redirect_url) {
+          window.location.href = data.redirect_url;
+          return;
+        }
+        showCreateError(data.error || "Create chat failed.");
+      })
+      .catch(function() {
+        showCreateError("Create chat failed.");
+      })
+      .finally(function() {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Create chat";
+        }
       });
     });
   }

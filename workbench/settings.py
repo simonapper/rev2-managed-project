@@ -212,7 +212,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # OpenAI links
 # --------------------------------------------------
 
-OPENAI_MODEL = "gpt-5.2"
+OPENAI_MODEL = "gpt-5.5"
 OPENAI_TIMEOUT_SECONDS = 30
 
 CONTRACT_PIPELINE_ENABLED = os.getenv("CONTRACT_PIPELINE_ENABLED", "0").strip().lower() not in {"0", "false", "no"}

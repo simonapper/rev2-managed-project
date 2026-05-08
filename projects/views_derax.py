@@ -19,6 +19,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.html import escape
+from django.utils.safestring import mark_safe
 
 from projects.models import AuditLog, ProjectDocument, WorkItem
 from chats.models import ContractText
@@ -340,6 +342,581 @@ def _readable_derax_text(text: str) -> str:
                 lines.append(f"- {label}")
 
     return "\n".join(lines).strip() or raw
+
+
+def _latest_stage_output_text(work_item: WorkItem, phase: str) -> str:
+    current_phase = str(phase or "").strip().upper()
+    if current_phase == WorkItem.PHASE_DEFINE:
+        raw = _latest_define_assistant_text(work_item)
+    elif current_phase == WorkItem.PHASE_EXPLORE:
+        raw = _latest_explore_assistant_text(work_item)
+    else:
+        payload = _latest_payload_from_runs(work_item, current_phase)
+        raw = json.dumps(payload, ensure_ascii=True, indent=2) if payload else ""
+    return _readable_derax_text(raw)
+
+
+def _stage_rewrite_instruction(mode: str) -> str:
+    key = str(mode or "").strip().upper()
+    if key == "SHORTEN":
+        return (
+            "Shorten this materially. Keep the objective, constraints, key decisions, "
+            "risks, open questions, and parked items. Remove repetition."
+        )
+    if key == "TABLE":
+        return (
+            "Reformat this for readability. Prefer markdown tables where useful. "
+            "Use sections for Objective, Phases, KPIs, Open questions, and Later. "
+            "Do not add facts."
+        )
+    return (
+        "Rewrite for comprehension only. Do not add facts. Keep all decisions, "
+        "constraints, risks, and open questions. Use short headings and bullets."
+    )
+
+
+def _split_table_cells(line: str) -> list[str]:
+    text = str(line or "").strip()
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|"):
+        text = text[:-1]
+    return [str(cell).strip() for cell in text.split("|")]
+
+
+def _is_markdown_table_line(line: str) -> bool:
+    text = str(line or "").strip()
+    return text.startswith("|") and text.endswith("|") and ("|" in text[1:-1])
+
+
+def _is_markdown_table_separator(line: str) -> bool:
+    cells = _split_table_cells(line)
+    if not cells:
+        return False
+    for cell in cells:
+        token = cell.replace("-", "").replace(":", "").replace(" ", "")
+        if token:
+            return False
+    return True
+
+
+def _render_inline_html(text: str) -> str:
+    html = escape(str(text or ""))
+    html = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html)
+    html = re.sub(r"__(.+?)__", r"<u>\1</u>", html)
+    html = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<em>\1</em>", html)
+    html = re.sub(r"(?<!_)_(?!_)(.+?)(?<!_)_(?!_)", r"<em>\1</em>", html)
+    return html
+
+
+def _render_rewrite_preview_html(text: str) -> str:
+    lines = str(text or "").splitlines()
+    if not lines:
+        return ""
+
+    out = ['<div class="derax-doc small">']
+    paragraph = []
+    list_mode = ""
+
+    def close_list() -> None:
+        nonlocal list_mode
+        if list_mode == "ul":
+            out.append("</ul>")
+        elif list_mode == "ol":
+            out.append("</ol>")
+        list_mode = ""
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph
+        if not paragraph:
+            return
+        body = " ".join(_render_inline_html(line.strip()) for line in paragraph if str(line).strip())
+        if body:
+            out.append(f"<p>{body}</p>")
+        paragraph = []
+
+    i = 0
+    while i < len(lines):
+        line = str(lines[i] or "")
+        stripped = line.strip()
+        next_line = lines[i + 1] if i + 1 < len(lines) else ""
+
+        if _is_markdown_table_line(line) and _is_markdown_table_separator(next_line):
+            flush_paragraph()
+            close_list()
+            header = _split_table_cells(line)
+            rows = []
+            i += 2
+            while i < len(lines) and _is_markdown_table_line(lines[i]):
+                rows.append(_split_table_cells(lines[i]))
+                i += 1
+            out.append('<div class="table-responsive mb-3"><table class="table table-sm table-bordered align-middle">')
+            out.append("<thead><tr>")
+            for cell in header:
+                out.append(f"<th>{_render_inline_html(cell)}</th>")
+            out.append("</tr></thead><tbody>")
+            for row in rows:
+                out.append("<tr>")
+                width = max(len(header), len(row))
+                for idx in range(width):
+                    value = row[idx] if idx < len(row) else ""
+                    out.append(f"<td>{_render_inline_html(value)}</td>")
+                out.append("</tr>")
+            out.append("</tbody></table></div>")
+            continue
+
+        if not stripped:
+            flush_paragraph()
+            close_list()
+            i += 1
+            continue
+
+        if re.fullmatch(r"-{3,}", stripped):
+            flush_paragraph()
+            close_list()
+            out.append("<hr>")
+            i += 1
+            continue
+
+        if stripped.startswith("### "):
+            flush_paragraph()
+            close_list()
+            out.append(f"<h5>{_render_inline_html(stripped[4:].strip())}</h5>")
+            i += 1
+            continue
+        if stripped.startswith("## "):
+            flush_paragraph()
+            close_list()
+            out.append(f"<h4>{_render_inline_html(stripped[3:].strip())}</h4>")
+            i += 1
+            continue
+        if stripped.startswith("# "):
+            flush_paragraph()
+            close_list()
+            out.append(f"<h3>{_render_inline_html(stripped[2:].strip())}</h3>")
+            i += 1
+            continue
+
+        ordered_match = re.match(r"^(\d+)\.\s+(.*)$", stripped)
+        if ordered_match:
+            flush_paragraph()
+            if list_mode != "ol":
+                close_list()
+                out.append("<ol>")
+                list_mode = "ol"
+            out.append(f"<li>{_render_inline_html(ordered_match.group(2).strip())}</li>")
+            i += 1
+            continue
+
+        if stripped.startswith("- "):
+            flush_paragraph()
+            if list_mode != "ul":
+                close_list()
+                out.append("<ul>")
+                list_mode = "ul"
+            out.append(f"<li>{_render_inline_html(stripped[2:].strip())}</li>")
+            i += 1
+            continue
+
+        close_list()
+        paragraph.append(stripped)
+        i += 1
+
+    flush_paragraph()
+    close_list()
+    out.append("</div>")
+    return "".join(out)
+
+
+def _load_stage_rewrite_history(work_item: WorkItem, phase: str) -> list[dict]:
+    current_phase = str(phase or "").strip().upper()
+    rows = []
+    log = list(work_item.activity_log or [])
+    for log_index in range(len(log) - 1, -1, -1):
+        item = log[log_index]
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("action") or "").strip() != "derax_stage_rewrite":
+            continue
+        notes = str(item.get("notes") or "").strip()
+        if not notes:
+            continue
+        try:
+            payload = json.loads(notes)
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("phase") or "").strip().upper() != current_phase:
+            continue
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            continue
+        mode = str(payload.get("mode") or "").strip().upper() or "CLARIFY"
+        rows.append(
+            {
+                "log_index": log_index,
+                "mode": mode,
+                "timestamp": str(item.get("timestamp") or "").strip(),
+                "text": text,
+                "html": mark_safe(_render_rewrite_preview_html(text)),
+            }
+        )
+    return rows
+
+
+def _extract_markdown_tables(text: str) -> list[dict]:
+    lines = str(text or "").splitlines()
+    tables = []
+    current_heading = ""
+    i = 0
+    while i < len(lines):
+        line = str(lines[i] or "")
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            current_heading = stripped.lstrip("#").strip()
+            i += 1
+            continue
+        next_line = lines[i + 1] if i + 1 < len(lines) else ""
+        if _is_markdown_table_line(line) and _is_markdown_table_separator(next_line):
+            header = _split_table_cells(line)
+            rows = []
+            i += 2
+            while i < len(lines) and _is_markdown_table_line(lines[i]):
+                rows.append(_split_table_cells(lines[i]))
+                i += 1
+            tables.append({"title": current_heading or f"Table {len(tables) + 1}", "header": header, "rows": rows})
+            continue
+        i += 1
+    return tables
+
+
+def _extract_rewrite_outline(text: str) -> list[dict]:
+    lines = str(text or "").splitlines()
+    current_section = ""
+    rows = []
+    for line in lines:
+        stripped = str(line or "").strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            current_section = stripped.lstrip("#").strip()
+            continue
+        if _is_markdown_table_line(stripped) or _is_markdown_table_separator(stripped):
+            continue
+        item_type = "paragraph"
+        content = stripped
+        if re.match(r"^\d+\.\s+", stripped):
+            item_type = "numbered"
+            content = re.sub(r"^\d+\.\s+", "", stripped)
+        elif stripped.startswith("- "):
+            item_type = "bullet"
+            content = stripped[2:].strip()
+        rows.append(
+            {
+                "section": current_section,
+                "type": item_type,
+                "content": content,
+            }
+        )
+    return rows
+
+
+def _fit_worksheet_columns(ws) -> None:
+    from openpyxl.utils import get_column_letter  # type: ignore
+
+    for idx, column in enumerate(ws.columns, start=1):
+        max_len = 0
+        for cell in column:
+            value = "" if cell.value is None else str(cell.value)
+            max_len = max(max_len, len(value))
+        ws.column_dimensions[get_column_letter(idx)].width = min(max(max_len + 2, 12), 48)
+
+
+def _style_header_row(ws, row_number: int = 1) -> None:
+    from openpyxl.styles import Alignment, Font, PatternFill  # type: ignore
+
+    fill = PatternFill(fill_type="solid", fgColor="D9EAF7")
+    for cell in ws[row_number]:
+        cell.font = Font(bold=True)
+        cell.fill = fill
+        cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+
+def _style_body(ws) -> None:
+    from openpyxl.styles import Alignment  # type: ignore
+
+    for row in ws.iter_rows():
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+
+def _append_formatted_runs(paragraph, text: str) -> None:
+    raw = str(text or "")
+    pattern = re.compile(r"(\*\*[^*]+\*\*|_[^_]+_|__[^_]+__|\*[^*]+\*)")
+    pos = 0
+    for match in pattern.finditer(raw):
+        if match.start() > pos:
+            paragraph.add_run(raw[pos:match.start()])
+        token = match.group(0)
+        inner = token[2:-2] if token.startswith("**") and token.endswith("**") else token[1:-1]
+        run = paragraph.add_run(inner)
+        if token.startswith("**") and token.endswith("**"):
+            run.bold = True
+        elif token.startswith("__") and token.endswith("__"):
+            run.underline = True
+        else:
+            run.italic = True
+        pos = match.end()
+    if pos < len(raw):
+        paragraph.add_run(raw[pos:])
+
+
+def _build_docx_for_rewrite(text: str) -> bytes:
+    try:
+        from docx import Document  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(str(exc))
+
+    document = Document()
+    lines = str(text or "").splitlines()
+    i = 0
+    while i < len(lines):
+        line = str(lines[i] or "")
+        stripped = line.strip()
+        next_line = lines[i + 1] if i + 1 < len(lines) else ""
+        if not stripped:
+            i += 1
+            continue
+        if stripped.startswith("## "):
+            document.add_heading(stripped[3:].strip(), level=2)
+            i += 1
+            continue
+        if stripped.startswith("# "):
+            document.add_heading(stripped[2:].strip(), level=1)
+            i += 1
+            continue
+        if _is_markdown_table_line(line) and _is_markdown_table_separator(next_line):
+            header = _split_table_cells(line)
+            rows = []
+            i += 2
+            while i < len(lines) and _is_markdown_table_line(lines[i]):
+                rows.append(_split_table_cells(lines[i]))
+                i += 1
+            table = document.add_table(rows=1, cols=max(1, len(header)))
+            table.style = "Table Grid"
+            for idx, cell in enumerate(header):
+                table.rows[0].cells[idx].text = cell
+            for row in rows:
+                cells = table.add_row().cells
+                for idx in range(len(cells)):
+                    cells[idx].text = row[idx] if idx < len(row) else ""
+            continue
+        if stripped.startswith("- "):
+            para = document.add_paragraph(style="List Bullet")
+            _append_formatted_runs(para, stripped[2:].strip())
+            i += 1
+            continue
+        para = document.add_paragraph()
+        _append_formatted_runs(para, stripped)
+        i += 1
+
+    output = io.BytesIO()
+    document.save(output)
+    return output.getvalue()
+
+
+def _build_xlsx_for_rewrite(text: str) -> bytes:
+    try:
+        from openpyxl import Workbook  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(str(exc))
+
+    tables = _extract_markdown_tables(text)
+    outline_rows = _extract_rewrite_outline(text)
+    if not tables and not outline_rows:
+        raise RuntimeError("No structured content found in this presentation view.")
+
+    workbook = Workbook()
+
+    if tables:
+        first = tables[0]
+        active = workbook.active
+        active.title = (str(first.get("title") or "Table 1")[:31] or "Table 1")
+        table_sets = [(active, first)] + [(None, tbl) for tbl in tables[1:]]
+    else:
+        active = workbook.active
+        active.title = "Outline"
+        table_sets = []
+
+    for idx, pair in enumerate(table_sets, start=1):
+        sheet, table = pair
+        if sheet is None:
+            title = str(table.get("title") or f"Table {idx}")[:31] or f"Table {idx}"
+            sheet = workbook.create_sheet(title=f"{title[:28]}_{idx}" if workbook.sheetnames.count(title) else title)
+        header = list(table.get("header") or [])
+        rows = list(table.get("rows") or [])
+        sheet.append(header)
+        for row in rows:
+            padded = list(row) + [""] * max(0, len(header) - len(row))
+            sheet.append(padded[: len(header)])
+        _style_header_row(sheet, 1)
+        _style_body(sheet)
+        sheet.freeze_panes = "A2"
+        _fit_worksheet_columns(sheet)
+
+    if outline_rows:
+        if tables:
+            outline = workbook.create_sheet(title="Outline")
+        else:
+            outline = workbook.active
+        outline.append(["Section", "Type", "Content"])
+        for row in outline_rows:
+            outline.append([row.get("section") or "", row.get("type") or "", row.get("content") or ""])
+        _style_header_row(outline, 1)
+        _style_body(outline)
+        outline.freeze_panes = "A2"
+        _fit_worksheet_columns(outline)
+
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _persist_presentation_export(
+    *,
+    project,
+    work_item: WorkItem,
+    user,
+    phase: str,
+    mode: str,
+    text: str,
+    export_format: str,
+) -> ProjectDocument:
+    fmt = str(export_format or "").strip().lower()
+    phase_text = str(phase or "").strip().upper() or "DEFINE"
+    mode_text = str(mode or "").strip().upper() or "CLARIFY"
+    stamp = timezone.now().strftime("%Y%m%dT%H%M%S")
+    stem = _safe_stem(project.name)
+    base_name = f"{stem}-DERAX-{phase_text}-{mode_text}-{stamp}"
+
+    if fmt == "docx":
+        body = _build_docx_for_rewrite(text)
+        ext = "docx"
+        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif fmt == "xlsx":
+        body = _build_xlsx_for_rewrite(text)
+        ext = "xlsx"
+        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        raise ValueError("Unsupported export format.")
+
+    filename = f"{base_name}.{ext}"
+    rel_name = f"derax/{int(work_item.id)}/{filename}"
+    doc = ProjectDocument(
+        project=project,
+        title=f"DERAX {phase_text} {mode_text} view"[:200],
+        original_name=filename[:255],
+        content_type=content_type[:120],
+        size_bytes=len(body),
+        uploaded_by=user,
+    )
+    doc.file.save(rel_name, ContentFile(body), save=False)
+    doc.save()
+    return doc
+
+
+def _promote_define_text_to_payload(*, project, work_item: WorkItem, user, source_text: str) -> dict:
+    user_text = str(source_text or "").strip()
+    if not user_text:
+        raise ValueError("No DEFINE presentation text to promote.")
+
+    effective_context = {}
+    try:
+        effective_context = dict(
+            resolve_effective_context(
+                project_id=project.id,
+                user_id=user.id,
+                session_overrides={},
+                chat_overrides={},
+            )
+            or {}
+        )
+    except Exception:
+        effective_context = {}
+
+    contract_ctx = ContractContext(
+        user=user,
+        project=project,
+        work_item=work_item,
+        active_phase=WorkItem.PHASE_DEFINE,
+        user_text=user_text,
+        effective_context=effective_context,
+        is_derax=True,
+        legacy_system_blocks=[
+            "DEFINE CANONICALISATION MODE: Convert the supplied DEFINE presentation text into a valid DEFINE payload only.",
+            "Preserve the meaning already present.",
+            "Do not add new strategy, plans, implementation steps, or sequencing.",
+            "Return valid DERAX DEFINE JSON only.",
+        ],
+        include_envelope=False,
+        strict_json=False,
+    )
+
+    prompt = (
+        "Convert this DEFINE presentation text into canonical DEFINE JSON.\n"
+        "Keep the same meaning.\n"
+        "Return valid JSON only.\n\n"
+        "Source text:\n"
+        + user_text
+    )
+    llm_text = generate_text(
+        system_blocks=[],
+        messages=[{"role": "user", "content": prompt}],
+        user=user,
+        contract_ctx=contract_ctx,
+    )
+    ok, payload_or_error = validate_derax_response(str(llm_text or ""))
+    if not ok:
+        parsed_payload = _payload_candidate_from_text(str(llm_text or ""))
+        if isinstance(parsed_payload, dict):
+            recovered_ok, recovered_payload, recovered_error = _phase_payload_recovered(
+                parsed_payload,
+                phase=WorkItem.PHASE_DEFINE,
+            )
+            if recovered_ok:
+                ok = True
+                payload_or_error = recovered_payload
+            else:
+                payload_or_error = recovered_error or payload_or_error
+    if not ok:
+        correction = derax_json_correction_prompt(str(payload_or_error or ""), phase=WorkItem.PHASE_DEFINE)
+        llm_text = generate_text(
+            system_blocks=[],
+            messages=[
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": str(llm_text or "")},
+                {"role": "user", "content": correction},
+            ],
+            user=user,
+            contract_ctx=contract_ctx,
+        )
+        ok, payload_or_error = validate_derax_response(str(llm_text or ""))
+        if not ok:
+            parsed_payload = _payload_candidate_from_text(str(llm_text or ""))
+            if isinstance(parsed_payload, dict):
+                recovered_ok, recovered_payload, recovered_error = _phase_payload_recovered(
+                    parsed_payload,
+                    phase=WorkItem.PHASE_DEFINE,
+                )
+                if recovered_ok:
+                    ok = True
+                    payload_or_error = recovered_payload
+                else:
+                    payload_or_error = recovered_error or payload_or_error
+    if not ok:
+        raise ValueError("Canonical promotion failed: " + str(payload_or_error or "invalid DEFINE JSON"))
+    return _sanitise_define_payload(_as_dict(payload_or_error))
 
 
 def _execute_prompt_guide() -> str:
@@ -1954,6 +2531,7 @@ def _build_run_history_rows(work_item: WorkItem, phase: str) -> list[dict]:
 def derax_project_home(request, project_id: int):
     project = get_object_or_404(accessible_projects_qs(request.user), id=project_id)
     work_item = _primary_work_item_for_project(project)
+    rewrite_preview_text = ""
     can_edit_phase_contracts = bool(
         request.user.id == project.owner_id or request.user.is_staff or request.user.is_superuser
     )
@@ -1964,6 +2542,203 @@ def derax_project_home(request, project_id: int):
 
     if request.method == "POST":
         action = str(request.POST.get("action") or "").strip().lower()
+        if action == "rewrite_stage_output":
+            phase = str(work_item.active_phase or "").strip().upper() or WorkItem.PHASE_DEFINE
+            rewrite_preview_mode = str(request.POST.get("rewrite_mode") or "CLARIFY").strip().upper()
+            source_text = _latest_stage_output_text(work_item, phase)
+            if not source_text:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": f"No {phase} response available to rewrite."}, status=400)
+                messages.error(request, f"No {phase} response available to rewrite.")
+            else:
+                prompt = (
+                    _stage_rewrite_instruction(rewrite_preview_mode)
+                    + "\n\nSource text:\n"
+                    + source_text
+                )
+                try:
+                    rewrite_preview_text = str(
+                        generate_text(
+                            system_blocks=[
+                                "Rewrite for presentation only.",
+                                "Preserve meaning.",
+                                "Do not add new facts.",
+                                "Keep sentences short.",
+                            ],
+                            messages=[{"role": "user", "content": prompt}],
+                            user=request.user,
+                        )
+                        or ""
+                    ).strip()
+                except Exception as exc:
+                    if _is_ajax(request):
+                        return JsonResponse({"ok": False, "error": f"Rewrite failed: {exc}"}, status=500)
+                    messages.error(request, f"Rewrite failed: {exc}")
+                else:
+                    if rewrite_preview_text:
+                        work_item.append_activity(
+                            actor=request.user,
+                            action="derax_stage_rewrite",
+                            notes=json.dumps(
+                                {
+                                    "phase": phase,
+                                    "mode": rewrite_preview_mode,
+                                    "text": rewrite_preview_text,
+                                },
+                                ensure_ascii=True,
+                            ),
+                        )
+                        if _is_ajax(request):
+                            stage_rewrite_history = _load_stage_rewrite_history(work_item, phase)
+                            history_html = render_to_string(
+                                "projects/_derax_presentation_history.html",
+                                {"stage_rewrite_history": stage_rewrite_history, "active_phase_upper": phase},
+                                request=request,
+                            )
+                            return JsonResponse(
+                                {
+                                    "ok": True,
+                                    "rewrite_mode": rewrite_preview_mode,
+                                    "presentation_history_html": history_html,
+                                }
+                            )
+                        messages.success(request, f"{rewrite_preview_mode.title()} preview generated.")
+                    else:
+                        if _is_ajax(request):
+                            return JsonResponse({"ok": False, "error": "Rewrite returned no content."}, status=500)
+                        messages.warning(request, "Rewrite returned no content.")
+
+        if action == "export_stage_rewrite":
+            phase = str(work_item.active_phase or "").strip().upper() or WorkItem.PHASE_DEFINE
+            log_index_raw = str(request.POST.get("log_index") or "").strip()
+            export_format = str(request.POST.get("export_format") or "docx").strip().lower()
+            try:
+                log_index = int(log_index_raw)
+            except Exception:
+                log_index = -1
+            log = list(work_item.activity_log or [])
+            if log_index < 0 or log_index >= len(log):
+                messages.error(request, "Presentation view not found.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            item = log[log_index]
+            if not isinstance(item, dict) or str(item.get("action") or "").strip() != "derax_stage_rewrite":
+                messages.error(request, "Presentation view not found.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            try:
+                payload = json.loads(str(item.get("notes") or "").strip() or "{}")
+            except Exception:
+                payload = {}
+            item_phase = str(payload.get("phase") or "").strip().upper()
+            item_mode = str(payload.get("mode") or "").strip().upper()
+            item_text = str(payload.get("text") or "").strip()
+            if item_phase != phase or not item_text:
+                messages.error(request, "Presentation view not found for this phase.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            try:
+                doc = _persist_presentation_export(
+                    project=project,
+                    work_item=work_item,
+                    user=request.user,
+                    phase=item_phase,
+                    mode=item_mode,
+                    text=item_text,
+                    export_format=export_format,
+                )
+            except Exception as exc:
+                messages.error(request, f"Presentation export failed: {exc}")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            messages.success(request, f"Presentation view exported: {doc.original_name or doc.title}")
+            return redirect("projects:derax_project_home", project_id=project.id)
+
+        if action == "promote_stage_rewrite":
+            phase = str(work_item.active_phase or "").strip().upper() or WorkItem.PHASE_DEFINE
+            if phase != WorkItem.PHASE_DEFINE:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Promotion is currently available for DEFINE only."}, status=400)
+                messages.error(request, "Promotion is currently available for DEFINE only.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            log_index_raw = str(request.POST.get("log_index") or "").strip()
+            try:
+                log_index = int(log_index_raw)
+            except Exception:
+                log_index = -1
+            log = list(work_item.activity_log or [])
+            if log_index < 0 or log_index >= len(log):
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Presentation view not found."}, status=404)
+                messages.error(request, "Presentation view not found.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            item = log[log_index]
+            if not isinstance(item, dict) or str(item.get("action") or "").strip() != "derax_stage_rewrite":
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Presentation view not found."}, status=404)
+                messages.error(request, "Presentation view not found.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            try:
+                payload = json.loads(str(item.get("notes") or "").strip() or "{}")
+            except Exception:
+                payload = {}
+            item_phase = str(payload.get("phase") or "").strip().upper()
+            item_mode = str(payload.get("mode") or "").strip().upper()
+            item_text = str(payload.get("text") or "").strip()
+            if item_phase != phase or not item_text:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": "Presentation view not found for this phase."}, status=404)
+                messages.error(request, "Presentation view not found for this phase.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            try:
+                promoted_payload = _promote_define_text_to_payload(
+                    project=project,
+                    work_item=work_item,
+                    user=request.user,
+                    source_text=item_text,
+                )
+            except Exception as exc:
+                if _is_ajax(request):
+                    return JsonResponse({"ok": False, "error": f"Promote failed: {exc}"}, status=500)
+                messages.error(request, f"Promote failed: {exc}")
+                return redirect("projects:derax_project_home", project_id=project.id)
+
+            persist_derax_payload(work_item=work_item, payload=promoted_payload, user=request.user, chat=None)
+            now_iso = timezone.now().isoformat()
+            payload_text = json.dumps(promoted_payload, ensure_ascii=True, indent=2)
+            hist = [h for h in list(work_item.derax_define_history or []) if isinstance(h, dict)]
+            hist.append({"role": "assistant", "text": payload_text, "timestamp": now_iso})
+            work_item.derax_define_history = hist[-40:]
+            if promoted_payload.get("intent", {}).get("destination"):
+                work_item.intent_raw = str(promoted_payload["intent"]["destination"] or "").strip()
+                work_item.save(update_fields=["derax_define_history", "intent_raw", "updated_at"])
+            else:
+                work_item.save(update_fields=["derax_define_history", "updated_at"])
+            work_item.append_activity(
+                actor=request.user,
+                action="define_promote_rewrite",
+                notes=f"Promoted {item_mode or 'presentation'} view to DEFINE canonical.",
+            )
+            if _is_ajax(request):
+                latest_phase_response = _readable_derax_text(payload_text)
+                latest_phase_response_html = render_to_string(
+                    "projects/_derax_rendered_doc.html",
+                    {"html": mark_safe(_render_rewrite_preview_html(latest_phase_response))},
+                    request=request,
+                )
+                define_history = _build_phase_history_rows(list(work_item.derax_define_history or []))
+                history_html = render_to_string(
+                    "projects/_derax_define_history.html",
+                    {"define_history": define_history},
+                    request=request,
+                )
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "latest_phase_response": latest_phase_response,
+                        "latest_phase_response_html": latest_phase_response_html,
+                        "define_history_html": history_html,
+                    }
+                )
+            messages.success(request, "Presentation view promoted to DEFINE canonical.")
+            return redirect("projects:derax_project_home", project_id=project.id)
+
         if action == "save_refine_structured":
             existing = _latest_payload_from_runs(work_item, WorkItem.PHASE_REFINE)
             payload = existing if isinstance(existing, dict) else empty_payload(WorkItem.PHASE_REFINE)
@@ -3825,6 +4600,7 @@ def derax_project_home(request, project_id: int):
     explore_vm = _explore_view_model(explore_latest_payload)
     refine_vm = _refine_view_model(refine_latest_payload)
     explore_latest_text = _readable_derax_text(_latest_explore_assistant_text(work_item))
+    stage_rewrite_history = _load_stage_rewrite_history(work_item, active_phase)
     phase_input_text = ""
     if is_define:
         phase_input_text = _latest_phase_user_text(list(work_item.derax_define_history or []))
@@ -3856,6 +4632,7 @@ def derax_project_home(request, project_id: int):
             refine_input_text = define_locked_seed_text
     if not latest_phase_response and phase_input_text:
         latest_phase_response = phase_input_text
+    latest_phase_response_html = mark_safe(_render_rewrite_preview_html(latest_phase_response))
     refine_payload_for_edit = refine_latest_payload if isinstance(refine_latest_payload, dict) else empty_payload(WorkItem.PHASE_REFINE)
     refine_editor_canonical_summary = str(refine_payload_for_edit.get("canonical_summary") or "").strip()
     refine_editor_destination = _str_from_payload(refine_payload_for_edit, ("intent", "destination"), ("core", "end_in_mind"))
@@ -3960,6 +4737,8 @@ def derax_project_home(request, project_id: int):
             "approve_history_rows": approve_history_rows,
             "execute_history_rows": execute_history_rows,
             "latest_phase_response": latest_phase_response,
+            "latest_phase_response_html": latest_phase_response_html,
+            "stage_rewrite_history": stage_rewrite_history,
             "latest_phase_payload": latest_phase_payload,
             "latest_phase_payload_json": latest_phase_payload_json,
             "stage_execute_proposed_text": stage_execute_proposed_text,
