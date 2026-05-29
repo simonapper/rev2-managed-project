@@ -204,7 +204,7 @@
                   <button class="dropdown-item rw-topbar-llm-option" type="button" data-provider="openai">OpenAI</button>
                   <button class="dropdown-item rw-topbar-llm-option" type="button" data-provider="anthropic">Anthropic</button>
                   <button class="dropdown-item rw-topbar-llm-option" type="button" data-provider="deepseek">DeepSeek</button>
-                  <button class="dropdown-item rw-topbar-llm-option" type="button" data-provider="gemini">Gemini</button>
+                  <button class="dropdown-item rw-topbar-llm-option" type="button" data-provider="gemini" data-model="gemini-3.5-flash">Gemini 3.5 Flash</button>
                 </div>
               </div>
             {% else %}
@@ -330,6 +330,7 @@
   options.forEach(function (btn) {
     btn.addEventListener("click", function () {
       var provider = btn.getAttribute("data-provider") || "";
+      var model = btn.getAttribute("data-model") || "";
       if (!provider) return;
 
       trigger.disabled = true;
@@ -341,7 +342,7 @@
           "Content-Type": "application/json",
           "X-CSRFToken": getCsrfToken()
         },
-        body: JSON.stringify({provider: provider})
+        body: JSON.stringify({provider: provider, model: model})
       })
       .then(function (resp) { return resp.json(); })
       .then(function (data) {

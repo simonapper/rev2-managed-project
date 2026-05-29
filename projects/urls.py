@@ -60,6 +60,7 @@ urlpatterns = [
     path("<int:project_id>/execution/", views_execution.execution_board, name="execution_board"),
     path("<int:project_id>/workitem/", views_workitem.work_item_detail, name="work_item_detail"),
     path("<int:project_id>/workitem/export/", views_workitem.work_item_export, name="work_item_export"),
+    path("<int:project_id>/workitem/<int:work_item_id>/open/", views_project.derax_work_item_open, name="derax_work_item_open"),
     path("<int:project_id>/derax/", views_derax.derax_project_home, name="derax_project_home"),
     path("<int:project_id>/home/", views_project.project_home, name="project_home"),
     path("<int:project_id>/cko/preview/", views_cko.cko_preview, name="cko_preview"),

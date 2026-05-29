@@ -97,6 +97,22 @@ class LLMProviderTests(TestCase):
 
         self.assertEqual(llm._get_default_model_key(user=user), "gpt-5.5")
 
+    def test_gemini_default_model_falls_back_to_3_5_flash(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u6", email="u6@example.com", password="pw")
+        user.profile.gemini_model_default = ""
+        user.profile.save(update_fields=["gemini_model_default"])
+        SystemConfigPointers.objects.all().delete()
+
+        self.assertEqual(llm._get_default_gemini_model_key(user=user), "gemini-3.5-flash")
+
+    def test_gemini_ssl_context_uses_custom_google_ca_bundle_when_set(self):
+        with patch.dict(os.environ, {"GOOGLE_API_CA_BUNDLE": "C:/ca/google.pem"}):
+            with patch("chats.services.llm.ssl.create_default_context") as mock_context:
+                llm._get_gemini_ssl_context()
+
+        mock_context.assert_called_once_with(cafile="C:/ca/google.pem")
+
     def test_anthropic_panes_parses_fenced_json_and_structured_fields(self):
         fenced_json = """```json
 {
@@ -159,3 +175,45 @@ class LLMProviderTests(TestCase):
         self.assertIn("- Option A -> angels", panes["visuals"])
         self.assertIn("Funding can help", panes["reasoning"])
         self.assertIn("## UK options", panes["output"])
+
+    def test_gemini_panes_uses_3_5_flash_and_parses_json_output(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u7", email="u7@example.com", password="pw")
+        user.profile.gemini_model_default = ""
+        user.profile.save(update_fields=["gemini_model_default"])
+        SystemConfigPointers.objects.all().delete()
+
+        gemini_payload = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": """{
+  "answer": "Gemini JSON OK.",
+  "key_info": ["Provider: Gemini", "Model: gemini-3.5-flash"],
+  "visuals": {"flow": "request -> json"},
+  "reasoning": "Parsed as structured panes.",
+  "output": "Ready"
+}"""
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        with patch("chats.services.llm._gemini_generate_content", return_value=gemini_payload) as mock_call:
+            panes = llm.generate_panes(
+                user_text="Return JSON panes.",
+                provider="gemini",
+                user=user,
+            )
+
+        self.assertEqual(mock_call.call_args.kwargs["model"], "gemini-3.5-flash")
+        self.assertEqual(panes["answer"], "Gemini JSON OK.")
+        self.assertIn("- Provider: Gemini", panes["key_info"])
+        self.assertIn("- Model: gemini-3.5-flash", panes["key_info"])
+        self.assertIn('"flow"', panes["visuals"])
+        self.assertEqual(panes["reasoning"], "Parsed as structured panes.")
+        self.assertEqual(panes["output"], "Ready")

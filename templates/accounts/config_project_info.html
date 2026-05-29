@@ -199,6 +199,78 @@
       </div>
     </div>
 
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="fw-semibold mb-2">Project summary</div>
+        <div class="row g-3">
+          <div class="col-12 col-lg-4">
+            <div class="small text-secondary">Name</div>
+            <div class="fw-semibold">{{ project.name }}</div>
+          </div>
+          <div class="col-12 col-lg-4">
+            <div class="small text-secondary">Purpose</div>
+            <div>{{ project.purpose|default:"-" }}</div>
+          </div>
+          <div class="col-12 col-lg-4">
+            <div class="small text-secondary">Description</div>
+            <div>{{ project.description|default:"-" }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <div class="fw-semibold">Content items</div>
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'accounts:chat_create' %}?project={{ project.id }}">New item</a>
+        </div>
+
+        {% if project_work_items or project_chats %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Type</th>
+                  <th>State</th>
+                  <th>Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for wi in project_work_items %}
+                  <tr>
+                    <td class="fw-semibold">
+                      <a class="text-decoration-none" href="{% url 'projects:derax_work_item_open' project.id wi.id %}">
+                        DERAX item {{ wi.display_number }}{% if wi.derax_label %}: {{ wi.derax_label|truncatechars:40 }}{% endif %}
+                      </a>
+                    </td>
+                    <td class="text-secondary">DERAX</td>
+                    <td class="text-secondary">Phase: {{ wi.active_phase }}</td>
+                    <td class="text-secondary small">{{ wi.updated_at|date:"Y-m-d H:i" }}</td>
+                  </tr>
+                {% endfor %}
+                {% for c in project_chats %}
+                  <tr>
+                    <td class="fw-semibold">
+                      <a class="text-decoration-none" href="{% url 'accounts:chat_detail' c.id %}">
+                        {{ c.title }}
+                      </a>
+                    </td>
+                    <td class="text-secondary">Chat</td>
+                    <td class="text-secondary">{{ c.turn_count }} turns</td>
+                    <td class="text-secondary small">{{ c.updated_at|date:"Y-m-d H:i" }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="small text-secondary">No content items yet.</div>
+        {% endif %}
+      </div>
+    </div>
+
     <!-- Collapsed drawers -->
     <div class="card shadow-sm">
       <div class="card-body">

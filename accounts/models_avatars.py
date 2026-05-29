@@ -90,7 +90,7 @@ class UserProfile(models.Model):
     anthropic_model_default = models.CharField(
         max_length=80,
         blank=True,
-        default="claude-sonnet-4-5-20250929",
+        default="claude-opus-4-8",
     )
     deepseek_model_default = models.CharField(
         max_length=80,
@@ -100,7 +100,7 @@ class UserProfile(models.Model):
     gemini_model_default = models.CharField(
         max_length=80,
         blank=True,
-        default="gemini-2.5-flash",
+        default="gemini-3.5-flash",
     )
 
     # -------- Legacy avatar fields (unchanged) --------

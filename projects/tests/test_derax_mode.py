@@ -93,7 +93,7 @@ class DeraxModeTests(TestCase):
         response = self.client.get(reverse("projects:derax_project_home", args=[project.id]))
         self.assertEqual(response.context["phase_input_text"], "Explore prompt text")
 
-    def test_project_home_redirects_to_derax_when_workflow_mode_derax(self):
+    def test_project_home_redirects_to_project_summary_when_workflow_mode_derax(self):
         project = Project.objects.create(
             name="DERAX Redirect Project",
             owner=self.owner,
@@ -105,7 +105,7 @@ class DeraxModeTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"],
-            reverse("projects:derax_project_home", args=[project.id]),
+            reverse("accounts:project_config_info", args=[project.id]),
         )
 
     def test_project_create_can_select_derax_workflow(self):
@@ -1015,6 +1015,263 @@ class DeraxModeTests(TestCase):
         payload = json.loads(str(list(work_item.derax_explore_history or [])[-1].get("text") or "{}"))
         self.assertFalse(any("not yet surfaced" in item.lower() for item in ((payload.get("explore") or {}).get("adjacent_ideas") or [])))
         self.assertTrue((payload.get("explore") or {}).get("risks"))
+
+    @staticmethod
+    def _explore_payload_json(*, adjacent, risks, tradeoffs, reframes, destination="Destination text"):
+        return json.dumps(
+            {
+                "meta": {
+                    "tko_id": "tko_test",
+                    "derax_version": "1.0",
+                    "phase": "EXPLORE",
+                    "timestamp": "2026-02-24T00:00:00Z",
+                    "source_chat_id": "",
+                    "source_turn_id": "",
+                },
+                "canonical_summary": "",
+                "intent": {
+                    "destination": destination,
+                    "success_criteria": [],
+                    "constraints": [],
+                    "non_goals": [],
+                    "assumptions": [],
+                    "open_questions": [],
+                },
+                "explore": {
+                    "adjacent_ideas": list(adjacent),
+                    "risks": list(risks),
+                    "tradeoffs": list(tradeoffs),
+                    "reframes": list(reframes),
+                },
+                "parked_for_later": {"items": []},
+                "artefacts": {"proposed": [], "generated": [], "requirements": {}, "intake": {}},
+                "validation": {"schema_ok": "", "errors": []},
+            }
+        )
+
+    def test_explore_follow_up_turn_adds_to_existing_content(self):
+        project = Project.objects.create(
+            name="DERAX Explore Additive Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        self.client.post(url, {"action": "save_end_in_mind", "end_in_mind": "Destination text"})
+        self.client.post(url, {"action": "lock_define_and_explore"})
+
+        first = self._explore_payload_json(
+            adjacent=["Idea one"],
+            risks=["Risk one"],
+            tradeoffs=["Tradeoff one"],
+            reframes=["Reframe one"],
+        )
+        second = self._explore_payload_json(
+            adjacent=["Idea two"],
+            risks=["Risk two"],
+            tradeoffs=["Tradeoff two"],
+            reframes=["Reframe two"],
+        )
+        with patch("projects.views_derax.generate_text", side_effect=[first, second]):
+            self.client.post(
+                url,
+                {"action": "explore_llm_turn", "phase_user_input": "First pass."},
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
+            self.client.post(
+                url,
+                {"action": "explore_llm_turn", "phase_user_input": "Add another angle."},
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
+
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        payload = json.loads(str(list(work_item.derax_explore_history or [])[-1].get("text") or "{}"))
+        explore = payload.get("explore") or {}
+        # The second turn must retain the first turn's items and add the new ones.
+        self.assertEqual(explore.get("adjacent_ideas"), ["Idea one", "Idea two"])
+        self.assertEqual(explore.get("risks"), ["Risk one", "Risk two"])
+        self.assertEqual(explore.get("tradeoffs"), ["Tradeoff one", "Tradeoff two"])
+        self.assertEqual(explore.get("reframes"), ["Reframe one", "Reframe two"])
+
+    @staticmethod
+    def _pack_payload_json(*, phase, success, constraints, risks, tradeoffs, reframes, destination="Destination text"):
+        return json.dumps(
+            {
+                "meta": {
+                    "tko_id": "tko_test",
+                    "derax_version": "1.0",
+                    "phase": phase,
+                    "timestamp": "2026-02-24T00:00:00Z",
+                    "source_chat_id": "",
+                    "source_turn_id": "",
+                },
+                "canonical_summary": "Stable destination summary",
+                "intent": {
+                    "destination": destination,
+                    "success_criteria": list(success),
+                    "constraints": list(constraints),
+                    "non_goals": ["No scope creep"],
+                    "assumptions": ["Team available"],
+                    "open_questions": ["What is the budget?"],
+                },
+                "explore": {
+                    "adjacent_ideas": [],
+                    "risks": list(risks),
+                    "tradeoffs": list(tradeoffs),
+                    "reframes": list(reframes),
+                },
+                "parked_for_later": {"items": []},
+                "artefacts": {"proposed": [], "generated": [], "requirements": {}, "intake": {}},
+                "validation": {"schema_ok": "", "errors": []},
+            }
+        )
+
+    @staticmethod
+    def _execute_payload_json(*, proposed):
+        return json.dumps(
+            {
+                "meta": {
+                    "tko_id": "tko_test",
+                    "derax_version": "1.0",
+                    "phase": "EXECUTE",
+                    "timestamp": "2026-02-24T00:00:00Z",
+                    "source_chat_id": "",
+                    "source_turn_id": "",
+                },
+                "canonical_summary": "",
+                "intent": {
+                    "destination": "",
+                    "success_criteria": [],
+                    "constraints": [],
+                    "non_goals": [],
+                    "assumptions": [],
+                    "open_questions": [],
+                },
+                "explore": {"adjacent_ideas": [], "risks": [], "tradeoffs": [], "reframes": []},
+                "parked_for_later": {"items": []},
+                "artefacts": {
+                    "proposed": list(proposed),
+                    "generated": [],
+                    "requirements": {},
+                    "intake": {},
+                },
+                "validation": {"schema_ok": "", "errors": []},
+            }
+        )
+
+    def test_refine_follow_up_turn_adds_to_existing_content(self):
+        from projects.views_derax import _latest_payload_from_runs
+
+        project = Project.objects.create(
+            name="DERAX Refine Additive Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        self.client.get(url)  # create the primary work item
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        work_item.active_phase = WorkItem.PHASE_REFINE
+        work_item.save(update_fields=["active_phase"])
+
+        first = self._pack_payload_json(
+            phase="REFINE",
+            success=["Success one"],
+            constraints=["Constraint one"],
+            risks=["Risk one"],
+            tradeoffs=["Tradeoff one"],
+            reframes=["Reframe one"],
+        )
+        second = self._pack_payload_json(
+            phase="REFINE",
+            success=["Success two"],
+            constraints=["Constraint two"],
+            risks=["Risk two"],
+            tradeoffs=["Tradeoff two"],
+            reframes=["Reframe two"],
+        )
+        with patch("projects.views_derax.generate_text", side_effect=[first, second]):
+            self.client.post(url, {"action": "refine_llm_turn", "phase_user_input": "First pass."})
+            self.client.post(url, {"action": "refine_llm_turn", "phase_user_input": "Add more."})
+
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_REFINE)
+        self.assertEqual((payload.get("intent") or {}).get("success_criteria"), ["Success one", "Success two"])
+        self.assertEqual((payload.get("intent") or {}).get("constraints"), ["Constraint one", "Constraint two"])
+        self.assertEqual((payload.get("explore") or {}).get("risks"), ["Risk one", "Risk two"])
+        self.assertEqual((payload.get("explore") or {}).get("tradeoffs"), ["Tradeoff one", "Tradeoff two"])
+
+    def test_approve_follow_up_turn_adds_to_existing_content(self):
+        from projects.views_derax import _latest_payload_from_runs
+
+        project = Project.objects.create(
+            name="DERAX Approve Additive Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        self.client.get(url)  # create the primary work item
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        work_item.active_phase = WorkItem.PHASE_APPROVE
+        work_item.save(update_fields=["active_phase"])
+
+        first = self._pack_payload_json(
+            phase="APPROVE",
+            success=["Success one"],
+            constraints=["Constraint one"],
+            risks=["Risk one"],
+            tradeoffs=["Tradeoff one"],
+            reframes=["Reframe one"],
+        )
+        second = self._pack_payload_json(
+            phase="APPROVE",
+            success=["Success two"],
+            constraints=["Constraint two"],
+            risks=["Risk two"],
+            tradeoffs=["Tradeoff two"],
+            reframes=["Reframe two"],
+        )
+        with patch("projects.views_derax.generate_text", side_effect=[first, second]):
+            self.client.post(url, {"action": "approve_llm_turn", "phase_user_input": "First pass."})
+            self.client.post(url, {"action": "approve_llm_turn", "phase_user_input": "Add more."})
+
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_APPROVE)
+        self.assertEqual((payload.get("intent") or {}).get("success_criteria"), ["Success one", "Success two"])
+        self.assertEqual((payload.get("explore") or {}).get("risks"), ["Risk one", "Risk two"])
+        self.assertEqual((payload.get("explore") or {}).get("reframes"), ["Reframe one", "Reframe two"])
+
+    def test_execute_follow_up_turn_adds_to_existing_proposed_artefacts(self):
+        from projects.views_derax import _latest_payload_from_runs
+
+        project = Project.objects.create(
+            name="DERAX Execute Additive Project",
+            owner=self.owner,
+            workflow_mode=Project.WorkflowMode.DERAX_WORK,
+        )
+        self.client.force_login(self.owner)
+        url = reverse("projects:derax_project_home", args=[project.id])
+        self.client.get(url)  # create the primary work item
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        work_item.active_phase = WorkItem.PHASE_EXECUTE
+        work_item.save(update_fields=["active_phase"])
+
+        first = self._execute_payload_json(
+            proposed=[{"kind": "workbook", "title": "Session Workbook", "notes": "Why: align"}],
+        )
+        second = self._execute_payload_json(
+            proposed=[{"kind": "checklist", "title": "Prep Checklist", "notes": "Why: ready"}],
+        )
+        with patch("projects.views_derax.generate_text", side_effect=[first, second]):
+            self.client.post(url, {"action": "execute_llm_turn", "phase_user_input": "Propose a workbook."})
+            self.client.post(url, {"action": "execute_llm_turn", "phase_user_input": "Also a checklist."})
+
+        work_item = WorkItem.objects.filter(project=project, is_primary=True).first()
+        payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_EXECUTE)
+        titles = [str((row or {}).get("title") or "") for row in ((payload.get("artefacts") or {}).get("proposed") or [])]
+        self.assertIn("Session Workbook", titles)
+        self.assertIn("Prep Checklist", titles)
 
     def test_lock_explore_and_move_to_refine(self):
         project = Project.objects.create(

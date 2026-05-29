@@ -8,12 +8,14 @@ import json
 import logging
 import os
 import re
+import ssl
 import urllib.request
 import urllib.parse
 import anthropic
 from typing import Any, Callable, Dict, List, Optional
 
 from django.conf import settings
+import certifi
 from dotenv import dotenv_values
 
 from chats.services.contracts.pipeline import ContractContext, build_system_blocks
@@ -31,6 +33,12 @@ _ALLOWED_PROVIDERS = {"openai", "anthropic", "deepseek", "gemini", "copilot"}
 _PANE_KEYS = ("answer", "key_info", "visuals", "reasoning", "output")
 _COPILOT_SPEC_OK: Optional[bool] = None
 _LOGGER = logging.getLogger(__name__)
+
+# Anthropic requires an explicit max_tokens (unlike the OpenAI Responses API).
+# A full DERAX payload is only a few thousand tokens; 8192 gives generous
+# headroom while staying within the output limit of every Claude model, so it
+# never truncates a response and never errors on a smaller model.
+_ANTHROPIC_MAX_TOKENS = 8192
 
 
 def _normalise_provider(value: Optional[str]) -> str:
@@ -198,6 +206,11 @@ def _get_gemini_api_key() -> str:
     return api_key
 
 
+def _get_gemini_ssl_context() -> ssl.SSLContext:
+    ca_file = str(os.getenv("GOOGLE_API_CA_BUNDLE") or "").strip() or certifi.where()
+    return ssl.create_default_context(cafile=ca_file)
+
+
 def _get_default_gemini_model_key(*, user: Any = None) -> str:
     profile = getattr(user, "profile", None) if user is not None else None
     user_value = (getattr(profile, "gemini_model_default", "") or "").strip()
@@ -206,7 +219,7 @@ def _get_default_gemini_model_key(*, user: Any = None) -> str:
     p = SystemConfigPointers.objects.first()
     config_value = getattr(p, "gemini_model_default", "") if p is not None else ""
     env_value = os.getenv("GEMINI_MODEL", "")
-    return (config_value or env_value or "gemini-2.5-flash").strip()
+    return (config_value or env_value or "gemini-3.5-flash").strip()
 
 
 def _data_url_to_gemini_image_part(data_url: str) -> Optional[Dict[str, Any]]:
@@ -300,7 +313,7 @@ def _gemini_generate_content(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=60, context=_get_gemini_ssl_context()) as resp:
         raw = resp.read().decode("utf-8")
     data = json.loads(raw or "{}")
     if not isinstance(data, dict):
@@ -562,7 +575,7 @@ def _get_default_anthropic_model_key(*, user: Any = None) -> str:
     p = SystemConfigPointers.objects.first()
     config_value = getattr(p, "anthropic_model_default", "") if p is not None else ""
     env_value = os.getenv("ANTHROPIC_MODEL", "")
-    return (config_value or env_value or "claude-sonnet-4-5-20250929").strip()
+    return (config_value or env_value or "claude-opus-4-8").strip()
 
 
 def _resolve_anthropic_model(force_model: Optional[str], *, user: Any = None) -> str:
@@ -692,7 +705,7 @@ def _call_llm_raw_text(
         anthropic_messages.append({"role": "user", "content": user_content})
         response = _get_anthropic_client().messages.create(
             model=_resolve_anthropic_model(force_model, user=user),
-            max_tokens=4096,
+            max_tokens=_ANTHROPIC_MAX_TOKENS,
             system="\n\n".join([b for b in system_blocks if b]).strip(),
             messages=anthropic_messages,
         )
@@ -860,7 +873,7 @@ def generate_panes(
 
         response = _get_anthropic_client().messages.create(
             model=_resolve_anthropic_model(force_model, user=user),
-            max_tokens=2048,
+            max_tokens=_ANTHROPIC_MAX_TOKENS,
             system=system_text,
             messages=anthropic_messages,
         )
@@ -1162,7 +1175,7 @@ def generate_text(
                 clean_messages.append({"role": role, "content": text})
         response = _get_anthropic_client().messages.create(
             model=_get_default_anthropic_model_key(user=user),
-            max_tokens=2048,
+            max_tokens=_ANTHROPIC_MAX_TOKENS,
             system="\n\n".join([b for b in system_blocks if b]).strip(),
             messages=clean_messages,
         )

@@ -75,7 +75,7 @@
     <div class="card">
         <div class="card-body">
 
-            {% if page_obj.object_list %}
+            {% if page_obj.object_list or work_items %}
               <div class="table-responsive">
                 <table class="table table-sm align-middle mb-0">
                   <thead>
@@ -107,6 +107,19 @@
                   </thead>
 
                   <tbody>
+                    {% for wi in work_items %}
+                    <tr>
+                        <td class="fw-semibold">
+                          <a class="rw-project-chat-link" href="{% url 'projects:derax_work_item_open' active_project.id wi.id %}" title="Open DERAX work item">
+                            DERAX work item {{ wi.display_number }}{% if wi.derax_label %}: {{ wi.derax_label|truncatechars:40 }}{% endif %}
+                          </a>
+                        </td>
+                        <td class="text-secondary">{{ active_project.owner.username }}</td>
+                        <td class="text-secondary small">{{ wi.updated_at }}</td>
+                        <td class="text-secondary small">Phase: {{ wi.active_phase }}</td>
+                        <td></td>
+                    </tr>
+                    {% endfor %}
                     {% for c in page_obj.object_list %}
                     <tr>
                         <td class="fw-semibold">

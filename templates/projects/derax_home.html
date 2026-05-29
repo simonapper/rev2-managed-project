@@ -74,7 +74,8 @@
       <div class="card mb-3">
         <div class="card-body">
           <div class="d-flex gap-3 flex-wrap">
-            <div><strong>WorkItem:</strong> {{ work_item.id }}</div>
+            <div><strong>DERAX item:</strong> {{ derax_item_number }}</div>
+            <div class="text-muted"><strong>WorkItem id:</strong> {{ work_item.id }}</div>
           </div>
           <div class="mt-2 derax-phase-map">
             {% for row in phase_route_map %}
@@ -152,6 +153,16 @@
             {% csrf_token %}
             <input type="hidden" name="action" value="rewrite_stage_output">
             <input type="hidden" name="rewrite_mode" value="TABLE">
+          </form>
+          <form method="post" class="d-none" id="stage-fields-docx-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="export_stage_fields">
+            <input type="hidden" name="export_format" value="docx">
+          </form>
+          <form method="post" class="d-none" id="stage-fields-xlsx-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="export_stage_fields">
+            <input type="hidden" name="export_format" value="xlsx">
           </form>
 
           {% if not is_refine_phase %}
@@ -417,8 +428,10 @@
                 </div>
                 {% endif %}
               </div>
-              <div class="d-flex gap-2 align-items-center mt-2">
+              <div class="d-flex gap-2 align-items-center flex-wrap mt-2">
                 <button type="submit" id="btn-save-stage-structured" class="btn btn-sm btn-outline-secondary">Save fields</button>
+                <button type="submit" form="stage-fields-docx-form" class="btn btn-sm btn-outline-secondary">Export fields → DOCX</button>
+                <button type="submit" form="stage-fields-xlsx-form" class="btn btn-sm btn-outline-secondary">Export fields → XLSX</button>
                 <span id="stage-structured-status" class="small text-muted"></span>
               </div>
             </form>
@@ -474,6 +487,16 @@
             <input type="hidden" name="action" value="import_derax_from_document">
             <input type="hidden" name="import_target_phase" value="REFINE">
           </form>
+          <form method="post" class="d-none" id="stage-fields-docx-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="export_stage_fields">
+            <input type="hidden" name="export_format" value="docx">
+          </form>
+          <form method="post" class="d-none" id="stage-fields-xlsx-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="export_stage_fields">
+            <input type="hidden" name="export_format" value="xlsx">
+          </form>
           <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
               <button type="submit" form="refine-llm-turn-form" id="btn-run-refine-turn" class="btn btn-sm btn-outline-primary">Refine</button>
               <span id="refine-turn-status" class="small text-muted"></span>
@@ -488,6 +511,30 @@
               <button type="submit" name="action" value="export_refine_response_draft" class="btn btn-sm btn-outline-secondary">Export</button>
             </div>
           </form>
+          <form method="post" class="d-none" id="stage-rewrite-clarify-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="rewrite_stage_output">
+            <input type="hidden" name="rewrite_mode" value="CLARIFY">
+          </form>
+          <form method="post" class="d-none" id="stage-rewrite-shorten-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="rewrite_stage_output">
+            <input type="hidden" name="rewrite_mode" value="SHORTEN">
+          </form>
+          <form method="post" class="d-none" id="stage-rewrite-table-form">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="rewrite_stage_output">
+            <input type="hidden" name="rewrite_mode" value="TABLE">
+          </form>
+          <div class="d-flex gap-1 align-items-center flex-wrap mt-2 mb-2">
+            <button type="submit" form="stage-rewrite-clarify-form" id="btn-stage-rewrite-clarify" class="btn btn-sm btn-outline-secondary">Clarify</button>
+            <button type="submit" form="stage-rewrite-shorten-form" id="btn-stage-rewrite-shorten" class="btn btn-sm btn-outline-secondary">Shorten</button>
+            <button type="submit" form="stage-rewrite-table-form" id="btn-stage-rewrite-table" class="btn btn-sm btn-outline-secondary">Table view</button>
+            <span id="stage-rewrite-status" class="small text-muted ms-2"></span>
+          </div>
+          <div id="stage-rewrite-history-container">
+            {% include "projects/_derax_presentation_history.html" with stage_rewrite_history=stage_rewrite_history active_phase_upper=active_phase_upper %}
+          </div>
           <div class="d-flex gap-2 align-items-center flex-wrap mb-2">
             {% if refine_phase_locked %}
             <button type="button" class="btn btn-sm btn-outline-secondary" disabled>REFINE locked</button>
@@ -558,8 +605,10 @@
                     <textarea id="id_refine_parked_items" name="refine_parked_items" class="form-control" rows="3">{{ refine_editor_parked_items }}</textarea>
                   </div>
                 </div>
-                <div class="d-flex gap-2 align-items-center mt-2">
+                <div class="d-flex gap-2 align-items-center flex-wrap mt-2">
                   <button type="submit" id="btn-save-refine-structured" class="btn btn-sm btn-outline-secondary">Save fields</button>
+                  <button type="submit" form="stage-fields-docx-form" class="btn btn-sm btn-outline-secondary">Export fields → DOCX</button>
+                  <button type="submit" form="stage-fields-xlsx-form" class="btn btn-sm btn-outline-secondary">Export fields → XLSX</button>
                   <span id="refine-structured-status" class="small text-muted"></span>
                 </div>
               </form>
@@ -676,6 +725,26 @@
               {% if explore_vm.has_structured %}
                 <div class="small mb-1"><strong>Destination</strong></div>
                 <div class="small mb-2" style="white-space: pre-wrap;">{{ explore_vm.destination|default:"-" }}</div>
+                {% if explore_vm.success_criteria %}
+                  <div class="small mb-1"><strong>Success criteria</strong></div>
+                  <ul class="small">{% for item in explore_vm.success_criteria %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if explore_vm.constraints %}
+                  <div class="small mb-1"><strong>Constraints</strong></div>
+                  <ul class="small">{% for item in explore_vm.constraints %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if explore_vm.non_goals %}
+                  <div class="small mb-1"><strong>Non-goals</strong></div>
+                  <ul class="small">{% for item in explore_vm.non_goals %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if explore_vm.assumptions %}
+                  <div class="small mb-1"><strong>Assumptions</strong></div>
+                  <ul class="small">{% for item in explore_vm.assumptions %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+                {% if explore_vm.open_questions %}
+                  <div class="small mb-1"><strong>Open questions</strong></div>
+                  <ul class="small">{% for item in explore_vm.open_questions %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
                 {% if explore_vm.adjacent_ideas %}
                   <div class="small mb-1"><strong>Adjacent ideas</strong></div>
                   <ul class="small">
@@ -702,11 +771,15 @@
                 {% endif %}
                 {% if explore_vm.reframes %}
                   <div class="small mb-1"><strong>Reframes</strong></div>
-                  <ul class="small mb-0">
+                  <ul class="small">
                     {% for item in explore_vm.reframes %}
                       <li>{{ item }}</li>
                     {% endfor %}
                   </ul>
+                {% endif %}
+                {% if explore_vm.parked_items %}
+                  <div class="small mb-1"><strong>Parked for later</strong></div>
+                  <ul class="small mb-0">{% for item in explore_vm.parked_items %}<li>{{ item }}</li>{% endfor %}</ul>
                 {% endif %}
               {% elif explore_latest_text %}
                 <div class="small text-muted mb-1">No structured EXPLORE JSON payload found. Showing latest EXPLORE output text.</div>

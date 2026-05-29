@@ -1340,6 +1340,135 @@ def _finalise_explore_payload(*, payload: dict, user_input: str, fallback_destin
     return out
 
 
+def _is_explore_placeholder_value(value: str) -> bool:
+    lowered = str(value or "").strip().lower()
+    if not lowered:
+        return True
+    return (
+        ("not yet surfaced" in lowered)
+        or ("placeholder" in lowered)
+        or ("not provided" in lowered)
+        or ("not supplied" in lowered)
+    )
+
+
+def _union_pack_values(prior_vals: object, new_vals: object) -> list[str]:
+    """Union two string lists case-insensitively, prior items first, deduped.
+    Placeholder strings are only kept when there is nothing real to show."""
+    real: list[str] = []
+    placeholder: list[str] = []
+    seen: set[str] = set()
+    for value in _as_list_of_str(prior_vals) + _as_list_of_str(new_vals):
+        key = value.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        if _is_explore_placeholder_value(value):
+            placeholder.append(value)
+        else:
+            real.append(value)
+    return real or placeholder
+
+
+def _merge_parked_items(prior: object, new: object) -> list[dict]:
+    """Union parked items by title (case-insensitive), prior first."""
+    merged: list[dict] = []
+    seen_titles: set[str] = set()
+    for row in list(prior or []) + list(new or []):
+        if not isinstance(row, dict):
+            continue
+        title = str(row.get("title") or "").strip()
+        detail = str(row.get("detail") or "").strip()
+        dedupe_key = title.lower() or detail.lower()
+        if not dedupe_key or dedupe_key in seen_titles:
+            continue
+        seen_titles.add(dedupe_key)
+        merged.append({"title": title, "detail": detail})
+    return merged
+
+
+def _merge_destination_pack_payload(*, prior: dict, new: dict) -> dict:
+    """Union prior and new destination-pack content (intent + explore + parked +
+    canonical_summary) so a follow-up comment adds to, rather than replaces, what
+    is already there. Shared by EXPLORE, REFINE and APPROVE, which share this
+    payload shape. Lists are deduped case-insensitively (prior items first)."""
+    prior_p = _as_dict(prior)
+    out = _as_dict(new)
+    if not prior_p:
+        return out
+
+    if not str(out.get("canonical_summary") or "").strip():
+        out["canonical_summary"] = str(prior_p.get("canonical_summary") or "").strip()
+
+    intent = _as_dict(out.get("intent"))
+    prior_intent = _as_dict(prior_p.get("intent"))
+    # Keep the latest destination if present, else carry the prior one forward.
+    if not str(intent.get("destination") or "").strip():
+        intent["destination"] = str(prior_intent.get("destination") or "").strip()
+    for key in ("success_criteria", "constraints", "non_goals", "assumptions", "open_questions"):
+        intent[key] = _union_pack_values(prior_intent.get(key), intent.get(key))
+    out["intent"] = intent
+
+    explore = _as_dict(out.get("explore"))
+    prior_explore = _as_dict(prior_p.get("explore"))
+    for key in ("adjacent_ideas", "risks", "tradeoffs", "reframes"):
+        explore[key] = _union_pack_values(prior_explore.get(key), explore.get(key))
+    out["explore"] = explore
+
+    parked = _as_dict(out.get("parked_for_later"))
+    parked["items"] = _merge_parked_items(
+        _as_dict(prior_p.get("parked_for_later")).get("items"),
+        _as_dict(out.get("parked_for_later")).get("items"),
+    )
+    out["parked_for_later"] = parked
+
+    return out
+
+
+def _merge_execute_payload(*, prior: dict, new: dict) -> dict:
+    """Union prior and new EXECUTE content so a follow-up comment adds to the
+    proposed artefacts already on the work item rather than replacing them.
+    Proposed artefacts are deduped by (kind, title) case-insensitively, prior
+    first. Generated rows, requirements and intake are left to the new payload
+    (they are system-recomputed downstream)."""
+    prior_p = _as_dict(prior)
+    out = _as_dict(new)
+    if not prior_p:
+        return out
+
+    prior_artefacts = _as_dict(prior_p.get("artefacts"))
+    new_artefacts = _as_dict(out.get("artefacts"))
+    merged_proposed: list[dict] = []
+    seen: set[str] = set()
+    for row in list(prior_artefacts.get("proposed") or []) + list(new_artefacts.get("proposed") or []):
+        row_dict = _as_dict(row) if isinstance(row, dict) else {"title": str(row or "").strip()}
+        kind = str(row_dict.get("kind") or "").strip()
+        title = str(row_dict.get("title") or "").strip()
+        dedupe_key = (kind.lower(), title.lower())
+        if not (kind or title) or dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        merged_proposed.append(row_dict)
+    new_artefacts["proposed"] = merged_proposed
+    out["artefacts"] = new_artefacts
+
+    intent = _as_dict(out.get("intent"))
+    prior_intent = _as_dict(prior_p.get("intent"))
+    intent["open_questions"] = _union_pack_values(
+        prior_intent.get("open_questions"), intent.get("open_questions")
+    )[:3]
+    out["intent"] = intent
+
+    parked = _as_dict(out.get("parked_for_later"))
+    parked["items"] = _merge_parked_items(
+        _as_dict(prior_p.get("parked_for_later")).get("items"),
+        _as_dict(out.get("parked_for_later")).get("items"),
+    )
+    out["parked_for_later"] = parked
+
+    return out
+
+
 def _phase_payload_recovered(payload: dict, *, phase: str) -> tuple[bool, dict, str]:
     coerced = _coerce_phase_payload_any(payload, phase=phase)
     if str(phase or "").strip().upper() == WorkItem.PHASE_EXPLORE:
@@ -1967,20 +2096,84 @@ def _latest_refine_response_text(work_item: WorkItem) -> str:
     return ""
 
 
+def _backfill_explore_intent_for_display(*, explore_payload: dict, define_payload: dict) -> dict:
+    """Return a copy of the EXPLORE payload with intent fields (success criteria,
+    constraints, non-goals, assumptions, open questions) and parked items carried
+    forward from the latest DEFINE payload wherever EXPLORE leaves them empty.
+    Display only -- the stored EXPLORE payload is never modified."""
+    explore_p = _as_dict(explore_payload)
+    define_p = _as_dict(define_payload)
+    if not explore_p or not define_p:
+        return explore_p
+    merged = copy.deepcopy(explore_p)
+    define_intent = _as_dict(define_p.get("intent"))
+    intent = _as_dict(merged.get("intent"))
+    if not str(intent.get("destination") or "").strip():
+        intent["destination"] = str(define_intent.get("destination") or "").strip()
+    for key in ("success_criteria", "constraints", "non_goals", "assumptions", "open_questions"):
+        if not _as_list_of_str(intent.get(key)):
+            carried = _as_list_of_str(define_intent.get(key))
+            if carried:
+                intent[key] = carried
+    merged["intent"] = intent
+    if not list(_as_dict(merged.get("parked_for_later")).get("items") or []):
+        define_parked = list(_as_dict(define_p.get("parked_for_later")).get("items") or [])
+        if define_parked:
+            parked = _as_dict(merged.get("parked_for_later"))
+            parked["items"] = define_parked
+            merged["parked_for_later"] = parked
+    return merged
+
+
 def _explore_view_model(payload: dict) -> dict:
     p = payload if isinstance(payload, dict) else {}
     destination = _str_from_payload(p, ("intent", "destination"), ("core", "end_in_mind"))
+    success_criteria = _list_from_payload(p, ("intent", "success_criteria"), ("core", "destination_conditions"))
+    constraints = _list_from_payload(p, ("intent", "constraints"), ("core", "assumptions"))
+    non_goals = _list_from_payload(p, ("intent", "non_goals"), ("core", "non_goals"))
+    assumptions = _list_from_payload(p, ("intent", "assumptions"), ("core", "assumptions"))
+    open_questions = _list_from_payload(p, ("intent", "open_questions"), ("core", "ambiguities"))
     adjacent_ideas = _list_from_payload(p, ("explore", "adjacent_ideas"), ("core", "adjacent_angles"))
     risks = _list_from_payload(p, ("explore", "risks"), ("core", "risks"))
     tradeoffs = _list_from_payload(p, ("explore", "tradeoffs"), ("core", "scope_changes"))
     reframes = _list_from_payload(p, ("explore", "reframes"), ("core", "ambiguities"))
-    has_structured = bool(destination or adjacent_ideas or risks or tradeoffs or reframes)
+    parked_items = []
+    for item in list((p.get("parked_for_later") or {}).get("items") or []):
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        detail = str(item.get("detail") or "").strip()
+        if title and detail:
+            parked_items.append(f"{title}: {detail}")
+        elif title:
+            parked_items.append(title)
+        elif detail:
+            parked_items.append(detail)
+    has_structured = bool(
+        destination
+        or success_criteria
+        or constraints
+        or non_goals
+        or assumptions
+        or open_questions
+        or adjacent_ideas
+        or risks
+        or tradeoffs
+        or reframes
+        or parked_items
+    )
     return {
         "destination": destination,
+        "success_criteria": success_criteria,
+        "constraints": constraints,
+        "non_goals": non_goals,
+        "assumptions": assumptions,
+        "open_questions": open_questions,
         "adjacent_ideas": adjacent_ideas,
         "risks": risks,
         "tradeoffs": tradeoffs,
         "reframes": reframes,
+        "parked_items": parked_items,
         "has_structured": has_structured,
     }
 
@@ -2648,6 +2841,39 @@ def derax_project_home(request, project_id: int):
                 messages.error(request, f"Presentation export failed: {exc}")
                 return redirect("projects:derax_project_home", project_id=project.id)
             messages.success(request, f"Presentation view exported: {doc.original_name or doc.title}")
+            return redirect("projects:derax_project_home", project_id=project.id)
+
+        if action == "export_stage_fields":
+            phase = str(work_item.active_phase or WorkItem.PHASE_DEFINE).strip().upper()
+            export_format = str(request.POST.get("export_format") or "docx").strip().lower()
+            if export_format not in {"docx", "xlsx"}:
+                messages.error(request, "Unsupported export format.")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            payload = _latest_payload_for_phase(work_item, phase)
+            if not payload:
+                payload = empty_payload(phase)
+                payload["intent"]["destination"] = str(work_item.intent_raw or "").strip()
+            # Mirror what the EXPLORE fields panel shows: carry DEFINE intent forward.
+            if phase == WorkItem.PHASE_EXPLORE:
+                payload = _backfill_explore_intent_for_display(
+                    explore_payload=payload,
+                    define_payload=_latest_payload_for_phase(work_item, WorkItem.PHASE_DEFINE),
+                )
+            text = _build_editable_markdown(payload, phase=phase)
+            try:
+                doc = _persist_presentation_export(
+                    project=project,
+                    work_item=work_item,
+                    user=request.user,
+                    phase=phase,
+                    mode="FIELDS",
+                    text=text,
+                    export_format=export_format,
+                )
+            except Exception as exc:
+                messages.error(request, f"Fields export failed: {exc}")
+                return redirect("projects:derax_project_home", project_id=project.id)
+            messages.success(request, f"{phase} fields exported: {doc.original_name or doc.title}")
             return redirect("projects:derax_project_home", project_id=project.id)
 
         if action == "promote_stage_rewrite":
@@ -3393,7 +3619,10 @@ def derax_project_home(request, project_id: int):
                     is_derax=True,
                     legacy_system_blocks=[
                         "EXPLORE TURN MODE: Challenge and stress-test the destination only. "
-                        "Do not produce route plans, tasks, timelines, or implementation structures."
+                        "Do not produce route plans, tasks, timelines, or implementation structures.",
+                        "ADDITIVE TURN: The user's latest message extends the existing EXPLORE pass. "
+                        "Treat the prior adjacent ideas, risks, trade-offs, and reframes as already kept. "
+                        "Return new items that build on the user's comment; do not restate prior items verbatim.",
                     ],
                     include_envelope=False,
                     strict_json=False,
@@ -3519,6 +3748,17 @@ def derax_project_home(request, project_id: int):
                         user_input=user_input,
                         fallback_destination=str(work_item.intent_raw or "").strip(),
                     )
+                    # Additive turn: union the new content with what EXPLORE already
+                    # holds so a follow-up comment extends the prior pass instead of
+                    # replacing it. (work_item.derax_explore_history is not mutated
+                    # until persistence below, so this reads the prior payload.)
+                    prior_explore_payload = _latest_payload_for_phase(
+                        work_item, WorkItem.PHASE_EXPLORE
+                    )
+                    payload_or_error = _merge_destination_pack_payload(
+                        prior=prior_explore_payload,
+                        new=_as_dict(payload_or_error),
+                    )
                 if not ok:
                     raise ValueError("DERAX EXPLORE response invalid JSON schema: " + str(payload_or_error or ""))
             except Exception as exc:
@@ -3613,7 +3853,10 @@ def derax_project_home(request, project_id: int):
                     is_derax=True,
                     legacy_system_blocks=[
                         "REFINE TURN MODE: Synthesize and tighten destination pack only. "
-                        "Do not produce route plans, task breakdowns, timelines, or implementation structures."
+                        "Do not produce route plans, task breakdowns, timelines, or implementation structures.",
+                        "ADDITIVE TURN: The user's latest message extends the existing REFINE pack. "
+                        "Treat the prior intent fields, success criteria, constraints, risks, and trade-offs as already kept. "
+                        "Return new items that build on the user's comment; do not restate prior items verbatim.",
                     ],
                     include_envelope=False,
                     strict_json=False,
@@ -3693,6 +3936,14 @@ def derax_project_home(request, project_id: int):
                                 payload_or_error = recovered_payload
                             else:
                                 payload_or_error = recovered_error or payload_or_error
+                if ok:
+                    # Additive turn: union the new content with the prior REFINE
+                    # pack so a follow-up comment extends it instead of replacing.
+                    prior_refine_payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_REFINE)
+                    payload_or_error = _merge_destination_pack_payload(
+                        prior=prior_refine_payload,
+                        new=_as_dict(payload_or_error),
+                    )
                 if not ok:
                     debug_shape = _payload_shape_debug(str(llm_text or ""))
                     raise ValueError(
@@ -3774,7 +4025,10 @@ def derax_project_home(request, project_id: int):
                     is_derax=True,
                     legacy_system_blocks=[
                         "APPROVE TURN MODE: Validate stability only. "
-                        "Do not produce route plans, task breakdowns, timelines, or implementation structures."
+                        "Do not produce route plans, task breakdowns, timelines, or implementation structures.",
+                        "ADDITIVE TURN: The user's latest message extends the existing APPROVE pack. "
+                        "Treat the prior intent fields, success criteria, constraints, risks, and trade-offs as already kept. "
+                        "Return new items that build on the user's comment; do not restate prior items verbatim.",
                     ],
                     include_envelope=False,
                     strict_json=False,
@@ -3854,6 +4108,14 @@ def derax_project_home(request, project_id: int):
                                 payload_or_error = recovered_payload
                             else:
                                 payload_or_error = recovered_error or payload_or_error
+                if ok:
+                    # Additive turn: union the new content with the prior APPROVE
+                    # pack so a follow-up comment extends it instead of replacing.
+                    prior_approve_payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_APPROVE)
+                    payload_or_error = _merge_destination_pack_payload(
+                        prior=prior_approve_payload,
+                        new=_as_dict(payload_or_error),
+                    )
                 if not ok:
                     raise ValueError("DERAX APPROVE response invalid JSON schema: " + str(payload_or_error or ""))
             except Exception as exc:
@@ -3930,6 +4192,12 @@ def derax_project_home(request, project_id: int):
                     user_text=user_input,
                     effective_context=effective_context,
                     is_derax=True,
+                    legacy_system_blocks=[
+                        "ADDITIVE TURN: The user's latest message extends the existing EXECUTE intake. "
+                        "Treat the artefacts already proposed as kept. "
+                        "Return new artefacts.proposed entries that build on the user's comment; "
+                        "do not restate artefacts already proposed.",
+                    ],
                     include_envelope=False,
                     strict_json=False,
                 )
@@ -4001,6 +4269,11 @@ def derax_project_home(request, project_id: int):
                 if isinstance(fallback_obj, dict):
                     payload_obj = fallback_obj
             payload = _sanitise_execute_payload(payload_obj)
+            # Additive turn: union the new proposed artefacts with those already on
+            # the work item so a follow-up comment extends the intake rather than
+            # replacing it. Intake is recomputed from the merged proposed set below.
+            prior_execute_payload = _latest_payload_from_runs(work_item, WorkItem.PHASE_EXECUTE)
+            payload = _merge_execute_payload(prior=prior_execute_payload, new=payload)
             payload = _refresh_execute_intake(payload)
             warnings = []
             proposed_rows = [
@@ -4597,7 +4870,12 @@ def derax_project_home(request, project_id: int):
     execute_export_missing = [name for name, ok in execute_export_caps.items() if not ok]
     latest_refine_response = _latest_refine_response_text(work_item)
     approve_latest_text = _readable_derax_text(json.dumps(approve_latest_payload, ensure_ascii=True, indent=2)) if approve_latest_payload else ""
-    explore_vm = _explore_view_model(explore_latest_payload)
+    explore_vm = _explore_view_model(
+        _backfill_explore_intent_for_display(
+            explore_payload=explore_latest_payload,
+            define_payload=define_latest_payload,
+        )
+    )
     refine_vm = _refine_view_model(refine_latest_payload)
     explore_latest_text = _readable_derax_text(_latest_explore_assistant_text(work_item))
     stage_rewrite_history = _load_stage_rewrite_history(work_item, active_phase)
@@ -4716,6 +4994,17 @@ def derax_project_home(request, project_id: int):
         }
         for doc in all_project_docs_qs
     ]
+    derax_item_number = 1
+    work_item_ids = list(
+        WorkItem.objects
+        .filter(project=project)
+        .order_by("created_at", "id")
+        .values_list("id", flat=True)
+    )
+    for idx, item_id in enumerate(work_item_ids, start=1):
+        if int(item_id) == int(work_item.id):
+            derax_item_number = idx
+            break
 
     return render(
         request,
@@ -4723,6 +5012,7 @@ def derax_project_home(request, project_id: int):
         {
             "project": project,
             "work_item": work_item,
+            "derax_item_number": derax_item_number,
             "seed_history": seed_history,
             "active_phase_upper": active_phase,
             "is_define_phase": is_define,

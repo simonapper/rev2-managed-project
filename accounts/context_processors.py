@@ -31,14 +31,14 @@ def topbar_context(request) -> Dict[str, Any]:
         model_name = (
             (getattr(profile, "anthropic_model_default", "") or "").strip()
             or (getattr(pointers, "anthropic_model_default", "") or "").strip()
-            or "claude-opus-4-7"
+            or "claude-opus-4-8"
         )
     elif provider == "gemini":
         model_name = (
             (getattr(profile, "gemini_model_default", "") or "").strip()
             or (getattr(pointers, "gemini_model_default", "") or "").strip()
             or os.getenv("GEMINI_MODEL", "").strip()
-            or "gemini-2.5-flash"
+            or "gemini-3.5-flash"
         )
     elif provider == "deepseek":
         model_name = (

@@ -37,7 +37,6 @@ from django.core.paginator import Paginator
 from django.db.models import Count, Exists, OuterRef, Q, Case, When, Value, IntegerField
 from django.db.models.functions import Coalesce
 from django.http import FileResponse, Http404, JsonResponse, HttpResponse
-from django.template.loader import render_to_string
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -316,9 +315,9 @@ def _active_provider_and_model_for_user(user) -> tuple[str, str]:
     profile = getattr(user, "profile", None)
     provider = (getattr(profile, "llm_provider", "") or "openai").strip().lower()
     if provider == "anthropic":
-        model = (getattr(profile, "anthropic_model_default", "") or "").strip() or "claude-opus-4-7"
+        model = (getattr(profile, "anthropic_model_default", "") or "").strip() or "claude-opus-4-8"
     elif provider == "gemini":
-        model = (getattr(profile, "gemini_model_default", "") or "").strip() or "gemini-2.5-flash"
+        model = (getattr(profile, "gemini_model_default", "") or "").strip() or "gemini-3.5-flash"
     elif provider == "deepseek":
         model = (getattr(profile, "deepseek_model_default", "") or "").strip() or "deepseek-chat"
     else:
@@ -335,7 +334,6 @@ from chats.models import ChatMessage, ChatRollupEvent, ChatWorkspace
 from chats.services_boundaries import build_boundary_contract_blocks, is_boundary_profile_active, resolve_boundary_profile
 from chats.services_boundary_validator import validate_boundary_labels
 from chats.services.cde_injection import build_cde_system_blocks
-from chats.services.cde_loop import validate_cde_inputs
 from chats.services.contracts.pipeline import ContractContext, build_system_blocks
 from chats.services_assets import persist_generated_images_from_text, save_generated_image_bytes
 from chats.services.chat_bootstrap import bootstrap_chat
@@ -413,11 +411,12 @@ ALLOWED_MODELS = [
 LEGACY_OPENAI_DEFAULT_MODELS = {"gpt-5.1", "gpt-5.2", "gpt-5.4"}
 
 ALLOWED_ANTHROPIC_MODELS = [
+    ("claude-opus-4-8", "claude-opus-4-8"),
     ("claude-opus-4-7", "claude-opus-4-7"),
-    ("claude-opus-4-6", "claude-opus-4-6"),
     ("claude-sonnet-4-5", "claude-sonnet-4-5"),
     ("claude-haiku-4-5", "claude-haiku-4-5"),
 ]
+LEGACY_ANTHROPIC_DEFAULT_MODELS = {"claude-opus-4-6", "claude-opus-4-7"}
 
 ALLOWED_DEEPSEEK_MODELS = [
     ("deepseek-chat", "deepseek-chat"),
@@ -425,12 +424,17 @@ ALLOWED_DEEPSEEK_MODELS = [
 ]
 
 ALLOWED_GEMINI_MODELS = [
+    ("gemini-3.5-flash", "gemini-3.5-flash"),
     ("gemini-3.1-pro-preview", "gemini-3.1-pro-preview"),
     ("gemini-3.1-flash-lite-preview", "gemini-3.1-flash-lite-preview"),
     ("gemini-3-flash-preview", "gemini-3-flash-preview"),
     ("gemini-2.5-pro", "gemini-2.5-pro"),
     ("gemini-2.5-flash", "gemini-2.5-flash"),
 ]
+LEGACY_GEMINI_DEFAULT_MODELS = {
+    "gemini-2.5-flash",
+    "gemini-3-flash-preview",
+}
 
 
 class SystemConfigForm(forms.ModelForm):
@@ -705,6 +709,7 @@ def chat_list(request):
             request.session.modified = True
 
     chats = []
+    work_items = []
     if active_project:
         chats = list(
             ChatWorkspace.objects.filter(
@@ -712,6 +717,12 @@ def chat_list(request):
                 status=ChatWorkspace.Status.ACTIVE,
             ).order_by("-updated_at", "-created_at")
         )
+        work_items = list(
+            WorkItem.objects.filter(project=active_project)
+            .order_by("created_at", "id")
+        )
+        for idx, work_item in enumerate(work_items, start=1):
+            work_item.display_number = idx
 
     return render(
         request,
@@ -720,6 +731,7 @@ def chat_list(request):
             "projects": projects,
             "active_project": active_project,
             "chats": chats,
+            "work_items": work_items,
         },
     )
 
@@ -733,175 +745,97 @@ def chat_create(request):
         or str(request.POST.get("ajax") or request.GET.get("ajax") or "").strip() == "1"
     )
 
-    def _feedback_html(*, cde_feedback, selected_project_id, title, cde_mode, cde_inputs, boundary_profile):
-        return render_to_string(
-            "accounts/_chat_create_feedback.html",
-            {
-                "cde_feedback": cde_feedback,
-                "selected_project_id": selected_project_id,
-                "sticky_title": title,
-                "sticky_cde_mode": cde_mode,
-                "sticky_chat_goal": cde_inputs.get("chat.goal", ""),
-                "sticky_chat_success": cde_inputs.get("chat.success", ""),
-                "sticky_chat_constraints": cde_inputs.get("chat.constraints", ""),
-                "sticky_chat_non_goals": cde_inputs.get("chat.non_goals", ""),
-                "boundary_defaults": boundary_profile,
-                "policy_docs_help_url": reverse("projects:policy_docs_help", args=[selected_project_id]) if selected_project_id else "",
-            },
-            request=request,
-        )
-
     if request.method == "POST":
+        path_mode = (request.POST.get("path_mode") or "sandbox").strip().lower()
         title = (request.POST.get("title") or "").strip()
         project_id = request.POST.get("project")
 
         project = projects.filter(id=project_id).first()
-        if not project or not title:
+        if not project:
             if is_ajax:
-                return JsonResponse({"ok": False, "error": "Title and project are required."}, status=400)
-            messages.error(request, "Title and project are required.")
+                return JsonResponse({"ok": False, "error": "Project is required."}, status=400)
+            messages.error(request, "Project is required.")
             return redirect("accounts:chat_create")
 
-        mode = (getattr(project, "mode", "") or "").strip().upper()
-        kind = (getattr(project, "kind", "") or "").strip().upper()
-        primary_type = (getattr(project, "primary_type", "") or "").strip().upper()
-        name_is_sandbox = "SANDBOX" in (getattr(project, "name", "") or "").upper()
+        request.session["rw_active_project_id"] = project.id
+        request.session.modified = True
 
-        is_sandbox = (
-            (mode == "SANDBOX")
-            or (kind == "SANDBOX")
-            or (primary_type == "SANDBOX")
-            or name_is_sandbox
-        )
-        is_derax_template = str(getattr(project, "workflow_mode", "") or "").strip().upper() == "DERAX_TEMPLATE"
+        workflow_mode = str(getattr(project, "workflow_mode", "") or "").strip().upper()
 
-        if not is_sandbox and not is_derax_template:
-            if project.defined_cko_id is None:
-                if is_ajax:
-                    return JsonResponse(
-                        {
-                            "ok": False,
-                            "error": "Project is not defined. Complete PDE first.",
-                        },
-                        status=400,
-                    )
-                messages.error(request, "Project is not defined. Complete PDE first.")
-                return redirect("accounts:chat_create")
-
-            ppde_started = (
-                ProjectPlanningPurpose.objects.filter(project=project).exists()
-                or ProjectPlanningStage.objects.filter(project=project).exists()
+        if path_mode == "derax":
+            next_number = WorkItem.objects.filter(project=project).count() + 1
+            WorkItem.objects.filter(project=project, is_primary=True).update(is_primary=False)
+            work_item = WorkItem.create_minimal(
+                project=project,
+                title=f"{project.name} {next_number}",
+                active_phase=WorkItem.PHASE_DEFINE,
             )
-            if not ppde_started:
+            work_item.is_primary = True
+            work_item.save(update_fields=["is_primary", "updated_at"])
+            redirect_url = reverse("projects:derax_project_home", args=[project.id])
+            if is_ajax:
+                return JsonResponse({"ok": True, "redirect_url": redirect_url})
+            return redirect(redirect_url)
+
+        if path_mode == "pde":
+            if workflow_mode != "PDE":
+                error = "PDE/CDE is only available for PDE projects."
                 if is_ajax:
-                    return JsonResponse(
-                        {
-                            "ok": False,
-                            "error": "Start PPDE before creating chats.",
-                            "redirect_url": reverse("projects:ppde_detail", args=[project.id]),
-                        },
-                        status=400,
-                    )
-                messages.error(request, "Start PPDE before creating chats.")
-                return redirect("projects:ppde_detail", project_id=project.id)
+                    return JsonResponse({"ok": False, "error": error}, status=400)
+                messages.error(request, error)
+                return redirect("accounts:chat_create")
+            redirect_url = reverse("projects:pde_detail", args=[project.id])
+            if is_ajax:
+                return JsonResponse({"ok": True, "redirect_url": redirect_url})
+            return redirect(redirect_url)
 
-        boundary_profile = _boundary_profile_from_post(request.POST)
+        if path_mode != "sandbox":
+            if is_ajax:
+                return JsonResponse({"ok": False, "error": "Invalid workspace path."}, status=400)
+            messages.error(request, "Invalid workspace path.")
+            return redirect("accounts:chat_create")
 
-        cde_mode = (request.POST.get("cde_mode") or "SKIP").strip().upper()
-        cde_inputs = {
-            "chat.goal": (request.POST.get("chat_goal") or "").strip(),
-            "chat.success": (request.POST.get("chat_success") or "").strip(),
-            "chat.constraints": (request.POST.get("chat_constraints") or "").strip(),
-            "chat.non_goals": (request.POST.get("chat_non_goals") or "").strip(),
-        }
+        if not title:
+            if is_ajax:
+                return JsonResponse({"ok": False, "error": "Title is required for a sandbox chat."}, status=400)
+            messages.error(request, "Title is required for a sandbox chat.")
+            return redirect("accounts:chat_create")
 
-        raw_cde_json = request.POST.get("cde_json")
-        if raw_cde_json:
-            try:
-                cde_json = json.loads(raw_cde_json)
-            except Exception:
-                cde_json = {}
-        else:
-            cde_json = {}
+        is_derax_template = str(getattr(project, "workflow_mode", "") or "").strip().upper() == "DERAX_TEMPLATE"
 
         def _generate_panes_for_user(*args, **kwargs):
             return generate_panes(*args, user=user, **kwargs)
 
-        if cde_mode == "CONTROLLED":
-            cde_result = validate_cde_inputs(
+        try:
+            chat, _cde_result = bootstrap_chat(
+                project=project,
+                user=user,
+                title=title,
                 generate_panes_func=_generate_panes_for_user,
-                user_inputs=cde_inputs,
+                session_overrides=(request.session.get("rw_session_overrides", {}) or {}),
+                cde_mode="SKIP",
+                cde_inputs={},
+                skip_readiness_checks=True,
+            )
+        except Exception as exc:
+            error = "Create chat failed: " + str(exc)
+            if is_ajax:
+                return JsonResponse({"ok": False, "error": error}, status=400)
+            messages.error(request, error)
+            return render(
+                request,
+                "accounts/chat_create.html",
+                {
+                    "projects": projects,
+                    "selected_project_id": project.id,
+                    "sticky_title": title,
+                },
+                status=400,
             )
 
-            if not bool(cde_result.get("ok")):
-                if is_ajax:
-                    return JsonResponse(
-                        {
-                            "ok": False,
-                            "error": "CDE needs revision.",
-                            "cde_feedback": cde_result.get("first_blocker") or {},
-                            "feedback_html": _feedback_html(
-                                cde_feedback=cde_result.get("first_blocker"),
-                                selected_project_id=project.id,
-                                title=title,
-                                cde_mode=cde_mode,
-                                cde_inputs=cde_inputs,
-                                boundary_profile=boundary_profile,
-                            ),
-                        },
-                        status=400,
-                    )
-                return render(
-                    request,
-                    "accounts/chat_create.html",
-                    {
-                        "projects": projects,
-                        "selected_project_id": project.id,
-                        "sticky_title": title,
-                        "sticky_cde_mode": cde_mode,
-                        "sticky_chat_goal": cde_inputs.get("chat.goal", ""),
-                        "sticky_chat_success": cde_inputs.get("chat.success", ""),
-                        "sticky_chat_constraints": cde_inputs.get("chat.constraints", ""),
-                        "sticky_chat_non_goals": cde_inputs.get("chat.non_goals", ""),
-                        "cde_feedback": cde_result.get("first_blocker"),
-                        "boundary_defaults": boundary_profile,
-                        "policy_docs_help_url": reverse("projects:policy_docs_help", args=[project.id]),
-                    },
-                )
-
-            locked_fields = cde_result.get("locked_fields") or {}
-            cde_inputs = {
-                "chat.goal": (locked_fields.get("chat.goal") or cde_inputs.get("chat.goal") or "").strip(),
-                "chat.success": (locked_fields.get("chat.success") or cde_inputs.get("chat.success") or "").strip(),
-                "chat.constraints": (locked_fields.get("chat.constraints") or cde_inputs.get("chat.constraints") or "").strip(),
-                "chat.non_goals": (locked_fields.get("chat.non_goals") or cde_inputs.get("chat.non_goals") or "").strip(),
-            }
-
-        chat, _cde_result = bootstrap_chat(
-            project=project,
-            user=user,
-            title=title,
-            generate_panes_func=_generate_panes_for_user,
-            session_overrides=(request.session.get("rw_session_overrides", {}) or {}),
-            cde_mode=cde_mode,
-            cde_inputs=cde_inputs,
-        )
-
-        if cde_json:
-            chat.cde_json = cde_json
-        chat.boundary_profile_json = boundary_profile
         if is_derax_template:
             chat.derax_enabled = True
-        if cde_json:
-            if is_derax_template:
-                chat.save(update_fields=["cde_json", "boundary_profile_json", "derax_enabled", "updated_at"])
-            else:
-                chat.save(update_fields=["cde_json", "boundary_profile_json", "updated_at"])
-        else:
-            if is_derax_template:
-                chat.save(update_fields=["boundary_profile_json", "derax_enabled", "updated_at"])
-            else:
-                chat.save(update_fields=["boundary_profile_json", "updated_at"])
+            chat.save(update_fields=["derax_enabled", "updated_at"])
 
         request.session["rw_active_project_id"] = project.id
         request.session["rw_active_chat_id"] = chat.id
@@ -923,11 +857,6 @@ def chat_create(request):
             selected_project_id = int(selected_project_id)
         except ValueError:
             selected_project_id = None
-    boundary_defaults = {}
-    if selected_project_id:
-        selected_project = projects.filter(id=selected_project_id).first()
-        if selected_project:
-            boundary_defaults = resolve_boundary_profile(selected_project, None)
 
     return render(
         request,
@@ -935,12 +864,6 @@ def chat_create(request):
         {
             "projects": projects,
             "selected_project_id": selected_project_id,
-            "boundary_defaults": boundary_defaults,
-            "policy_docs_help_url": (
-                reverse("projects:policy_docs_help", args=[selected_project_id])
-                if selected_project_id
-                else ""
-            ),
         },
     )
 
@@ -2881,6 +2804,21 @@ def chat_browse(request):
         idx = int(c.project_id) % len(palette)
         setattr(c, "row_color", palette[idx])
 
+    work_items_qs = WorkItem.objects.select_related("project", "project__owner").filter(project__in=projects)
+    if project_filter_active and active_project is not None:
+        work_items_qs = work_items_qs.filter(project=active_project)
+    if q:
+        work_items_qs = work_items_qs.filter(Q(title__icontains=q) | Q(project__name__icontains=q))
+
+    work_items = list(work_items_qs.order_by("project__name", "created_at", "id"))
+    project_counts = {}
+    for work_item in work_items:
+        project_id = int(work_item.project_id)
+        project_counts[project_id] = project_counts.get(project_id, 0) + 1
+        work_item.display_number = project_counts[project_id]
+        idx = project_id % len(palette)
+        work_item.row_color = palette[idx]
+
     return render(
         request,
         "accounts/chat_browse.html",
@@ -2888,6 +2826,7 @@ def chat_browse(request):
             "projects": projects,
             "active_project": active_project,
             "page_obj": page_obj,
+            "work_items": work_items,
             "filters": {"project": project_param, "status": status, "q": q},
             "sort": sort,
             "dir": direction,
@@ -3234,10 +3173,10 @@ def config_menu(request):
             "llm_provider": (profile.llm_provider or "openai"),
             "openai_model_default": (profile.openai_model_default or "gpt-5.5"),
             "anthropic_model_default": (
-                profile.anthropic_model_default or "claude-opus-4-7"
+                profile.anthropic_model_default or "claude-opus-4-8"
             ),
             "deepseek_model_default": (profile.deepseek_model_default or "deepseek-chat"),
-            "gemini_model_default": (profile.gemini_model_default or "gemini-2.5-flash"),
+            "gemini_model_default": (profile.gemini_model_default or "gemini-3.5-flash"),
             "openai_model_choices": ALLOWED_MODELS,
             "anthropic_model_choices": ALLOWED_ANTHROPIC_MODELS,
             "deepseek_model_choices": ALLOWED_DEEPSEEK_MODELS,
@@ -3261,6 +3200,7 @@ def topbar_llm_update(request):
     provider = str(payload.get("provider") or "").strip().lower()
     if provider not in {"openai", "anthropic", "deepseek", "gemini"}:
         return JsonResponse({"ok": False, "error": "Invalid LLM provider."}, status=400)
+    requested_model = str(payload.get("model") or "").strip()
 
     update_fields = []
     if str(profile.llm_provider or "").strip().lower() != provider:
@@ -3272,6 +3212,23 @@ def topbar_llm_update(request):
         if current_openai_model in LEGACY_OPENAI_DEFAULT_MODELS:
             profile.openai_model_default = "gpt-5.5"
             update_fields.append("openai_model_default")
+    elif provider == "anthropic":
+        current_anthropic_model = str(getattr(profile, "anthropic_model_default", "") or "").strip()
+        if current_anthropic_model in LEGACY_ANTHROPIC_DEFAULT_MODELS:
+            profile.anthropic_model_default = "claude-opus-4-8"
+            update_fields.append("anthropic_model_default")
+    elif provider == "gemini":
+        current_gemini_model = str(getattr(profile, "gemini_model_default", "") or "").strip()
+        allowed_gemini_models = {key for key, _label in ALLOWED_GEMINI_MODELS}
+        if requested_model:
+            if requested_model not in allowed_gemini_models:
+                return JsonResponse({"ok": False, "error": "Invalid Gemini model."}, status=400)
+            if current_gemini_model != requested_model:
+                profile.gemini_model_default = requested_model
+                update_fields.append("gemini_model_default")
+        elif current_gemini_model in LEGACY_GEMINI_DEFAULT_MODELS:
+            profile.gemini_model_default = "gemini-3.5-flash"
+            update_fields.append("gemini_model_default")
 
     if update_fields:
         profile.save(update_fields=update_fields)

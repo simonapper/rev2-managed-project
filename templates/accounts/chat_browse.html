@@ -97,7 +97,7 @@
   <div class="card rw-browse-table-card">
     <div class="card-body p-0">
 
-      {% if page_obj.object_list %}
+      {% if page_obj.object_list or work_items %}
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0 rw-chat-table">
             <thead>
@@ -143,6 +143,21 @@
             </thead>
 
             <tbody>
+              {% for wi in work_items %}
+                <tr>
+                  <td class="fw-semibold" style="background-color: {{ wi.row_color }};">
+                    <a class="rw-chat-link" href="{% url 'projects:derax_work_item_open' wi.project.id wi.id %}" title="Open DERAX work item">
+                      DERAX work item {{ wi.display_number }}{% if wi.derax_label %}: {{ wi.derax_label|truncatechars:40 }}{% endif %}
+                    </a>
+                  </td>
+                  <td class="text-secondary" style="background-color: {{ wi.row_color }};">{{ wi.project.name }}</td>
+                  <td class="text-secondary" style="background-color: {{ wi.row_color }};">{{ wi.project.owner.username }}</td>
+                  <td class="text-center text-secondary small" style="background-color: {{ wi.row_color }};">-</td>
+                  <td class="text-secondary rw-updated-col" style="background-color: {{ wi.row_color }};">{{ wi.updated_at }}</td>
+                  <td class="text-secondary small" style="background-color: {{ wi.row_color }};">Phase: {{ wi.active_phase }}</td>
+                  <td class="text-end" style="background-color: {{ wi.row_color }};"></td>
+                </tr>
+              {% endfor %}
               {% for c in page_obj.object_list %}
                 {% with row_color=c.row_color %}
                 <tr>

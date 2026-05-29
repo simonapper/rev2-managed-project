@@ -1,4 +1,4 @@
-﻿{# templates/accounts/chat_create.html #}
+{# templates/accounts/chat_create.html #}
 {% extends "base.html" %}
 
 {% block content %}
@@ -7,26 +7,19 @@
   <div class="d-flex align-items-center justify-content-between mb-2">
     <div>
       <h5 class="mb-0">Create chat</h5>
-      <div class="text-secondary small">Sandbox only (for now). Controlled mode uses LLM validation.</div>
+      <div class="text-secondary small">Choose a project and how this work should start.</div>
     </div>
-  </div>
-
-  <div id="chatCreateFeedback">
-    {% include "accounts/_chat_create_feedback.html" %}
   </div>
 
   <div id="chatCreateError" class="alert alert-danger rw-compact-card" style="display:none;"></div>
 
   <form method="post" action="" id="chatCreateForm">
     {% csrf_token %}
-    <!-- Hidden AI-native CDE payload (filled by JS Draft step) -->
-    <input type="hidden" name="cde_json" id="id_cde_json" value="">
 
     <div class="card rw-compact-card mb-3">
       <div class="card-body p-0">
-
         <div class="row g-3">
-          <div class="col-12 col-lg-8">
+          <div class="col-12 col-lg-5">
             <label class="form-label" for="id_title">Title</label>
             <input
               id="id_title"
@@ -36,7 +29,7 @@
               value="{{ sticky_title|default:'' }}"
               required
             >
-            <div class="form-text">Short, specific title for the chat.</div>
+            <div class="form-text">Used when creating a sandbox chat.</div>
           </div>
 
           <div class="col-12 col-lg-4">
@@ -44,179 +37,31 @@
             <select id="id_project" name="project" class="form-select" required>
               <option value="">Select...</option>
               {% for p in projects %}
-                {% if selected_project_id %}
-                  <option value="{{ p.id }}" {% if p.id == selected_project_id %}selected{% endif %}>{{ p.name }}</option>
-                {% else %}
-                  <option value="{{ p.id }}">{{ p.name }}</option>
-                {% endif %}
+                <option
+                  value="{{ p.id }}"
+                  data-workflow-mode="{{ p.workflow_mode }}"
+                  {% if selected_project_id and p.id == selected_project_id %}selected{% endif %}
+                >{{ p.name }}</option>
               {% endfor %}
             </select>
-            <div class="form-text">Chats are available for Sandbox projects or after PPDE has been started.</div>
+            <div class="form-text">The chat or flow will inherit this project.</div>
+          </div>
+
+          <div class="col-12 col-lg-3">
+            <label class="form-label" for="id_path_mode">Path</label>
+            <select id="id_path_mode" name="path_mode" class="form-select" required>
+              <option value="sandbox">Sandbox chat</option>
+              <option value="derax">DERAX</option>
+              <option value="pde" data-requires-workflow="PDE">PDE/CDE</option>
+            </select>
+            <div class="form-text" id="pathHelp">Sandbox creates a free project-linked chat.</div>
           </div>
         </div>
-
-      </div>
-    </div>
-
-    <div class="card rw-compact-card mb-3">
-      <div class="card-body p-0">
-        <div class="d-flex align-items-center justify-content-between">
-          <div>
-            <h6 class="mb-1">Boundaries</h6>
-            <div class="text-secondary small">Soft boundaries for this chat.</div>
-          </div>
-          {% if policy_docs_help_url %}
-            <a class="btn btn-outline-secondary rw-btn-xs" href="{{ policy_docs_help_url }}" title="Help" aria-label="Help">
-              <i class="bi bi-question-circle"></i>
-            </a>
-          {% endif %}
-        </div>
-
-        <hr class="my-3">
-
-        <div class="row g-3">
-          <div class="col-12">
-            <label class="form-label" for="id_boundary_topic_tags">Boundary constraints</label>
-            <input
-              id="id_boundary_topic_tags"
-              type="text"
-              name="boundary_topic_tags"
-              class="form-control"
-              value="{{ boundary_defaults.topic_tags|join:', ' }}"
-              placeholder="Example: UK_LAW, COMPANY_POLICY"
-            >
-            <div class="form-text">Add one or more constraints, separated by commas.</div>
-          </div>
-          {% with auth=boundary_defaults.authority_set %}
-          <div class="col-12 col-md-6">
-            <label class="form-check">
-              <input class="form-check-input" type="checkbox" name="boundary_allow_general" {% if auth.allow_model_general_knowledge != False %}checked{% endif %}>
-              <span class="form-check-label">Allow general model knowledge</span>
-            </label>
-          </div>
-          <div class="col-12 col-md-6">
-            <label class="form-check">
-              <input class="form-check-input" type="checkbox" name="boundary_allow_internal_docs" {% if auth.allow_internal_docs != False %}checked{% endif %}>
-              <span class="form-check-label">Allow internal policy docs</span>
-            </label>
-          </div>
-          {% endwith %}
-        </div>
-      </div>
-    </div>
-
-    <div class="card rw-compact-card mb-3">
-      <div class="card-body p-0">
-
-        <div class="d-flex align-items-center justify-content-between">
-          <div>
-            <h6 class="mb-1">Chat Definition (CDE)</h6>
-            <div class="text-secondary small">
-              Controlled mode validates with the LLM and locks when it passes.
-            </div>
-          </div>
-        </div>
-
-        <hr class="my-3">
-
-        {% with cm=sticky_cde_mode|default:'SKIP' %}
-          <div class="mb-3">
-            <label class="form-label">CDE mode</label>
-            <div class="d-flex flex-wrap gap-3">
-
-              <label class="form-check mb-0">
-                <input class="form-check-input" type="radio" name="cde_mode" value="SKIP"
-                       {% if cm == 'SKIP' %}checked{% endif %}>
-                <span class="form-check-label">Skip</span>
-              </label>
-
-              <label class="form-check mb-0">
-                <input class="form-check-input" type="radio" name="cde_mode" value="LOOSE"
-                       {% if cm == 'LOOSE' %}checked{% endif %}>
-                <span class="form-check-label">Loose</span>
-              </label>
-
-              <label class="form-check mb-0">
-                <input class="form-check-input" type="radio" name="cde_mode" value="CONTROLLED"
-                       {% if cm == 'CONTROLLED' %}checked{% endif %}>
-                <span class="form-check-label">Controlled</span>
-              </label>
-
-            </div>
-            <div class="form-text">
-              Skip: no CDE. Loose: save partial notes. Controlled: validate and lock.
-            </div>
-          </div>
-        {% endwith %}
-
-        <div class="row g-3">
-          <div class="col-12">
-            <div class="d-flex align-items-center justify-content-between">
-              <label class="form-label mb-1" for="id_chat_goal">Chat goal</label>
-              <button type="button" class="btn btn-outline-primary rw-btn-xs" id="btnSuggestGoals">
-                Suggest goals
-              </button>
-              <button type="button" class="btn btn-outline-secondary rw-btn-xs" id="btnDraftCDE">
-                 Draft CDE
-              </button>
-
-            </div>
-            <textarea
-              id="id_chat_goal"
-              name="chat_goal"
-              class="form-control"
-              rows="2"
-              placeholder="One sentence: what are we trying to achieve?"
-            >{{ sticky_chat_goal|default:'' }}</textarea>
-            <div class="form-text">Tip: Discovery goals are allowed, but include a stopping condition.</div>
-
-            <div id="goalSuggestionsWrap" class="mt-2" style="display:none;">
-              <div class="small text-secondary mb-1"><strong>Suggestions</strong></div>
-              <div class="list-group" id="goalSuggestions"></div>
-            </div>
-
-            <div id="goalSuggestError" class="text-danger small mt-2" style="display:none;"></div>
-          </div>
-
-          <div class="col-12">
-            <label class="form-label" for="id_chat_success">Success criteria</label>
-            <textarea
-              id="id_chat_success"
-              name="chat_success"
-              class="form-control"
-              rows="2"
-              placeholder="How will we know we succeeded? (deliverable or check)"
-            >{{ sticky_chat_success|default:'' }}</textarea>
-          </div>
-
-          <div class="col-12">
-            <label class="form-label" for="id_chat_constraints">Constraints</label>
-            <textarea
-              id="id_chat_constraints"
-              name="chat_constraints"
-              class="form-control"
-              rows="2"
-              placeholder="Up to 3 hard constraints, or 'none'. Separate with newlines or semicolons."
-            >{{ sticky_chat_constraints|default:'' }}</textarea>
-          </div>
-
-          <div class="col-12">
-            <label class="form-label" for="id_chat_non_goals">Out of scope (non-goals)</label>
-            <textarea
-              id="id_chat_non_goals"
-              name="chat_non_goals"
-              class="form-control"
-              rows="2"
-              placeholder="Up to 3 explicit exclusions, or 'none'. Separate with newlines or semicolons."
-            >{{ sticky_chat_non_goals|default:'' }}</textarea>
-          </div>
-        </div>
-
       </div>
     </div>
 
     <div class="rw-compact-card d-flex align-items-center justify-content-end gap-2">
-      <button type="submit" class="btn btn-primary rw-btn-xs">Create chat</button>
+      <button type="submit" class="btn btn-primary rw-btn-xs" id="chatCreateSubmit">Continue</button>
     </div>
 
   </form>
@@ -224,12 +69,11 @@
 
 <script>
 (function() {
-  // ------------------------------------------------------------
-  // Helpers
-  // ------------------------------------------------------------
   var form = document.getElementById("chatCreateForm");
-  var submitBtn = form ? form.querySelector("button[type='submit']") : null;
-  var feedbackHost = document.getElementById("chatCreateFeedback");
+  var submitBtn = document.getElementById("chatCreateSubmit");
+  var projectSelect = document.getElementById("id_project");
+  var pathSelect = document.getElementById("id_path_mode");
+  var pathHelp = document.getElementById("pathHelp");
   var createError = document.getElementById("chatCreateError");
 
   function getCookie(name) {
@@ -249,194 +93,67 @@
     createError.style.display = "none";
   }
 
-  function showError(msg) {
-    if (!err) return;
-    err.textContent = msg;
-    err.style.display = "block";
+  function selectedWorkflowMode() {
+    if (!projectSelect || !projectSelect.selectedOptions.length) return "";
+    return projectSelect.selectedOptions[0].getAttribute("data-workflow-mode") || "";
   }
 
-  function clearSuggestions() {
-    if (list) list.innerHTML = "";
-    if (wrap) wrap.style.display = "none";
-    if (err) err.style.display = "none";
-  }
+  function refreshPathOptions() {
+    if (!pathSelect) return;
+    var workflowMode = selectedWorkflowMode();
+    var pdeOption = pathSelect.querySelector("option[value='pde']");
+    var allowPde = (!workflowMode || workflowMode === "PDE");
 
-  // ------------------------------------------------------------
-  // System debug toggle
-  // ------------------------------------------------------------
-  function bindFeedbackToggles() {
-    var btnSys = document.getElementById("btnToggleSystem");
-    var sysPanel = document.getElementById("systemPanel");
-    if (!btnSys || !sysPanel) return;
-    btnSys.addEventListener("click", function() {
-      var show = (sysPanel.style.display === "none");
-      sysPanel.style.display = show ? "block" : "none";
-      btnSys.textContent = show ? "Hide system" : "Show system";
-    });
-  }
-  bindFeedbackToggles();
+    if (pdeOption) {
+      pdeOption.hidden = !allowPde;
+      pdeOption.disabled = !allowPde;
+    }
 
-  // ------------------------------------------------------------
-  // Suggest goals wiring
-  // ------------------------------------------------------------
-  var btnSuggest = document.getElementById("btnSuggestGoals");
-  var goalBox = document.getElementById("id_chat_goal");
-  var wrap = document.getElementById("goalSuggestionsWrap");
-  var list = document.getElementById("goalSuggestions");
-  var err = document.getElementById("goalSuggestError");
+    if (!allowPde && pathSelect.value === "pde") {
+      pathSelect.value = "sandbox";
+    }
 
-  if (btnSuggest) {
-    btnSuggest.addEventListener("click", function() {
-      clearSuggestions();
-
-      var goalText = (goalBox && goalBox.value) ? goalBox.value.trim() : "";
-      if (!goalText) {
-        showError("Enter a draft goal first.");
-        return;
+    if (pathHelp) {
+      if (!workflowMode) {
+        pathHelp.textContent = "Choose a project to confirm which paths are available.";
+      } else if (pathSelect.value === "derax") {
+        pathHelp.textContent = "Open structured DERAX discovery for this project.";
+      } else if (pathSelect.value === "pde") {
+        pathHelp.textContent = "Open the project PDE/CDE definition flow.";
+      } else {
+        pathHelp.textContent = "Create a free chat linked to this project.";
       }
-
-      btnSuggest.disabled = true;
-      btnSuggest.textContent = "Suggesting...";
-
-      var formData = new FormData();
-      formData.append("goal_text", goalText);
-
-      fetch("{% url 'accounts:chat_suggest_goals' %}", {
-        method: "POST",
-        headers: { "X-CSRFToken": getCookie("csrftoken") },
-        body: formData
-      })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (!data || !data.ok) {
-          showError((data && data.error) ? data.error : "Suggest goals failed.");
-          return;
-        }
-
-        var alts = data.alternatives || [];
-        if (!alts.length) {
-          showError("No suggestions returned.");
-          return;
-        }
-
-        alts.forEach(function(a) {
-          var item = document.createElement("div");
-          item.className = "list-group-item";
-
-          var row = document.createElement("div");
-          row.className = "d-flex align-items-start justify-content-between gap-2";
-
-          var t = document.createElement("div");
-          t.textContent = a;
-          t.style.whiteSpace = "pre-wrap";
-
-          var useBtn = document.createElement("button");
-          useBtn.type = "button";
-          useBtn.className = "btn btn-outline-secondary rw-btn-xs";
-          useBtn.textContent = "Use";
-          useBtn.addEventListener("click", function() {
-            if (goalBox) goalBox.value = a;
-          });
-
-          row.appendChild(t);
-          row.appendChild(useBtn);
-          item.appendChild(row);
-          list.appendChild(item);
-        });
-
-        if (wrap) wrap.style.display = "block";
-      })
-      .catch(function() {
-        showError("Suggest goals failed.");
-      })
-      .finally(function() {
-        btnSuggest.disabled = false;
-        btnSuggest.textContent = "Suggest goals";
-      });
-    });
+    }
   }
 
-  // ------------------------------------------------------------
-  // Draft CDE wiring
-  // ------------------------------------------------------------
-  var btnDraft = document.getElementById("btnDraftCDE");
-  var cdeHidden = document.getElementById("id_cde_json");
-
-  if (btnDraft) {
-    btnDraft.addEventListener("click", function() {
-      clearSuggestions();
-
-      var seed = (goalBox && goalBox.value) ? goalBox.value.trim() : "";
-      if (!seed) {
-        showError("Enter a draft goal first.");
-        return;
-      }
-
-      btnDraft.disabled = true;
-      btnDraft.textContent = "Drafting...";
-
-      var formData = new FormData();
-      formData.append("seed_text", seed);
-
-      fetch("{% url 'accounts:chat_draft_cde' %}", {
-        method: "POST",
-        headers: { "X-CSRFToken": getCookie("csrftoken") },
-        body: formData
-      })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (!data || !data.ok) {
-          showError((data && data.error) ? data.error : "Draft failed.");
-          return;
-        }
-
-        var h = (data.draft || {}).hypotheses || {};
-
-        var elSuccess = document.getElementById("id_chat_success");
-        var elConstraints = document.getElementById("id_chat_constraints");
-        var elNonGoals = document.getElementById("id_chat_non_goals");
-
-        if (h.goal && goalBox) goalBox.value = h.goal;
-        if (h.success && elSuccess) elSuccess.value = h.success;
-        if (elConstraints) elConstraints.value = (h.constraints || []).join("\n");
-        if (elNonGoals) elNonGoals.value = (h.non_goals || []).join("\n");
-
-        // Store full AI-native payload
-        if (cdeHidden) {
-          cdeHidden.value = JSON.stringify({ hypotheses: h });
-        }
-      })
-      .catch(function() {
-        showError("Draft failed.");
-      })
-      .finally(function() {
-        btnDraft.disabled = false;
-        btnDraft.textContent = "Draft CDE";
-      });
-    });
+  if (projectSelect) {
+    projectSelect.addEventListener("change", refreshPathOptions);
   }
+  if (pathSelect) {
+    pathSelect.addEventListener("change", refreshPathOptions);
+  }
+  refreshPathOptions();
 
-  // ------------------------------------------------------------
-  // AJAX submit wiring
-  // ------------------------------------------------------------
   if (form) {
     form.addEventListener("submit", function(ev) {
       ev.preventDefault();
       clearCreateError();
-      if (feedbackHost) feedbackHost.innerHTML = "";
 
       var body = new FormData(form);
       body.append("ajax", "1");
 
       if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = "Creating...";
+        submitBtn.textContent = "Working...";
       }
 
       fetch(form.getAttribute("action") || window.location.href, {
         method: "POST",
         credentials: "same-origin",
-        headers: { "X-CSRFToken": getCookie("csrftoken"), "X-Requested-With": "XMLHttpRequest" },
+        headers: {
+          "X-CSRFToken": getCookie("csrftoken"),
+          "X-Requested-With": "XMLHttpRequest"
+        },
         body: body
       })
       .then(function(resp) {
@@ -450,14 +167,6 @@
           window.location.href = data.redirect_url;
           return;
         }
-        if (data.feedback_html && feedbackHost) {
-          feedbackHost.innerHTML = data.feedback_html;
-          bindFeedbackToggles();
-        }
-        if (data.redirect_url) {
-          window.location.href = data.redirect_url;
-          return;
-        }
         showCreateError(data.error || "Create chat failed.");
       })
       .catch(function() {
@@ -466,12 +175,11 @@
       .finally(function() {
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = "Create chat";
+          submitBtn.textContent = "Continue";
         }
       });
     });
   }
-
 })();
 </script>
 {% endblock %}

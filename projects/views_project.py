@@ -48,6 +48,7 @@ from projects.models import (
     ProjectWKO,
     PolicyDocument,
     ProjectDocument,
+    WorkItem,
 )
 from projects.services.project_bootstrap import bootstrap_project
 from projects.services_project_membership import accessible_projects_qs, is_project_manager, can_edit_committee
@@ -474,16 +475,10 @@ def project_home(request, project_id: int):
     request.session.pop("rw_active_chat_id", None)
     request.session.modified = True
 
-    if project.workflow_mode == Project.WorkflowMode.DERAX_WORK:
-        return redirect("projects:derax_project_home", project_id=project.id)
-
-    if project.workflow_mode == Project.WorkflowMode.DERAX_TEMPLATE:
-        return redirect("accounts:chat_browse")
-
     if project.kind == Project.Kind.SANDBOX:
         return redirect("accounts:chat_browse")
 
-    if project.defined_cko_id is None:
+    if project.workflow_mode == Project.WorkflowMode.PDE and project.defined_cko_id is None:
         return redirect("projects:pde_detail", project_id=project.id)
 
     return redirect("accounts:project_config_info", project_id=project.id)
@@ -1294,6 +1289,12 @@ def project_chat_list(request, project_id: int):
 
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
+    work_items = list(
+        WorkItem.objects.filter(project=active_project)
+        .order_by("created_at", "id")
+    )
+    for idx, work_item in enumerate(work_items, start=1):
+        work_item.display_number = idx
 
     return render(
         request,
@@ -1302,11 +1303,29 @@ def project_chat_list(request, project_id: int):
             "projects": projects,
             "active_project": active_project,
             "page_obj": page_obj,
+            "work_items": work_items,
             "filters": {"status": status or "", "q": q},
             "sort": sort,
             "dir": direction,
         },
     )
+
+
+@login_required
+def derax_work_item_open(request, project_id: int, work_item_id: int):
+    project = get_object_or_404(accessible_projects_qs(request.user), pk=project_id)
+    work_item = get_object_or_404(WorkItem, pk=work_item_id, project=project)
+
+    WorkItem.objects.filter(project=project, is_primary=True).exclude(pk=work_item.pk).update(is_primary=False)
+    if not work_item.is_primary:
+        work_item.is_primary = True
+        work_item.save(update_fields=["is_primary", "updated_at"])
+
+    request.session["rw_active_project_id"] = project.id
+    request.session.pop("rw_active_chat_id", None)
+    request.session.modified = True
+
+    return redirect("projects:derax_project_home", project_id=project.id)
 
 
 @login_required
@@ -1426,6 +1445,21 @@ def project_config_info(request, project_id: int):
     )
     if my_membership and (my_membership.planning_mode in dict(ProjectMembership.PlanningMode.choices)):
         planning_mode = my_membership.planning_mode
+
+    project_chats = list(
+        ChatWorkspace.objects
+        .select_related("created_by")
+        .filter(project=active_project, status=ChatWorkspace.Status.ACTIVE)
+        .annotate(turn_count=Count("messages", filter=Q(messages__role=ChatMessage.Role.USER)))
+        .order_by("-updated_at", "-id")
+    )
+    project_work_items = list(
+        WorkItem.objects
+        .filter(project=active_project)
+        .order_by("created_at", "id")
+    )
+    for idx, work_item in enumerate(project_work_items, start=1):
+        work_item.display_number = idx
 
     User = get_user_model()
     can_edit_team = can_edit_committee(active_project, request.user)
@@ -1749,6 +1783,8 @@ def project_config_info(request, project_id: int):
             "planning_mode": planning_mode,
             "boundary_profile": boundary_profile,
             "policy_documents": policy_documents,
+            "project_chats": project_chats,
+            "project_work_items": project_work_items,
             "project_documents": list(
                 ProjectDocument.objects.filter(project=active_project, is_archived=False).order_by("-updated_at", "-id")
             ),

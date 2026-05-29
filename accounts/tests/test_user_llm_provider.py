@@ -85,7 +85,7 @@ class UserLLMProviderSettingTests(TestCase):
             reverse("accounts:config_menu"),
             data={
                 "llm_provider": "anthropic",
-                "anthropic_model_default": "claude-opus-4-7",
+                "anthropic_model_default": "claude-opus-4-8",
             },
         )
 
@@ -93,7 +93,7 @@ class UserLLMProviderSettingTests(TestCase):
         user.profile.refresh_from_db()
         self.assertEqual(user.profile.llm_provider, "anthropic")
         self.assertEqual(user.profile.openai_model_default, "gpt-5.5")
-        self.assertEqual(user.profile.anthropic_model_default, "claude-opus-4-7")
+        self.assertEqual(user.profile.anthropic_model_default, "claude-opus-4-8")
 
     def test_config_menu_updates_openai_model_only_when_openai_selected(self):
         User = get_user_model()
@@ -139,7 +139,7 @@ class UserLLMProviderSettingTests(TestCase):
         self.assertEqual(user.profile.openai_model_default, "gpt-5.5")
         self.assertEqual(user.profile.deepseek_model_default, "deepseek-reasoner")
 
-    def test_topbar_uses_opus_4_7_as_anthropic_fallback(self):
+    def test_topbar_uses_opus_4_8_as_anthropic_fallback(self):
         User = get_user_model()
         user = User.objects.create_user(username="u7", email="u7@example.com", password="pw")
         user.profile.llm_provider = "anthropic"
@@ -158,7 +158,7 @@ class UserLLMProviderSettingTests(TestCase):
             {
                 "ok": True,
                 "provider": "anthropic",
-                "model": "claude-opus-4-7",
+                "model": "claude-opus-4-8",
             },
         )
 
@@ -219,5 +219,95 @@ class UserLLMProviderSettingTests(TestCase):
                 "ok": True,
                 "provider": "openai",
                 "model": "gpt-5.5",
+            },
+        )
+
+    def test_config_menu_defaults_gemini_to_3_5_flash_when_profile_blank(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u11", email="u11@example.com", password="pw")
+        user.profile.gemini_model_default = ""
+        user.profile.save(update_fields=["gemini_model_default"])
+
+        self.client.force_login(user)
+        response = self.client.get(reverse("accounts:config_menu"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["gemini_model_default"], "gemini-3.5-flash")
+
+    def test_topbar_uses_gemini_3_5_flash_as_gemini_fallback(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u12", email="u12@example.com", password="pw")
+        user.profile.llm_provider = "gemini"
+        user.profile.gemini_model_default = ""
+        user.profile.save(update_fields=["llm_provider", "gemini_model_default"])
+
+        self.client.force_login(user)
+        response = self.client.post(
+            reverse("accounts:topbar_llm_update"),
+            data={"provider": "gemini"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "provider": "gemini",
+                "model": "gemini-3.5-flash",
+            },
+        )
+
+    def test_topbar_switch_to_gemini_promotes_legacy_default_to_3_5_flash(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u13", email="u13@example.com", password="pw")
+        user.profile.llm_provider = "openai"
+        user.profile.gemini_model_default = "gemini-2.5-flash"
+        user.profile.save(update_fields=["llm_provider", "gemini_model_default"])
+
+        self.client.force_login(user)
+        response = self.client.post(
+            reverse("accounts:topbar_llm_update"),
+            data={"provider": "gemini"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        user.profile.refresh_from_db()
+        self.assertEqual(user.profile.gemini_model_default, "gemini-3.5-flash")
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "provider": "gemini",
+                "model": "gemini-3.5-flash",
+            },
+        )
+
+    def test_topbar_gemini_option_sets_requested_3_5_flash_model(self):
+        User = get_user_model()
+        user = User.objects.create_user(username="u14", email="u14@example.com", password="pw")
+        user.profile.llm_provider = "openai"
+        user.profile.gemini_model_default = "gemini-3.1-pro-preview"
+        user.profile.save(update_fields=["llm_provider", "gemini_model_default"])
+
+        self.client.force_login(user)
+        response = self.client.post(
+            reverse("accounts:topbar_llm_update"),
+            data={
+                "provider": "gemini",
+                "model": "gemini-3.5-flash",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        user.profile.refresh_from_db()
+        self.assertEqual(user.profile.llm_provider, "gemini")
+        self.assertEqual(user.profile.gemini_model_default, "gemini-3.5-flash")
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "provider": "gemini",
+                "model": "gemini-3.5-flash",
             },
         )

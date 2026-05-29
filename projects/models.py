@@ -292,6 +292,21 @@ class WorkItem(models.Model):
             derax_runs=[],
         )
 
+    @property
+    def derax_label(self) -> str:
+        """Human-meaningful label for a DERAX work item, derived from the DEFINE
+        end-in-mind (``intent_raw``). Falls back to an explicitly-set title that
+        differs from the project name, else an empty string so callers can show a
+        generic ``DERAX item N``. Truncate at the call site as needed."""
+        destination = str(self.intent_raw or "").strip()
+        if destination:
+            return destination
+        title = str(self.title or "").strip()
+        project_name = str(getattr(self.project, "name", "") or "").strip()
+        if title and title != project_name:
+            return title
+        return ""
+
     @staticmethod
     def _normalise_phase(raw_phase: str) -> str:
         return str(raw_phase or "").strip().upper()

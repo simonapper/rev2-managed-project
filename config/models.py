@@ -275,19 +275,19 @@ class SystemConfigPointers(models.Model):
     anthropic_model_default = models.CharField(
         max_length=80,
         blank=True,
-        default="claude-sonnet-4-5-20250929",
+        default="claude-opus-4-8",
         help_text=(
-            "Default Anthropic model key, e.g. claude-sonnet-4-5-20250929, "
-            "claude-opus-4-5-20251101, claude-haiku-4-5-20251001"
+            "Default Anthropic model key, e.g. claude-opus-4-8, "
+            "claude-opus-4-7, claude-haiku-4-5"
         ),
     )
     gemini_model_default = models.CharField(
         max_length=80,
         blank=True,
-        default="gemini-2.5-flash",
+        default="gemini-3.5-flash",
         help_text=(
             "Default Gemini model key, e.g. gemini-2.5-pro, "
-            "gemini-2.5-flash, gemini-2.5-flash-lite"
+            "gemini-3.5-flash, gemini-2.5-flash"
         ),
     )
 

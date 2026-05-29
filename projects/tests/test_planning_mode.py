@@ -53,11 +53,15 @@ class PlanningModeTests(TestCase):
         self.client.force_login(self.owner)
         resp_assisted = self.client.get(reverse("accounts:project_config_info", args=[self.project.id]))
         self.assertEqual(resp_assisted.status_code, 200)
-        self.assertContains(resp_assisted, f'href="{reverse("projects:ppde_detail", args=[self.project.id])}">Plan</a>', html=False)
+        self.assertContains(resp_assisted, f'href="{reverse("projects:pde_detail", args=[self.project.id])}">')
+        self.assertContains(resp_assisted, "Intent")
+        self.assertContains(resp_assisted, 'aria-disabled="true"', html=False)
+        self.assertContains(resp_assisted, ">Plan</span>", html=False)
 
         membership.planning_mode = ProjectMembership.PlanningMode.AUTO
         membership.save(update_fields=["planning_mode", "updated_at"])
 
         resp_auto = self.client.get(reverse("accounts:project_config_info", args=[self.project.id]))
         self.assertEqual(resp_auto.status_code, 200)
-        self.assertContains(resp_auto, f'href="{reverse("projects:project_review", args=[self.project.id])}">Plan</a>', html=False)
+        self.assertContains(resp_auto, f'href="{reverse("projects:project_review", args=[self.project.id])}">')
+        self.assertContains(resp_auto, "Start")
